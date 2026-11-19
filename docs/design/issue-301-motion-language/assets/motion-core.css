@@ -1,0 +1,36 @@
+/* 哆啦美 · 动效样页 —— 公共层样式:只有工具件(指示器、幽灵、分行、假光标)与样页开关条,不含任何方向的取值。 */
+
+/* 底稿里几处写死的入场动画挪到「现网」基线(dir-0.css)里去,免得每个方向都要先关掉它 */
+.pop, .qa, .toast { animation: none; }
+.feed { transition: none; }
+
+/* 指示器(M.glide):方向的样式负责颜色与圆角,这里只管定位 */
+.m-ind { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; z-index: 0; display: block; }
+
+/* 幽灵层(M.ghost):离场副本 */
+#m-ghosts { position: fixed; inset: 0; z-index: 90; pointer-events: none; overflow: hidden; }
+.m-ghost { pointer-events: none; }
+
+/* 分行(M.splitLines) */
+.m-line { display: block; white-space: nowrap; }
+.m-line-in { display: inline-block; }
+
+/* View Transitions:过渡期间不拦点击 */
+::view-transition { pointer-events: none; }
+
+/* 假光标(M.demo) */
+#m-cursor { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; opacity: 0; margin: -3px 0 0 -5px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+#m-cursor svg { display: block; transition: transform 90ms ease-out; transform-origin: 6px 4px; }
+#m-cursor.down svg { transform: scale(0.86); }
+#m-cursor i { position: absolute; left: -7px; top: -8px; width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid rgba(130, 130, 255, 0.9); opacity: 0; transform: scale(0.4); }
+#m-cursor.down i { opacity: 1; transform: scale(1); transition: transform 160ms ease-out, opacity 160ms ease-out; }
+.m-demo, .m-demo * { cursor: none !important; }
+.m-demo ::-webkit-scrollbar { width: 0; height: 0; }
+
+/* ───────────── 样页开关条(不属于产品界面) ───────────── */
+#lab { gap: 4px; }
+#lab .lab-g button { white-space: nowrap; }
+#lab .lab-chip { height: 22px; padding: 0 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.09); }
+#lab .lab-chip.on { background: #f2f2f5; color: #17171a; font-weight: 600; }
+#lab .lab-sp { flex: 1; }
+#lab kbd { font: inherit; color: #8a8a94; }

@@ -1,0 +1,242 @@
+/* 选定稿 —— 2026-11-18 用户逐场景选择之后合成的一份(11-19 把「切换视图」「AI 速读卡」改成精密)。三句话:
+     精密做底   按下、浮层、打开文章、切视图、速读卡、提示、明暗(原 A):短、准、可打断
+     连续管空间 指示器、筛选、来源栏、到场、滚动停靠、榜单进事件、订阅(原 B):东西有来处、有去处
+     光只给问答 问答面板(原 C):玻璃、对焦、极光。别处不发光
+   另含「沉浸阅读」(presence.css 的 p-immersive,由 dir-s.js 默认打开)。
+
+   token(合并后只剩这一套;弹簧由 dir-s.js 取样成 linear() 写到根上,没写到时退到 ease-out):
+     曲线  --ms-ease-out      出入场、位移收尾
+           --ms-ease-drawer   来源栏
+           --ms-ease-focus    对焦(只在问答面板上)
+     时长  --ms-press 120     按下
+           --ms-hover-in 100 / --ms-hover-out 180   悬停底色「进快出慢」
+           --ms-fast 150      浮层入、标题区、淡入
+           --ms-base 200      行状态换色
+           --ms-drawer 360    来源栏收起 / 展开
+     弹簧  snappy(0.28, 0)    松手回弹
+           glide(0.32, 0.12)  列表选中块、提示弹入
+           move(0.42, 0.12)   位移:筛选后的行、分数逐位滚动
+           settle(0.50, 0.18) 大变形:卡面展开成页、到场三拍
+           pop(0.35, 0.45)    落点:星标、导轨图标、订阅钮
+     光    --ms-focus 260     由虚到实
+           --ms-sweep 1150    极光沿边一圈 */
+@property --ms-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }   /* 极光在边框上的位置 */
+@property --ms-ring { syntax: "<number>"; inherits: false; initial-value: 0; }    /* 极光过后整圈的余辉 */
+
+[data-dir="s"] {
+  --ms-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ms-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ms-ease-focus: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ms-press: 120ms; --ms-hover-in: 100ms; --ms-hover-out: 180ms;
+  --ms-fast: 150ms; --ms-base: 200ms; --ms-drawer: 360ms;
+  --ms-release: var(--ms-spring-snappy, var(--ms-ease-out));
+  --ms-release-d: var(--ms-spring-snappy-d, 200ms);
+  --ms-move-dur: 520ms; --ms-move-ease: var(--ms-ease-out);
+  --ms-settle-dur: 620ms; --ms-settle-ease: var(--ms-ease-out);
+  --ms-t-ow: auto; --ms-t-nw: auto; --ms-t-fr: 1;
+  --ms-focus: 260ms; --ms-sweep: 1150ms;
+  --ms-glass: color-mix(in srgb, var(--dorami-surface) 76%, transparent);
+  --ms-glass-edge: inset 0 0 0 1px color-mix(in srgb, var(--dorami-ink) 9%, transparent), inset 0 1px 0 0 rgba(255, 255, 255, 0.7);
+  --ms-scrim: rgba(22, 25, 34, 0.07);
+}
+[data-dir="s"][data-theme="dark"] {
+  --ms-glass: color-mix(in srgb, var(--dorami-raised) 66%, transparent);
+  --ms-glass-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.09), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+  --ms-scrim: rgba(0, 0, 0, 0.34);
+}
+/* 工作区底色铺在承载层上:切视图、打开文章时新内容在同一块底上进来,不闪底 */
+[data-dir="s"] .stage-b { background: var(--dorami-surface); }
+/* 键盘触发的那一帧:样式表里的过渡也不走 */
+:root.ms-quiet[data-dir="s"] :is(.feed, .srcbar-in, .ms-scrim) { transition: none !important; }
+
+/* ───────────── 悬停与按下(精密)───────────── */
+/* 小件:按下 0.97;悬停底色进 100ms、出 180ms */
+[data-dir="s"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .scope, .back, .pane-link, .doc-nav button, .cal-g button, .qa-sug button, .qa-src button, .menu button, .pop-f button, .toast button, .bi-fav, .ai-scores, .dock-play) {
+  transition: transform var(--ms-release-d) var(--ms-release), background-color var(--ms-hover-out) ease, color var(--ms-hover-out) ease, box-shadow var(--ms-hover-out) ease;
+}
+[data-dir="s"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .scope, .back, .pane-link, .doc-nav button, .cal-g button, .qa-sug button, .qa-src button, .menu button, .pop-f button, .toast button, .bi-fav, .ai-scores, .dock-play):is(:hover, .m-hover) {
+  transition-duration: var(--ms-release-d), var(--ms-hover-in), var(--ms-hover-in), var(--ms-hover-in);
+}
+[data-dir="s"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .scope, .back, .pane-link, .doc-nav button, .cal-g button, .qa-sug button, .qa-src button, .menu button, .pop-f button, .toast button, .bi-fav, .ai-scores, .dock-play):is(:active, .m-press) {
+  transform: scale(0.97);
+  transition-duration: var(--ms-press), var(--ms-hover-in), var(--ms-hover-in), var(--ms-hover-in);
+  transition-timing-function: var(--ms-ease-out), ease, ease, ease;
+}
+/* 整行 / 整卡:面积大,只缩到 0.985(榜单行更宽,0.99);里面的钮被按下时外面不跟着缩 */
+[data-dir="s"] :is(.row, .bi, .sc-card, .rk, .tl-i[data-open]) { transition: transform var(--ms-release-d) var(--ms-release), background-color var(--ms-hover-out) ease; }
+[data-dir="s"] :is(.row, .bi, .sc-card, .rk, .tl-i[data-open]):is(:hover, .m-hover) { transition-duration: var(--ms-release-d), var(--ms-hover-in); }
+[data-dir="s"] :is(.row, .bi, .sc-card, .tl-i[data-open]):is(:active, .m-press):not(:has(:is(button, a):is(:active, .m-press))) { transform: scale(0.985); transition-duration: var(--ms-press), var(--ms-hover-in); transition-timing-function: var(--ms-ease-out), ease; }
+[data-dir="s"] .rk:is(:active, .m-press):not(:has(:is(button, a):is(:active, .m-press))) { transform: scale(0.99); transition-duration: var(--ms-press), var(--ms-hover-in); transition-timing-function: var(--ms-ease-out), ease; }
+[data-dir="s"] .row::before { transition: opacity var(--ms-hover-out) ease; }
+/* 导轨:块不动,只缩图标,松手带一点回弹 */
+[data-dir="s"] .rail a { transition: background-color var(--ms-hover-out) ease, color var(--ms-hover-out) ease; }
+[data-dir="s"] .rail a:is(:hover, .m-hover) { transition-duration: var(--ms-hover-in); }
+[data-dir="s"] .rail a .ic { transition: transform var(--ms-spring-pop-d, 240ms) var(--ms-spring-pop, var(--ms-ease-out)); }
+[data-dir="s"] .rail a:is(:active, .m-press) .ic { transform: scale(0.86); transition: transform var(--ms-press) var(--ms-ease-out); }
+
+/* 假光标演示用:底稿只写了 :hover,这里把同样的悬停态挂到 .m-hover 上(取值照抄底稿) */
+[data-dir="s"] .btn.m-hover { background: color-mix(in srgb, var(--dorami-ink) 4.5%, var(--dorami-raised)); box-shadow: inset 0 0 0 1px var(--dorami-border-strong); }
+[data-dir="s"] .btn.primary.m-hover { background: color-mix(in oklab, var(--dorami-accent) 88%, #000); box-shadow: var(--sh-1); }
+[data-dir="s"] .btn.quiet.m-hover { background: var(--dorami-hover); color: var(--dorami-ink); box-shadow: none; }
+[data-dir="s"] :is(.tool, .rail a, .src):not(.on).m-hover, [data-dir="s"] :is(.back, .pane-link, .bi-fav, .menu button, .pop-f button, .qa-sug button).m-hover { background: var(--dorami-hover); color: var(--dorami-ink); }
+[data-dir="s"] :is(.doc-nav button, .cal-g button:not(.on), .qa-src button, .ai-scores, .feed.fold .scope).m-hover { background: var(--dorami-hover); }
+[data-dir="s"] :is(.seg button, .tabs button, .kinds button, .toc a).m-hover { color: var(--dorami-ink); }
+[data-dir="s"] .row:not(.on).m-hover { background: var(--dorami-hover); }
+[data-dir="s"] .row.m-hover::before, [data-dir="s"] .row.m-hover + .row::before { opacity: 0; }
+[data-dir="s"] :is(.bi, .rk).m-hover h3, [data-dir="s"] .tl-i[data-open].m-hover h4 { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; text-decoration-color: var(--dorami-border-strong); }
+[data-dir="s"] .sc-card.m-hover h4 > span { text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--dorami-border-strong); }
+[data-dir="s"] .sub.on.m-hover { color: var(--state-bad); background: color-mix(in srgb, var(--state-bad) 8%, transparent); box-shadow: none; }
+[data-dir="s"] .sub.on.m-hover .t-on { display: none; }
+[data-dir="s"] .sub.on.m-hover .t-off { display: inline; }
+
+/* 提示:第一个等 350ms;刚看过一个之后的 600ms 内,下一个立刻出、立刻收 */
+[data-dir="s"] [data-tip].m-hover::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+[data-dir="s"] [data-tip][data-tip-side="right"].m-hover::after { transform: translate(0, -50%); }
+[data-dir="s"] [data-tip][data-tip-side="left"].m-hover::after { transform: none; }
+[data-dir="s"].ms-tip-warm [data-tip]::after,
+[data-dir="s"].ms-tip-warm [data-tip]:is(:hover, .m-hover, :focus-visible)::after { transition-delay: 0s; transition-duration: 0s; }
+
+/* ───────────── 指示器(连续)─────────────
+   选中底色从各项自己身上让给一块滑动的 .m-ind;没有 .m-ind 时(脚本没跑到)各项照旧自己着色。
+   小指示器(分段、页签、类型签、导轨、来源栏)滑动时前缘先到、后缘跟上;列表选中块面积大,不拉伸,只滑 */
+[data-dir="s"] :is(.seg, .tabs, .kinds, .rail-nav, .srcbar-b, .list-b) { position: relative; isolation: isolate; }
+[data-dir="s"] :is(.seg, .tabs, .kinds, .rail-nav, .srcbar-b, .list-b) > .m-ind { z-index: -1; will-change: transform; }
+[data-dir="s"] .seg > .m-ind { border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1); }
+[data-dir="s"] .seg.mini > .m-ind { border-radius: 8px; }
+[data-dir="s"] .seg:has(> .m-ind) button.on { background: transparent; box-shadow: none; }
+[data-dir="s"] .tabs > .m-ind::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--dorami-ink); }
+[data-dir="s"] .tabs:has(> .m-ind) button.on::after { display: none; }
+[data-dir="s"] :is(.kinds, .rail-nav, .srcbar-b, .list-b) > .m-ind { background: var(--dorami-select); border-radius: var(--r-control); }
+[data-dir="s"] .kinds > .m-ind { border-radius: var(--r-sm); }
+[data-dir="s"] .kinds:has(> .m-ind) button.on,
+[data-dir="s"] .rail-nav:has(> .m-ind) a.on,
+[data-dir="s"] .srcbar-b:has(> .m-ind) .src.on,
+[data-dir="s"] .list-b:has(> .m-ind) .row.on { background: transparent; }
+/* 幽灵层里没有指示器:离场的行不要自带选中底、悬停底 */
+[data-dir="s"] #m-ghosts .row { background: transparent !important; }
+
+/* ───────────── 来源栏(连续):整块滑到导轨下面,不是被挤扁 ───────────── */
+[data-dir="s"] .feed { transition: grid-template-columns var(--ms-drawer) var(--ms-ease-drawer); }
+[data-dir="s"] .srcbar-in { transition: transform var(--ms-drawer) var(--ms-ease-drawer); }
+[data-dir="s"] .feed.fold .srcbar-in { transform: translateX(-100%); }
+
+/* ───────────── 「依据」展开:行高从 0fr 到 1fr ───────────── */
+[data-dir="s"] .ms-acc { display: grid; grid-template-rows: 1fr; }
+[data-dir="s"] .ms-acc > .ms-acc-in { min-height: 0; overflow: hidden; }
+
+/* ───────────── 阅读时滚动(连续):大标题滚出时停靠进吸顶栏,随滚动位置连续、可逆 ───────────── */
+[data-dir="s"] .ms-bar-title { flex: 0 1 auto; min-width: 0; margin-left: 10px; padding-left: 12px; font-size: 13px; font-weight: 600; color: var(--dorami-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 1px 0 0 var(--dorami-border); opacity: 0; }
+[data-dir="s"] .pane-bar::before { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none; background: linear-gradient(to bottom, color-mix(in srgb, var(--dorami-ink) 7%, transparent), transparent); opacity: 0; }
+@supports (animation-timeline: view()) {
+  [data-dir="s"] #pane { timeline-scope: --ms-h1; }
+  [data-dir="s"] #pane .doc h1 { view-timeline: --ms-h1 block; view-timeline-inset: 52px 0px; }
+  [data-dir="s"] .ms-bar-title { animation: ms-dock linear both; animation-timeline: --ms-h1; animation-range: exit 0% exit 100%; }
+  [data-dir="s"] .pane-bar::before { animation: ms-fade-in linear both; animation-timeline: scroll(nearest block); animation-range: 0px 72px; }
+  :root[data-motion="reduce"][data-dir="s"] .ms-bar-title { animation-name: ms-fade-in; }
+}
+@keyframes ms-dock { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes ms-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ms-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* ───────────── 明暗切换(精密):整页交叉淡化 ───────────── */
+:root[data-dir="s"][data-vt="ms-theme"]::view-transition-old(root),
+:root[data-dir="s"][data-vt="ms-theme"]::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: linear; }
+
+/* ───────────── 空间转场(连续;View Transitions)─────────────
+   只有两处用:榜单卡展开成事件页、浮层变形成来源栏。都是低频的大转场;切视图、打开文章与别的小动作一律 WAAPI,可以被下一次点击打断。
+   命名元素被单独拍走后,所在的面上会留一个洞;洞里垫面色,免得中途露出画布色。 */
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition { background: var(--dorami-surface); }
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-group(*) { animation-duration: var(--ms-move-dur); animation-timing-function: var(--ms-move-ease); }
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-old(*), :root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-new(*) { mix-blend-mode: normal; }
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-group(ms-title) { z-index: 3; }
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-group(ms-srcbar), :root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-group(ms-card) { z-index: 2; }
+/* 根:新界面直接垫底,动的只有命名的那几件(卡面展开除外:旧榜单留在下面,新页从卡里长出来) */
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-old(root) { animation: none; opacity: 0; }
+:root[data-dir="s"][data-vt]:not([data-vt="ms-theme"])::view-transition-new(root) { animation: none; opacity: 1; }
+:root[data-dir="s"][data-vt="ms-ev-open"]::view-transition-old(root) { opacity: 1; }
+:root[data-dir="s"][data-vt="ms-ev-open"]::view-transition-new(root) { opacity: 0; }
+
+/* 从事件页返回、榜单里那张卡已经滚出视口:没有去处可收,工作区交叉淡化 */
+:root[data-dir="s"][data-vt="ms-swap"]::view-transition-old(ms-stage) { animation: ms-fade-out 120ms linear both; }
+:root[data-dir="s"][data-vt="ms-swap"]::view-transition-new(ms-stage) { animation: ms-fade-in 180ms linear both; }
+
+/* 共享标题(榜单卡 ⇄ 事件页):两头字号不同。旧字从自身字号放大到新字号、新字从旧字号长到自身字号,
+   全程两张图里的字一样大,只在前段交叉淡化——不会被拉成一团。锚点在左上。 */
+:root[data-dir="s"][data-vt^="ms-ev"]::view-transition-old(ms-title), :root[data-dir="s"][data-vt^="ms-ev"]::view-transition-new(ms-title) { block-size: auto; transform-origin: left top; }
+:root[data-dir="s"][data-vt^="ms-ev"]::view-transition-old(ms-title) { inline-size: var(--ms-t-ow); animation: ms-t-old var(--ms-settle-dur) var(--ms-settle-ease) both, ms-x-out var(--ms-settle-dur) linear both; }
+:root[data-dir="s"][data-vt^="ms-ev"]::view-transition-new(ms-title) { inline-size: var(--ms-t-nw); animation: ms-t-new var(--ms-settle-dur) var(--ms-settle-ease) both, ms-x-in var(--ms-settle-dur) linear both; }
+@keyframes ms-t-old { from { transform: scale(1); } to { transform: scale(var(--ms-t-fr)); } }
+@keyframes ms-t-new { from { transform: scale(calc(1 / var(--ms-t-fr))); } to { transform: scale(1); } }
+@keyframes ms-x-out { 0%, 8% { opacity: 1; } 34%, 100% { opacity: 0; } }
+@keyframes ms-x-in { 0%, 6% { opacity: 0; } 36%, 100% { opacity: 1; } }
+
+/* 卡面展开成页 / 页收回卡里:窗口从卡的位置长到整页,窗里的内容不缩放、锚在左上 */
+:root[data-dir="s"][data-vt^="ms-ev"]::view-transition-group(ms-card), :root[data-dir="s"][data-vt^="ms-ev"]::view-transition-group(ms-title) { animation-duration: var(--ms-settle-dur); animation-timing-function: var(--ms-settle-ease); }
+:root[data-dir="s"][data-vt^="ms-ev"]::view-transition-old(ms-card), :root[data-dir="s"][data-vt^="ms-ev"]::view-transition-new(ms-card) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-dir="s"][data-vt="ms-ev-open"]::view-transition-image-pair(ms-card) { background: var(--dorami-surface); }
+:root[data-dir="s"][data-vt="ms-ev-open"]::view-transition-old(ms-card) { animation: ms-fade-out 140ms linear both; }
+:root[data-dir="s"][data-vt="ms-ev-open"]::view-transition-new(ms-card) { animation: ms-fade-in 200ms 60ms linear both; }
+:root[data-dir="s"][data-vt="ms-ev-back"]::view-transition-old(ms-card) { animation: ms-fade-out 260ms linear both; }
+:root[data-dir="s"][data-vt="ms-ev-back"]::view-transition-new(ms-card) { animation: ms-fade-in 220ms 140ms linear both; }
+
+/* 浮层变形成来源栏(从「固定为来源栏」展开) */
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-old(ms-srcbar), :root[data-dir="s"][data-vt="ms-unfold"]::view-transition-new(ms-srcbar),
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-new(ms-pane) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-image-pair(ms-srcbar) { background: var(--dorami-canvas); }
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-old(ms-srcbar) { animation: ms-fade-out 120ms linear both; }
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-new(ms-srcbar) { animation: ms-fade-in 200ms 80ms linear both; }
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-old(ms-list), :root[data-dir="s"][data-vt="ms-unfold"]::view-transition-old(ms-pane) { animation: none; opacity: 0; }
+:root[data-dir="s"][data-vt="ms-unfold"]::view-transition-new(ms-list), :root[data-dir="s"][data-vt="ms-unfold"]::view-transition-new(ms-pane) { animation: none; opacity: 1; }
+
+/* ───────────── 速读卡分数(精密):逐位滚动 ───────────── */
+[data-dir="s"] .sc.ms-roll { display: inline-flex; align-items: flex-start; background-image: none; }
+[data-dir="s"] .side-score .sc.ms-roll { display: flex; }
+[data-dir="s"] .ms-cell { display: block; height: 1lh; overflow: hidden; }
+[data-dir="s"] .ms-strip { display: block; will-change: transform; }
+[data-dir="s"] .ms-strip > span, [data-dir="s"] .ms-dot { display: block; height: 1lh; }
+[data-dir="s"] .sc.ms-roll:is(.t1, .t2, .t3, .t4) :is(.ms-strip > span, .ms-dot) { background-image: linear-gradient(118deg, color-mix(in oklab, var(--ai-g1), var(--dorami-faint) var(--mix)), color-mix(in oklab, var(--ai-g2), var(--dorami-faint) var(--mix))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* 飞行件(订阅时的来源徽标) */
+[data-dir="s"] .ms-fly { position: fixed; left: 0; top: 0; z-index: 95; pointer-events: none; will-change: transform; }
+
+/* ───────────── 光:只给问答面板 ─────────────
+   护栏:blur 只落在有边界的块上且 ≤ 300ms;没有循环动画;亮色主题下极光照样用 --ai-g1 → --ai-g2。 */
+/* 问答面板:玻璃 */
+[data-dir="s"] .qa { background: var(--ms-glass); -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6); box-shadow: var(--sh-3), var(--ms-glass-edge); }
+[data-dir="s"] .qa-h { border-bottom-color: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+[data-dir="s"] .qa-in { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); }
+/* 压暗:问答面板下面的工作区退后一步 */
+[data-dir="s"] .ms-scrim { position: absolute; inset: 0; z-index: 35; pointer-events: none; background: var(--ms-scrim); opacity: 0; transition: opacity 240ms ease-out; }
+[data-dir="s"] .ms-scrim.on { opacity: 1; }
+[data-dir="s"] .ms-scrim.off { opacity: 0; transition-duration: 140ms; }
+
+/* 极光:沿边走一圈(问答面板打开与提问时) */
+[data-dir="s"] .qa::before {
+  content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background:
+    conic-gradient(from var(--ms-ang), transparent 0deg, transparent 205deg, color-mix(in srgb, var(--ai-g1) 80%, transparent) 280deg, var(--ai-g2) 338deg, color-mix(in srgb, #fff 62%, var(--ai-g2)) 357deg, transparent 360deg),
+    linear-gradient(118deg, color-mix(in srgb, var(--ai-g1) calc(var(--ms-ring) * 100%), transparent), color-mix(in srgb, var(--ai-g2) calc(var(--ms-ring) * 100%), transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+[data-dir="s"] .qa.ms-sweep::before { animation: ms-sweep var(--ms-sweep) cubic-bezier(0.45, 0, 0.25, 1) both; }
+@keyframes ms-sweep {
+  0% { --ms-ang: -75deg; --ms-ring: 0; opacity: 0; }
+  12% { opacity: 1; }
+  58% { --ms-ring: 0.42; }
+  84% { opacity: 1; }
+  100% { --ms-ang: 285deg; --ms-ring: 0; opacity: 0; }
+}
+
+/* 问答:等待时的一行流光 */
+[data-dir="s"] .ms-think {
+  width: fit-content; margin: 2px 0 14px; font-size: 14px; color: transparent;
+  background: linear-gradient(100deg, var(--dorami-faint) 30%, var(--ai-g1) 44%, var(--ai-g2) 56%, var(--dorami-faint) 70%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text; animation: ms-shimmer 1.15s linear infinite;
+}
+@keyframes ms-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+[data-dir="s"] .qa-a.ms-wait > * { opacity: 0; }
+
+/* ───────────── 减少动效:极光不出现,流光停住 ───────────── */
+:root[data-motion="reduce"][data-dir="s"] .qa::before { animation: none; opacity: 0; }
+:root[data-motion="reduce"][data-dir="s"] .ms-think { animation: none; background-position: 50% 0; }

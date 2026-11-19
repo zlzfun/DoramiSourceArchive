@@ -62,7 +62,7 @@ function SourceCard({ source, subbed, pinning, query, showArticleChip, onSubscri
     onUnsubscribe(source);
   };
   return (
-    <div className="reader-disc-card">
+    <div className="reader-disc-card" data-shape={readerShapeOf(source)} data-flip-id={source.source_id}>
       <div className="reader-disc-card-main">
         {source.avatar_url ? (
           <img className="reader-disc-avatar" src={mediaProxyUrl(source.avatar_url)} alt="" loading="lazy" decoding="async" />

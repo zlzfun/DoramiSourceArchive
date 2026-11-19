@@ -1,0 +1,104 @@
+/* D 刊物 —— 一份每天出版的报。
+   动的是排印:字行从版线后面升上来,细线从左画到右,数字像航班牌一样翻;大块内容硬切,不淡入。
+   材料只有四样:行遮罩(升起)、画线(scaleX)、翻牌(数字与日期)、硬切(80ms 垫帧)。
+   取值都在下面这组 token 里,dir-d.js 的常量与它一一对应。 */
+:root[data-dir="d"] {
+  --md-ease: cubic-bezier(0.16, 1, 0.3, 1);        /* 揭示:升起、画线、擦出、展开 */
+  --md-ease-io: cubic-bezier(0.65, 0, 0.35, 1);    /* 翻页:整屏压过 */
+  --md-line: 520ms;        /* 一行字升起 */
+  --md-line-gap: 70ms;     /* 行间 */
+  --md-head: 420ms;        /* 单行页头升起 */
+  --md-rule: 600ms;        /* 一条细线画完 */
+  --md-flap: 80ms;         /* 翻一次牌 */
+  --md-wipe: 160ms;        /* 一行擦出 */
+  --md-wipe-gap: 18ms;     /* 行间 */
+  --md-cut: 80ms;          /* 硬切的垫帧 */
+  --md-underline: 220ms;   /* 悬停下划线 */
+  --md-pop: 200ms;         /* 浮层展开(卷回 120ms) */
+  --md-page: 560ms;        /* 明暗翻页 */
+}
+
+/* ───────────── 悬停与按下 ───────────── */
+/* 标题下划线从左画到右(多行时一行接一行);离开时收得更快 */
+[data-dir="d"] .d-ul { --d-ul-c: color-mix(in srgb, currentColor 55%, transparent); background: linear-gradient(var(--d-ul-c), var(--d-ul-c)) no-repeat 0 100% / 0 1px; padding-bottom: 1px; transition: background-size 120ms var(--md-ease); }
+[data-dir="d"] :is(.row, .bi, .rk[data-event], .rk[data-open], .tl-i[data-open]):is(:hover, .m-hover) .d-ul { background-size: 100% 1px; transition-duration: var(--md-underline); }
+[data-dir="d"] .bi:hover h3, [data-dir="d"] .rk:hover h3, [data-dir="d"] .tl-i[data-open]:hover h4 { text-decoration: none; }
+/* 列表行悬停不再铺底色:行与行之间的版线照常在 */
+[data-dir="d"] .row:not(.on):hover { background: none; }
+[data-dir="d"] .row:not(.on):hover::before, [data-dir="d"] .row:not(.on):hover + .row::before { opacity: 1; }
+[data-dir="d"] .row.on + .row:hover::before, [data-dir="d"] .row:hover + .row.on::before { opacity: 0; }
+/* 箭头前挪 3px */
+[data-dir="d"] :is(.hero-act .btn.primary, .qa-sug button, .side-link, .back, .doc-nav button) .ic { transition: transform 180ms var(--md-ease); }
+[data-dir="d"] .hero:is(:hover, .m-hover) .hero-act .btn.primary .ic,
+[data-dir="d"] :is(.qa-sug button, .side-link, [aria-label="下一篇"]):is(:hover, .m-hover) .ic { transform: translateX(3px); }
+[data-dir="d"] :is(.back, [aria-label="上一篇"]):is(:hover, .m-hover) .ic { transform: translateX(-3px); }
+/* 按下 = 铅字下沉 1px,不带缓动 */
+[data-dir="d"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .bi-fav, .rail a, .scope, .back, .qa-sug button, .doc-nav button, .cal-g button):is(:active, .m-press) { transform: translateY(1px); }
+[data-dir="d"] :is(.row, .rk[data-event], .rk[data-open], .sc-card):is(:active, .m-press) { transform: translateY(1px); }
+
+/* ───────────── 指示器 ───────────── */
+/* 导轨:选中记号是一根竖的墨条 */
+[data-dir="d"] .rail { position: relative; }
+[data-dir="d"] .rail a.on { background: none; }
+[data-dir="d"] .rail > .m-ind::after { content: ""; position: absolute; left: -6px; top: 13px; bottom: 13px; width: 2px; background: var(--dorami-ink); }
+/* 页签与类型签:一条墨线,换格时先拉长盖住两格再收到新格 */
+[data-dir="d"] .tabs, [data-dir="d"] .kinds { position: relative; }
+[data-dir="d"] .tabs button.on::after { display: none; }
+[data-dir="d"] .tabs > .m-ind::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--dorami-ink); }
+[data-dir="d"] .kinds button.on { background: none; }
+[data-dir="d"] .kinds > .m-ind::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 1.5px; background: var(--dorami-ink); }
+/* 分段:拇指擦除(旧位置擦掉、新位置擦出,同向) */
+[data-dir="d"] .seg { position: relative; }
+[data-dir="d"] .seg button { position: relative; z-index: 1; }
+[data-dir="d"] .seg button.on { background: none; box-shadow: none; }
+[data-dir="d"] .d-thumb { position: absolute; z-index: 0; border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1); pointer-events: none; }
+[data-dir="d"] .seg.mini .d-thumb { border-radius: 8px; }
+
+/* ───────────── 细线 ───────────── */
+/* 眉题前一截短线(头条的圆点也换成它) */
+[data-dir="d"] :is(.doc-h, .ev-h) .kick::before { content: ""; flex: none; width: 18px; height: 1px; background: currentColor; transform-origin: left; }
+[data-dir="d"] .hero .kick::before { width: 18px; height: 1px; border-radius: 0; background: currentColor; transform-origin: left; }
+[data-dir="d"] .bf-id > i { transform-origin: left; }
+/* 速读卡:卡头下一条栏线 */
+[data-dir="d"] .ai header { position: relative; }
+[data-dir="d"] .ai header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 1px; background: var(--dorami-border-soft); transform-origin: left; }
+/* 问答面板:左缘一条批注线 */
+[data-dir="d"] .qa::before { content: ""; position: absolute; left: 0; top: 22px; bottom: 22px; width: 2px; background: var(--dorami-ink); transform-origin: top; pointer-events: none; }
+/* 早报各节之间的版线:进入视口时画出一次(原来的下边线让位给它,位置不变) */
+[data-dir="d"] .sec { position: relative; border-bottom-color: transparent; }
+[data-dir="d"] .sec + .sec::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px; background: var(--dorami-border-soft); transform: scaleX(0); transform-origin: left; transition: transform var(--md-rule) var(--md-ease); }
+[data-dir="d"] .sec.d-in::before { transform: none; }
+:root.d-booting[data-dir="d"] .sec::before { transition-delay: 360ms; }
+:root[data-motion="reduce"][data-dir="d"] .sec + .sec::before { transform: none; }
+/* 画线用的遮片要有定位祖先 */
+[data-dir="d"] :is(.ev-h, .hero-side, .qa-src) { position: relative; }
+
+/* ───────────── 来源栏 ───────────── */
+[data-dir="d"] .feed { transition: grid-template-columns 260ms var(--md-ease); }
+[data-dir="d"] .list::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 1px; background: var(--dorami-ink-2); opacity: 0; transition: opacity 240ms linear; z-index: 6; pointer-events: none; }
+[data-dir="d"] .feed.d-folding .list::before { opacity: 0.55; transition-duration: 60ms; }
+
+/* ───────────── 吸顶栏里的小标题:标题滚出后从遮罩后升入 ───────────── */
+[data-dir="d"] .d-bar-title { flex: 0 1 auto; min-width: 0; height: 20px; margin-left: 10px; padding-left: 10px; border-left: 1px solid transparent; overflow: clip; font-size: 13px; font-weight: 600; line-height: 20px; color: var(--dorami-ink); white-space: nowrap; transition: border-color 140ms linear; }
+[data-dir="d"] .d-bar-title > span { display: block; overflow: hidden; text-overflow: ellipsis; transform: translateY(110%); transition: transform 140ms var(--md-ease); }
+[data-dir="d"] .pane-bar.d-titled .d-bar-title { border-left-color: var(--dorami-border); }
+[data-dir="d"] .pane-bar.d-titled .d-bar-title > span { transform: none; transition-duration: 280ms; }
+
+/* ───────────── 翻牌:每个会翻的字符一个定宽格 ───────────── */
+[data-dir="d"] .df-cell { position: relative; display: inline-block; }
+[data-dir="d"] .df-size { visibility: hidden; }
+[data-dir="d"] .df-a, [data-dir="d"] .df-b { position: absolute; inset: 0; display: block; text-align: center; white-space: nowrap; }
+[data-dir="d"] .df-b { opacity: 0; }
+/* 分数的渐变字:翻牌期间渐变落在每个字符自身(挂在外层时,格子里变形中的字画不出来) */
+[data-dir="d"] .sc.df-on { background-image: none; }
+[data-dir="d"] .sc.df-on:is(.t1, .t2, .t3, .t4) :is(.df-g, .df-s) { background-image: linear-gradient(118deg, color-mix(in oklab, var(--ai-g1), var(--dorami-faint) var(--mix)), color-mix(in oklab, var(--ai-g2), var(--dorami-faint) var(--mix))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* ───────────── 明暗「翻页」:新主题自上而下压过整屏,压线处一条细影 ───────────── */
+:root[data-dir="d"][data-vt~="d-theme"]::view-transition-old(root) { animation: none; }
+:root[data-dir="d"][data-vt~="d-theme"]::view-transition-new(root) { animation: d-roll var(--md-page) var(--md-ease-io) both; }
+@keyframes d-roll { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+.d-roller { position: fixed; left: 0; top: 0; width: 100vw; height: 22px; z-index: 300; pointer-events: none; view-transition-name: d-roller;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.26), rgba(0, 0, 0, 0.09) 35%, transparent); box-shadow: inset 0 1px 0 rgba(128, 128, 140, 0.55); }
+:root[data-dir="d"][data-vt~="d-theme"]::view-transition-group(d-roller) { animation: d-roller var(--md-page) var(--md-ease-io) both; }
+:root[data-dir="d"][data-vt~="d-theme"]::view-transition-new(d-roller) { animation: none; opacity: 1; }
+@keyframes d-roller { from { transform: translateY(0); } to { transform: translateY(100vh); } }

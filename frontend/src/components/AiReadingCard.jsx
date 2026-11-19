@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import {
   podcastReaderBasisText,
@@ -8,6 +8,7 @@ import {
 } from '../utils/analysis';
 import { splitSentences } from '../utils/readerText';
 import { motionReduced } from '../motion';
+import { foldRows, motionIntent as inputIntent, pointerMotion, springTo } from '../utils/readerMotion';   // PageCard 有个同名属性 motionIntent(文章的触发方式),这里要的是「此刻的输入方式」
 
 /**
  * 哆啦美速读卡(issue #13 五轮;issue #184 改细线卡):外框色底 + 最弱细线,卡头渐变 ✦ 与分数是卡的身份。
@@ -33,6 +34,9 @@ import { motionReduced } from '../motion';
  * 桌面阅读窗(issue #279 第三批)传 page:速读一句一段;卡头并排写两个维度的分,点一下展开两句依据(不再靠悬停);
  * 标签住卡脚。阅读窗够宽时分数、依据、标签改排在正文右边的页边(ScoreMargin),卡里只剩速读——两种摆法由
  * 容器宽度在 CSS 里切换,两份标记都在。手机壳不传 page,仍是上面那张卡。
+ *
+ * 桌面的分数(issue #301 第二批):页边主分与卡头第一个维度用 ScoreRoll——换篇时从上一篇的分值逐位滚到这一篇(约 580ms),
+ * 不再每次从 0 起滚 2.2 秒;手机壳的 ClassicCard 仍是原来的里程表(Odometer)。
  */
 export default function AiReadingCard(props) {
   return props.page ? <PageCard {...props} /> : <ClassicCard {...props} />;
@@ -66,6 +70,7 @@ function PageCard({
   podcast = false,
   listen = null,
   tags = null,
+  motionIntent = undefined,
 }) {
   const dims = scoreDimensions(article);
   const reason = (article?.score_reason || '').trim();
@@ -77,6 +82,36 @@ function PageCard({
   const shownDims = podcast && !summary ? dims.map((dim) => ({ ...dim, reason: '' })) : dims;
   const hasWhy = shownDims.some((dim) => dim.reason) || Boolean(basis);
   const [why, setWhy] = useState(readWhy);
+  // 「依据」展开 / 收起带行高过渡(issue #301 对拍补差;指针触发才动):收起时等离场演完才卸载,所以「在不在文档里」另记一份。
+  // 卡挂上时本来就展开着的不演;宽窗口下这一块不显示(评分依据在页边),也不演。
+  const [whyShown, setWhyShown] = useState(why);
+  const whyRef = useRef(why);
+  const foldRef = useRef(null);
+  const foldOpenRef = useRef(false);   // 这次挂上要不要演展开(点下去那一刻定)
+  const toggleWhy = () => {
+    const next = !why;
+    const full = pointerMotion(inputIntent()) === 'full';
+    whyRef.current = next;
+    setWhy(next);
+    writeWhy(next);
+    const fold = foldRef.current;
+    if (next) {
+      if (fold) { if (full) foldRows(fold, true); else for (const anim of [...fold.getAnimations(), ...(fold.firstElementChild?.getAnimations() || [])]) anim.cancel(); }   // 收到一半又点开
+      else foldOpenRef.current = full;
+      setWhyShown(true);
+      return;
+    }
+    const closing = full && fold && fold.offsetParent !== null && fold.offsetHeight > 0 ? foldRows(fold, false) : null;
+    if (!closing) { setWhyShown(false); return; }
+    const done = () => { if (!whyRef.current) setWhyShown(false); };
+    closing.finished.then(done, () => {});   // 被新的一段撤掉(又点开了):不卸载
+  };
+  useLayoutEffect(() => {
+    if (!whyShown || !foldOpenRef.current) return;
+    foldOpenRef.current = false;
+    const fold = foldRef.current;
+    if (fold && fold.offsetParent !== null) foldRows(fold, true);
+  }, [whyShown]);
   const whyId = useId();
   const paragraphs = primaryText ? splitSentences(primaryText) : [];
   const bare = !primaryText && !summarizing && !canGenerate && !listen;
@@ -92,12 +127,19 @@ function PageCard({
             aria-expanded={hasWhy ? why : undefined}
             aria-controls={hasWhy && why ? whyId : undefined}
             disabled={!hasWhy}
-            onClick={() => { const next = !why; setWhy(next); writeWhy(next); }}
+            onClick={toggleWhy}
           >
-            {dims.map((dim) => (
+            {dims.map((dim, index) => (
               <span key={dim.key} className="reader-ai-dim">
                 <span className="reader-ai-dim-k">{dim.label}</span>
-                <span className={`reader-ai-dim-v ai-grad-text ${scoreTierClass(dim.value)}`}>{dim.text}</span>
+                {index === 0 ? (
+                  <span className="reader-ai-dim-v">
+                    <span className="sr-only">{dim.text}</span>
+                    <ScoreRoll slot="head" inline score={dim.text} tierClass={scoreTierClass(dim.value)} intent={motionIntent} />
+                  </span>
+                ) : (
+                  <span className={`reader-ai-dim-v ai-grad-text ${scoreTierClass(dim.value)}`}>{dim.text}</span>
+                )}
               </span>
             ))}
             {hasWhy && <ChevronDown aria-hidden="true" />}
@@ -105,7 +147,13 @@ function PageCard({
         )}
         {listen}
       </div>
-      {why && hasWhy && <ScoreReasons dims={shownDims} basis={basis} id={whyId} className="reader-ai-why" />}
+      {whyShown && hasWhy && (
+        <div className="reader-ai-fold" ref={foldRef}>
+          <div className="reader-ai-fold-in">
+            <ScoreReasons dims={shownDims} basis={basis} id={whyId} className="reader-ai-why" />
+          </div>
+        </div>
+      )}
       <div className="reader-ai-summary-main">
         {paragraphs.length > 0 ? (
           <div className="reader-ai-layer reader-ai-layer-summary">
@@ -127,10 +175,10 @@ function PageCard({
 }
 
 /**
- * 页边(issue #279 第三批):关于这篇的话——主分(44px,里程表入场)与依据、另一个维度、标签。
+ * 页边(issue #279 第三批):关于这篇的话——主分(44px,换篇时逐位滚动)与依据、另一个维度、标签。
  * 只在阅读窗够宽时出现(容器查询,见 index.css「阅读窗页边」),窄时这些内容在速读卡的卡头与卡脚。
  */
-export function ScoreMargin({ article, podcast = false, tags = null }) {
+export function ScoreMargin({ article, podcast = false, tags = null, motionIntent = undefined }) {
   const dims = scoreDimensions(article);
   const [first, second] = dims;
   const basis = podcast ? podcastReaderBasisText(article) : '';
@@ -141,7 +189,7 @@ export function ScoreMargin({ article, podcast = false, tags = null }) {
         <div className="reader-side-blk">
           <div className="reader-side-k" title={scoreDisclaimer(first.key)}>{first.label}</div>
           <div className="reader-side-score" role="img" aria-label={`${first.label} ${first.text}`}>
-            <Odometer key={article.id} score={first.text} tierClass={scoreTierClass(first.value)} />
+            <ScoreRoll slot="side" score={first.text} tierClass={scoreTierClass(first.value)} intent={motionIntent} />
           </div>
           {first.reason && <p>{first.reason}</p>}
           {basis && <p className="reader-ai-why-basis">{basis}</p>}
@@ -286,7 +334,50 @@ function ScoreFigure({ score, tierClass = '', interactive, label, describedBy, o
   );
 }
 
-/** 里程表数字本体(不带按钮):速读卡的分数钮与桌面页边的主分共用。 */
+// 桌面阅读窗的分数(issue #301 第二批;conventions §7 具名例外「AI 速读卡分数」的桌面写法):
+// 换篇时从上一篇的分值逐位滚到这一篇——右边一位先动、往左每位晚 60ms,数字没变的那一位不动;第一次出现时从 0 起。
+// 弹簧用 move 档(落定约 580ms)。键盘换篇、减少动效直落终值。结构沿用里程表的格子与竖条,过渡交给 WAAPI。
+// 上一次显示的分值按位置(页边 side / 卡头 head)记在模块里:阅读窗按文章 id 重挂载,组件自己留不住。
+// intent 是这篇文章被打开时的触发方式(ReaderTab 在文章一换时记下):卡头那份要等正文回来才挂上,不能看挂上那一刻的最近输入。
+const lastRolled = new Map();
+const ROLL_STAGGER = 60;
+
+function ScoreRoll({ score, tierClass = '', slot, inline = false, intent = undefined }) {
+  const ref = useRef(null);
+  const text = String(score);
+  useLayoutEffect(() => {
+    const from = lastRolled.get(slot);
+    lastRolled.set(slot, text);
+    const root = ref.current;
+    if (!root || from === text || pointerMotion(intent) !== 'full') return;
+    const old = String(from ?? '').replace(/\D/g, '').split('').reverse();
+    [...root.querySelectorAll('.reader-ai-odo-strip')].reverse().forEach((strip, j) => {
+      const to = Number(strip.dataset.d);
+      const start = Number(old[j] || 0);
+      if (start !== to) {
+        springTo(strip, [{ transform: `translateY(${-start * 10}%)` }, { transform: `translateY(${-to * 10}%)` }], 'move', { delay: j * ROLL_STAGGER });
+      }
+    });
+  }, [slot, text, intent]);
+  return (
+    <span ref={ref} className={`reader-ai-odo is-roll ${inline ? 'is-inline' : ''}`} aria-hidden="true">
+      {text.split('').map((ch, i) => {
+        if (ch === '.') return <span key={i} className={`reader-ai-odo-dot ai-grad-text ${tierClass}`}>.</span>;
+        const digit = Number(ch);
+        if (!Number.isFinite(digit)) return <span key={i}>{ch}</span>;
+        return (
+          <span key={i} className="reader-ai-odo-cell">
+            <span className="reader-ai-odo-strip" data-d={digit} style={{ transform: `translateY(${-digit * 10}%)` }}>
+              {DIGITS.map((d) => <span key={d} className={`reader-ai-odo-digit ai-grad-text ${tierClass}`}>{d}</span>)}
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** 里程表数字本体(不带按钮):手机壳速读卡的分数钮在用(桌面改用上面的 ScoreRoll)。 */
 function Odometer({ score, tierClass = '' }) {
   const reduced = motionReduced();
   // 先以 0 挂载,下一帧再落到目标值,让 CSS transition 接管滑动;减少动画时直落。

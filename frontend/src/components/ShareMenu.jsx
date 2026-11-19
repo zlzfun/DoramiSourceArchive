@@ -9,6 +9,7 @@ import {
   SHARE_EXPIRY_OPTIONS,
 } from '../utils/shareLink';
 import { useLayer } from './layer/useLayer';
+import { usePopMotion } from '../hooks/usePopMotion';
 
 /**
  * 分享浮层（阅读窗工具条锚定）——初版方案（2026-07-29 数轮重设计后用户拍板回归）
@@ -72,6 +73,8 @@ export default function ShareMenu({ articleId, onClose, showToast, guestAccessEn
     initialFocus: (panel, { keyboard }) => (keyboard ? panel?.querySelector('.share-primary') : panel),
   });
   useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
+  // 桌面阅读窗里的开合动效(issue #301):对准锚点里的触发钮;手机壳不在 .reader-shell 下,不经过这里
+  usePopMotion(panelRef, { trigger: () => panelRef.current?.parentElement?.querySelector('button'), scope: '.reader-shell' });
 
   const copy = async (text, key, label) => {
     try {

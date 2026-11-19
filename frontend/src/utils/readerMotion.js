@@ -1,0 +1,395 @@
+// 桌面读者面的动效编排(issue #301,conventions §7「桌面读者面的动效语言」)。
+// 这里只放 JS 编排的那一部分(WAAPI);悬停、按下这类状态过渡在 index.css 文件尾「动效语言 · 桌面读者面」一段。
+//
+// 三条通用规矩都收在 pointerMotion() 里:
+//   键盘触发的一律不动(回车 / 空格激活条目行、导轨钮时内容直接换);
+//   减少动效时去掉位移与缩放,只留不超过 200ms 的明度淡入;
+//   没有 WAAPI 的环境直接落终态。
+// 「怎么触发的」按触发那一刻算,不按动画开播那一刻算:同步路径两者是同一刻;请求回来才换内容的路径(从早报 / 榜单打开文章、
+// 收藏)在入口处 motionIntent() / holdIntent() 记下,带到播放处——否则回车发起、等待时点了一下空白,回来就会被当成指针触发。
+// 反过来,**同步的交互入口**(开合浮层、切主题、全部标读、收起来源栏、起共享元素转场)一律用这一下自己的 motionIntent() 判,
+// 不看挂起的那一份:别的请求还挂着指针意图时,这一下是键盘(比如按 Esc 返回)就该不动。挂起的只留给「内容到了」那一刻的编排。
+// 取值是 index.css 里那套 token 的 JS 镜像(WAAPI 不读 CSS 变量),守卫 test/motionTokens.test.mjs 逐项比对。
+import { flushSync } from 'react-dom';
+import { motionReduced } from '../motion.js';
+import { lastInputWasKeyboard } from './inputModality.js';
+import { motionSpring } from './spring.js';
+
+export const MOTION = Object.freeze({
+  ease: 'cubic-bezier(0.22, 1, 0.36, 1)',        // --motion-ease
+  easeDrawer: 'cubic-bezier(0.32, 0.72, 0, 1)',  // --motion-ease-drawer
+  easeFocus: 'cubic-bezier(0.2, 0.8, 0.2, 1)',   // --motion-ease-focus
+  press: 120,     // --motion-press
+  hoverIn: 100,   // --motion-hover-in
+  hoverOut: 180,  // --motion-hover-out
+  fast: 150,      // --motion-fast
+  base: 200,      // --motion-base
+  drawer: 360,    // --motion-drawer
+});
+
+/** 此刻的触发方式:'key'(最近一次输入是键盘)/ 'pointer'。在交互入口调用,异步回来时把它传给编排函数。 */
+export function motionIntent() {
+  return lastInputWasKeyboard() ? 'key' : 'pointer';
+}
+
+// 挂起的触发方式:请求发出到内容换上之间,没有显式带 intent 的编排(阅读窗挂载、工作区淡入)都按它判。
+// 放下的时机有三个:内容换上的那次提交(ReaderTab 在布局阶段放,同步、不与下一次挂起抢先后);请求失败或被盖过(按凭据放);
+// 兜底是 10 秒过期——内容其实没换(打开的就是正在看的那篇)时不会有「换上」,不能让它一直压着后面的交互。
+let held = null;
+const HOLD_TTL = 10000;
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const heldHow = () => (held && nowMs() - held.at < HOLD_TTL ? held.how : null);
+
+/** 入口处挂起触发方式,返回凭据;内容换上(或请求失败 / 被盖过)之后 releaseIntent。how 缺省取此刻的。 */
+export function holdIntent(how = motionIntent()) {
+  held = { how, at: nowMs() };
+  return held;
+}
+
+/** 放下挂起的触发方式。带凭据时只在它仍是当前那一份时才放(被更晚的一次盖过就不动);不带则无条件放。 */
+export function releaseIntent(token) {
+  if (!token || held === token) held = null;
+}
+
+/**
+ * 这一轮微任务跑完再放下此刻挂起的那一份。内容换上的那次提交用它:提交里的布局副作用已经按它判过了,
+ * 但滑动指示器那一层是在提交之后的微任务里(MutationObserver)才判的,当场放下会让它看不到。
+ */
+export function releaseIntentSoon() {
+  const token = held;
+  if (token) queueMicrotask(() => { if (held === token) held = null; });
+}
+
+/** 这一刻该按哪种触发方式算:有挂起的就是它,否则是此刻的最近输入。要把它绑到「这篇文章」上、留给晚挂载的块用时取这个。 */
+export function currentIntent() {
+  return heldHow() || motionIntent();
+}
+
+/**
+ * 这一次交互该怎么动:'full'(指针触发、完整)/ 'fade'(减少动效:只淡入)/ 'none'(键盘触发或环境不支持)。
+ * intent 是入口处记下的触发方式;不给就看挂起的那一份,再没有才看此刻的最近输入。减少动效一律按播放这一刻的偏好。
+ */
+export function pointerMotion(intent) {
+  if (typeof Element === 'undefined' || !Element.prototype.animate) return 'none';
+  const how = intent || currentIntent();
+  if (how === 'key') return 'none';
+  return motionReduced() ? 'fade' : 'full';
+}
+
+const animate = (el, keyframes, options) => (el && el.animate ? el.animate(keyframes, { fill: 'backwards', ...options }) : null);
+
+/** 明度淡入(线性)。延迟期间垫首帧,结束后回到样式表的值。 */
+export function fadeIn(el, duration = 120, delay = 0) {
+  return animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration, delay, easing: 'linear' });
+}
+
+/** 淡入 + 上移 dist(默认 6px):标题区这类「主角」用。 */
+export function riseIn(el, { duration = 160, dist = 6, delay = 0 } = {}) {
+  return animate(el, [{ opacity: 0, transform: `translateY(${dist}px)` }, { opacity: 1, transform: 'none' }], { duration, delay, easing: MOTION.ease });
+}
+
+/** 一档弹簧的 WAAPI 动画:springTo(el, keyframes, 'pop')。 */
+export function springTo(el, keyframes, name, extra = {}) {
+  const s = motionSpring(name);
+  return animate(el, keyframes, { duration: s.duration, easing: s.easing, ...extra });
+}
+
+/**
+ * 打开一篇文章(精密):标题区是主角——淡入 + 上移 6px(160ms);其余(速读卡、正文、页边)一起淡入 120ms,不各自进场。
+ * 只动这一刻已经在阅读窗里的块;正文晚到时直接换上,不再补一次入场。
+ */
+export function enterPane(pane) {
+  const mode = pointerMotion();
+  if (mode === 'none' || !pane) return;
+  const doc = pane.querySelector('.reader-doc') || pane;
+  for (const child of doc.children) {
+    if (mode === 'full' && child.matches('.reader-pane-head')) riseIn(child);
+    else fadeIn(child, 120);
+  }
+  for (const side of pane.querySelectorAll(':scope > :not(.reader-doc)')) fadeIn(side, 120);
+}
+
+/** 切视图 / 返回(精密):内容直接换,工作区 100ms 淡入。els 是导轨之外的各栏。 */
+export function enterStage(els) {
+  if (pointerMotion() === 'none') return;
+  for (const el of els) fadeIn(el, MOTION.hoverIn);
+}
+
+/** 收藏(精密):点亮时星标从 0.6 弹到 1(pop 弹簧);取消只闪一下明度。减少动效时两种都只走明度。 */
+export function popStar(icon, on, intent) {
+  const mode = pointerMotion(intent);
+  if (mode === 'none' || !icon) return;
+  if (on && mode === 'full') springTo(icon, [{ transform: 'scale(0.6)' }, { transform: 'scale(1)' }], 'pop');
+  else animate(icon, [{ opacity: 0.35 }, { opacity: 1 }], { duration: 120, easing: 'linear' });
+}
+
+const CASCADE_STEP = 20;
+const CASCADE_MAX = 8;   // 第 9 行起不再更晚:最多晚 160ms
+
+/**
+ * 全部标读(精密):看得见的未读行自上而下每行晚 20ms 换成已读,最多晚 160ms——是「这一下扫过去了」的因果,不是入场。
+ * 这里只给每行写 --read-delay;换色本身是样式表里标题的 color 过渡(粗细在同一刻直接换)。返回撤掉这些变量的函数。
+ */
+export function armReadCascade(list) {
+  if (!list || pointerMotion(motionIntent()) !== 'full') return () => {};
+  const box = list.getBoundingClientRect();
+  const rows = [...list.querySelectorAll('.reader-entry:not(.is-read)')].filter((row) => {
+    const r = row.getBoundingClientRect();
+    return r.bottom > box.top && r.top < box.bottom;
+  });
+  rows.forEach((row, i) => row.style.setProperty('--read-delay', `${Math.min(i, CASCADE_MAX) * CASCADE_STEP}ms`));
+  return () => rows.forEach((row) => row.style.removeProperty('--read-delay'));
+}
+
+/**
+ * 明暗切换(精密):整页交叉淡化 180ms(View Transitions;时长在 index.css 的 .theme-fading 规则里)。
+ * 键盘触发、浏览器不支持时直接换。toggle 必须同步把 <html data-theme> 改掉(theme.js 的 toggleTheme 如此)。
+ */
+export function themeFade(toggle) {
+  if (pointerMotion(motionIntent()) === 'none' || typeof document === 'undefined' || !document.startViewTransition) { toggle(); return; }
+  const root = document.documentElement;
+  root.classList.add('theme-fading');
+  const done = () => root.classList.remove('theme-fading');
+  try {
+    document.startViewTransition(() => { flushSync(toggle); }).finished.then(done, done);
+  } catch {
+    done();
+    toggle();
+  }
+}
+
+/** 浮层的变形原点:对准触发钮的水平中心(夹在浮层两端各留 12px 之内),纵向取贴着触发钮的那条边。 */
+export function popOrigin(pop, trigger) {
+  if (!pop || !trigger || !trigger.isConnected) return '50% 0px';
+  const b = pop.getBoundingClientRect();
+  const t = trigger.getBoundingClientRect();
+  const x = Math.round(Math.max(12, Math.min(b.width - 12, t.left + t.width / 2 - b.left)));
+  return `${x}px ${t.top + t.height / 2 > b.top + b.height / 2 ? '100%' : '0px'}`;
+}
+
+/** 浮层入场(精密):对准触发钮 0.96 → 1,150ms。trigger 传 'keep' 时沿用样式表里的原点。返回原点,离场时用同一个。 */
+export function enterPop(pop, trigger) {
+  const origin = trigger === 'keep' ? getComputedStyle(pop).transformOrigin : popOrigin(pop, trigger);
+  if (trigger !== 'keep') pop.style.transformOrigin = origin;
+  const mode = pointerMotion(motionIntent());
+  if (mode === 'full') animate(pop, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], { duration: MOTION.fast, easing: MOTION.ease });
+  else if (mode === 'fade') fadeIn(pop, 120);
+  return origin;
+}
+
+/**
+ * 离场替身(精密:有入场就有离场,更短、原路返回):在节点被移出文档之前调用——克隆一份,等节点真的走了再把替身放回原位,
+ * 100ms 淡出并缩到 0.98。键盘触发不留替身。节点其实没走(StrictMode 开发态多跑的那次清理)就什么都不做。
+ * 起点取节点此刻的明度与变形:入场走到一半就被关掉时,替身从那一半接着退,不先跳到完整状态。
+ */
+export function exitGhost(el, origin) {
+  const mode = pointerMotion(motionIntent());
+  if (mode === 'none' || !el || !el.isConnected) return;
+  const parent = el.parentNode;
+  const next = el.nextSibling;
+  const now = getComputedStyle(el);
+  const from = { opacity: now.opacity, transform: now.transform === 'none' ? 'none' : now.transform };
+  const ghost = el.cloneNode(true);
+  for (const attr of ['id', 'role', 'aria-label', 'aria-modal', 'tabindex']) ghost.removeAttribute(attr);
+  ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.setAttribute('inert', '');
+  Object.assign(ghost.style, { pointerEvents: 'none', animation: 'none', transformOrigin: origin || '', viewTransitionName: '' });
+  // 滚动位置跟着替身走(来源下拉滚过之后关掉,不该跳回顶)
+  const scrolled = [el, ...el.querySelectorAll('*')].map((node, i) => [i, node.scrollTop]).filter(([, top]) => top > 0);
+  queueMicrotask(() => {
+    if (el.isConnected || !parent.isConnected) return;
+    parent.insertBefore(ghost, next && next.parentNode === parent ? next : null);
+    const copies = [ghost, ...ghost.querySelectorAll('*')];
+    for (const [i, top] of scrolled) if (copies[i]) copies[i].scrollTop = top;
+    const keyframes = mode === 'full'
+      ? [from, { opacity: 0, transform: 'scale(0.98)' }]
+      : [{ opacity: from.opacity }, { opacity: 0 }];
+    const drop = () => ghost.remove();
+    const anim = ghost.animate(keyframes, { duration: 100, easing: MOTION.ease, fill: 'forwards' });
+    anim.finished.then(drop, drop);
+  });
+}
+
+/**
+ * 带共享元素的转场(View Transitions)。只给两处低频的大转场:榜单卡展开成事件页、来源下拉变成来源栏
+ * ——过渡进行中页面不响应点击、也不能中途改向,高频的换内容不用它(conventions §7「可打断」)。
+ *
+ *   viewTransit('rk-open', () => setState(…), {
+ *     before(name) { name(row, 'rk-card'); },     // 旧界面上给元素起名
+ *     after(name) { name(page, 'rk-card'); },      // update 同步跑完之后,在新界面上起名
+ *   });
+ *
+ * type 写到 <html data-vt>,样式表按它给各组配动画(index.css「空间转场」一段);名字在过渡结束后摘掉。
+ * 起了转场返回那个 ViewTransition(调用方可以等它的 finished 做收尾),否则返回 false:
+ *   键盘触发 —— 直接 update(),与没有这层时逐字相同;
+ *   指针触发但起不了共享元素转场(减少动效、浏览器不支持、上一场还没结束)—— 用 flushSync 同步提交 update,
+ *   再调 fallback(mode):此时新界面已经在文档里,调用方可以在里面补一个不带共享元素的换法(mode 是 'full' 或 'fade')。
+ * 触发方式取这一下自己的(同步入口,不看别的请求挂起的那一份)。
+ */
+export function viewTransit(type, update, { before, after, fallback, intent = motionIntent() } = {}) {
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const mode = pointerMotion(intent);
+  if (mode === 'none') { update(); return false; }
+  if (mode !== 'full' || !root || !document.startViewTransition || root.dataset.vt) { flushSync(update); fallback?.(mode); return false; }
+  const named = new Set();
+  const name = (el, value) => { if (el) { el.style.viewTransitionName = value; named.add(el); } };
+  const unname = () => { named.forEach((el) => { el.style.viewTransitionName = ''; }); named.clear(); };
+  const done = () => { unname(); delete root.dataset.vt; };   // 同一时刻只有一场(上面把关),类型中途被 after 换过也一并清掉
+  let updated = false;
+  const run = () => { updated = true; flushSync(update); };
+  try {
+    before?.(name);
+    root.dataset.vt = type;
+    const transition = document.startViewTransition(() => { run(); unname(); after?.(name); });
+    transition.finished.then(done, done);
+    transition.ready.catch(() => {});   // 被跳过(状态不合法、页面不可见)时 ready 会拒绝:收尾已由 finished 那条接住,这里只是不让它成为未处理的拒绝
+    return transition;
+  } catch {
+    done();
+    if (!updated) { flushSync(update); fallback?.(mode); }
+    return false;
+  }
+}
+
+/**
+ * 共享标题(榜单卡 ⇄ 事件页):两头字号不同。旧端记下字号与宽度,新端据此把缩放比写到根上(--vt-title-*),
+ * 样式表让旧字从自身字号放大到新字号、新字从旧字号长到自身字号——全程两张图里的字一样大,只在前段交叉淡化。
+ */
+export function shareTitle() {
+  const root = document.documentElement;
+  const px = (el) => parseFloat(getComputedStyle(el).fontSize) || 16;
+  const vars = ['--vt-title-ow', '--vt-title-nw', '--vt-title-ratio'];
+  for (const v of vars) root.style.removeProperty(v);   // 每一场从干净的开始:上一场的尺寸不留给这一场
+  let from = null;
+  return {
+    /** 旧端取到了没有:没取到(旧标题不在视口)就不要给新标题起共享的名字,它跟着卡面走即可。 */
+    get taken() { return from != null; },
+    take(el) { if (el) from = { size: px(el), width: el.getBoundingClientRect().width }; },
+    give(el) {
+      if (!from || !el) return;
+      root.style.setProperty(vars[0], `${from.width}px`);
+      root.style.setProperty(vars[1], `${el.getBoundingClientRect().width}px`);
+      root.style.setProperty(vars[2], (px(el) / from.size).toFixed(4));
+    },
+  };
+}
+
+/** el 是否有一部分在视口里(共享元素的两端都要看得见才接得上)。 */
+export function inViewport(el) {
+  if (!el || !el.isConnected) return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 && r.bottom > 4 && r.top < window.innerHeight - 4 && r.right > 0 && r.left < window.innerWidth;
+}
+
+/**
+ * 来源栏收起(连续):整块滑到导轨下面,条目列与阅读窗跟着靠过去,不是被挤扁。
+ * 现网收起时来源栏是直接卸载、栅格少一列。这里的做法:卸载之前克隆一份替身,放在一个与来源栏同位同大的裁切框里往左滑出
+ * (被裁切框的左边切掉 = 滑到导轨下面);同时把栅格第一列从「导轨 + 来源栏」的宽度收回到导轨的宽度——
+ * 这期间导轨自己仍按原宽靠左([data-src-sliding] 的样式)。apply 用 flushSync 同步执行。键盘触发、减少动效直接换。
+ */
+export function slideSourcesAway(shell, apply) {
+  const aside = shell?.querySelector(':scope > .reader-col-sources');
+  const rail = shell?.querySelector(':scope > .reader-vrail');
+  if (!aside || !rail || pointerMotion(motionIntent()) !== 'full') { apply(); return; }
+  const host = shell.getBoundingClientRect();
+  const box = aside.getBoundingClientRect();
+  const railWidth = rail.getBoundingClientRect().width;
+  const clip = document.createElement('div');
+  clip.className = 'reader-src-ghost';
+  clip.setAttribute('aria-hidden', 'true');
+  clip.setAttribute('inert', '');
+  Object.assign(clip.style, { left: `${box.left - host.left}px`, top: `${box.top - host.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+  const ghost = aside.cloneNode(true);
+  ghost.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+  ghost.querySelectorAll('.reader-ind').forEach((node) => { node.style.animation = 'none'; });
+  const scrolled = [...aside.querySelectorAll('*')].map((node, i) => [i, node.scrollTop]).filter(([, top]) => top > 0);
+  // 沉浸阅读刚被这一下点击唤回、来源栏还在淡回来的途中:替身进了裁切框就不再吃那条明度规则,记下此刻的明度让它接着淡完,免得亮跳一下
+  const dim = Number(getComputedStyle(aside).opacity);
+  clip.appendChild(ghost);
+  flushSync(apply);
+  const tracks = getComputedStyle(shell).gridTemplateColumns.split(' ');   // 收起之后:导轨 / 条目列 / 阅读窗
+  if (tracks.length !== 3) return;   // 没按预期变成三列(整幅页面等):不动
+  shell.appendChild(clip);
+  const copies = [...ghost.querySelectorAll('*')];
+  for (const [i, top] of scrolled) if (copies[i]) copies[i].scrollTop = top;
+  shell.dataset.srcSliding = '1';
+  const timing = { duration: MOTION.drawer, easing: MOTION.easeDrawer };
+  const rest = `${tracks[1]} minmax(0px, 1fr)`;
+  const slide = shell.animate([{ gridTemplateColumns: `${railWidth + box.width}px ${rest}` }, { gridTemplateColumns: `${tracks[0]} ${rest}` }], timing);
+  ghost.animate([{ transform: 'none' }, { transform: 'translateX(-100%)' }], { ...timing, fill: 'forwards' });
+  if (dim < 1) ghost.animate([{ opacity: dim }, { opacity: 1 }], { duration: MOTION.fast, easing: MOTION.ease });
+  const done = () => { clip.remove(); delete shell.dataset.srcSliding; };
+  slide.finished.then(done, done);
+}
+
+// ── 页内换内容的两层(listFlip 的滑到新位置、swapMotion 的新内容进场)共用的一把锁 ──
+// 同一时刻只有一件在等新内容。点到它们管的任何一颗控件(不论这一下演不演),先把还在等的那件撤掉——
+// 否则旧任务会把新操作换上来的内容当成自己的:换了范围、没等到新榜又去切页签,行会按上一次的意图滑。
+const swapJobs = new Set();
+let swapEvent = null;
+
+/** 这一下点击点到了「会换内容」的控件。每次点击只清一次(两层各有一个监听,同一个事件会来两遍)。 */
+export function beginContentSwap(event) {
+  if (event && event === swapEvent) return;
+  swapEvent = event || null;
+  for (const cancel of [...swapJobs]) cancel();
+  swapJobs.clear();
+}
+
+/** 登记一件正在等新内容的任务;返回注销函数(任务自己结束时调用)。 */
+export function holdContentSwap(cancel) {
+  swapJobs.add(cancel);
+  return () => swapJobs.delete(cancel);
+}
+
+/** 离 el 最近的那个滚动容器(自己是就返回自己;找不到返回 null)。 */
+export function scrollerOf(el) {
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+    const flow = getComputedStyle(node).overflowY;
+    if (flow === 'auto' || flow === 'scroll') return node;
+  }
+  return null;
+}
+
+/**
+ * 行高折叠(速读卡的「依据」):fold 是 display: grid 的外层,它唯一的子元素是 min-height: 0 / overflow: hidden 的内层。
+ * 展开:行高 0fr → 1fr 220ms,内容同时淡入;收起:内容 120ms 淡出、行高 160ms 收回,末帧保持,调用方等它的 finished 再卸载。
+ * 上一段还在跑(连点、演到一半反向)时,新的一段从此刻看得见的高度与明度接着走,不跳回端点。返回行高那条动画(起不了时返回 null)。
+ */
+export function foldRows(fold, open) {
+  const inner = fold?.firstElementChild;
+  if (!fold || !inner || !fold.animate) return null;
+  let rows = open ? 0 : 1;      // 起点:占内容高度的几成
+  let alpha = open ? 0 : 1;
+  const running = [...fold.getAnimations(), ...inner.getAnimations()];
+  if (running.length) {
+    const full = inner.scrollHeight;
+    if (full > 0) rows = Math.max(0, Math.min(1, fold.getBoundingClientRect().height / full));
+    alpha = Math.max(0, Math.min(1, Number(getComputedStyle(inner).opacity)));
+    for (const anim of running) anim.cancel();
+  }
+  const from = { gridTemplateRows: `${Number(rows.toFixed(3))}fr` };
+  if (open) {
+    inner.animate([{ opacity: alpha }, { opacity: 1 }], { duration: 220, easing: 'linear' });
+    return fold.animate([from, { gridTemplateRows: '1fr' }], { duration: 220, easing: MOTION.easeDrawer });
+  }
+  inner.animate([{ opacity: alpha }, { opacity: 0 }], { duration: 120, easing: 'linear', fill: 'forwards' });
+  return fold.animate([from, { gridTemplateRows: '0fr' }], { duration: 160, easing: MOTION.easeDrawer, fill: 'forwards' });
+}
+
+/** 来源栏展开的退路(浏览器没有 View Transitions 时):栅格第二列从 0 长到来源栏的宽度,来源栏从导轨下面滑出来。apply 之后调用。 */
+export function slideSourcesIn(shell) {
+  const aside = shell?.querySelector(':scope > .reader-col-sources');
+  if (!aside || pointerMotion(motionIntent()) !== 'full') return;
+  const tracks = getComputedStyle(shell).gridTemplateColumns.split(' ');
+  if (tracks.length !== 4) return;
+  const timing = { duration: MOTION.drawer, easing: MOTION.easeDrawer };
+  const rest = `${tracks[2]} minmax(0px, 1fr)`;
+  shell.dataset.srcSliding = '1';
+  const slide = shell.animate([{ gridTemplateColumns: `${tracks[0]} 0px ${rest}` }, { gridTemplateColumns: `${tracks[0]} ${tracks[1]} ${rest}` }], timing);
+  const inner = aside.firstElementChild;
+  inner?.animate([{ transform: 'translateX(-100%)' }, { transform: 'none' }], timing);
+  const done = () => { delete shell.dataset.srcSliding; };
+  slide.finished.then(done, done);
+}

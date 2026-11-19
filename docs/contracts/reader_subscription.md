@@ -176,6 +176,147 @@ is an internal ingestion detail. Consumers filter by *publish* time. (The collec
 With no active subscriptions the feed returns an empty result rather than the whole
 archive.
 
+## Hot Events Board (site-wide, same feed token)
+
+The 榜单 page's 热点事件 board is also delivered by token (issue #310), so a script does not
+need a login or guest cookie:
+
+```http
+GET /api/public/feed/events
+GET /api/public/feed/events/{event_id}
+Authorization: Bearer dfeed_...
+```
+
+Only the per-user feed token authorizes these (`Authorization: Bearer`, or `?token=` with the
+caveats described under *Per-Subscription Consumer Endpoints*). A `dsub_` subscription token
+or a login cookie is not accepted. A missing or invalid token returns `401` before any
+parameter-range check; a malformed value (`event_id=abc`) is still a `422`.
+
+**The board is site-wide, not subscription-scoped.** Every valid feed token — reader or
+admin — receives the board that `GET /api/reader/events` shows every reader and guest; the
+token only decides whether the caller may pull. Both surfaces call
+`services/event_board.read_board` / `read_event`, so they cannot drift:
+
+- Only reader-visible members count. Members from hidden, user-private and credentialed
+  sources are dropped at read time, and title, summary, publishers and counts are computed
+  from what is left.
+- An event needs at least two visible publishers to rank. Order is publisher count ↓, then
+  latest member first-seen ↓. At most 10 events, never padded.
+- The board is computed per node from that node's visible sources and its own 07:00
+  (Asia/Shanghai) rank snapshot, so two deployments can rank the same event differently.
+
+| Parameter | Notes |
+| --- | --- |
+| `window_hours` | Events first seen within this window. Default `168` (7 days); `48` is the reader's 近 2 天 view. 1–336, otherwise `400`. |
+| `limit` | 1–10, default 10, otherwise `400`. List only. |
+| `include_members` | List only. `true` adds `members` to every item (same shape and order as the detail endpoint), so one request returns the board with all its reports. Default `false`. |
+
+List response — the reader board payload plus the feed family's `status` / `count`:
+
+```json
+{
+  "status": "success",
+  "count": 1,
+  "generated_at": "2026-11-19T02:00:00+00:00",
+  "window_hours": 168,
+  "snapshot_date": "2026-11-19",
+  "empty_reason": null,
+  "items": [
+    {
+      "event_id": 123,
+      "rank": 1,
+      "previous_rank": 2,
+      "title": "Event title",
+      "title_lang": "zh",
+      "summary": "Summary of the representative report",
+      "publisher_count": 3,
+      "member_count": 4,
+      "first_seen_at": "2026-11-18T09:12:00+00:00",
+      "first_report_at": "2026-11-18T08:30:00+00:00",
+      "latest_at": "2026-11-19T01:40:00+00:00",
+      "latest": {
+        "article_id": "…", "title": "…", "title_zh": null,
+        "source_id": "…", "source_name": "…", "published_at": "…"
+      },
+      "is_new": false,
+      "is_recent": true,
+      "representative": {
+        "article_id": "…", "title": "…", "source_id": "…", "source_name": "…",
+        "source_role": "official", "url": "https://…", "publish_date": "…"
+      },
+      "publishers": [{"key": "…", "name": "…", "count": 2, "source_id": "…"}],
+      "story": {"follows_event_id": null, "follows_title": null}
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `generated_at` | When this response was computed (UTC). The board is computed on request, not cached. |
+| `snapshot_date` | Date of the daily snapshot `previous_rank` is compared against: the most recent one for the same window generated before now. `null` when none exists yet. |
+| `empty_reason` | `"no_events"` when `items` is empty, otherwise `null`. |
+| `rank` | Position on this window's board right now. Always set in the list; in the detail response it is `null` when the event is not currently on the board. |
+| `previous_rank` | Position on the snapshot named by `snapshot_date`. `null` when the event was not on that snapshot, or when no snapshot exists. Looked up independently of `rank`. |
+| `title` / `title_lang` | Display title computed from visible members; `title_lang` is `zh` or `en`. |
+| `summary` | Analysis summary of the representative report; may be empty. |
+| `publisher_count` / `member_count` | Distinct visible publishers / visible reports. Several channels of one owner count as one publisher; provisional (push-ingested) sources are members but not publishers. |
+| `first_seen_at` / `latest_at` | When the event's first / latest member was first seen (ingest time, not publish time). |
+| `first_report_at`, `latest` | Earliest publish time among members, and the most recently published report. |
+| `is_new` / `is_recent` | Event first seen within 6 hours / 48 hours. |
+| `representative` | The report shown for the event (official > non-social > score > earlier). `source_role` is `official`, `media`, `personal` or `leaderboard`. |
+| `publishers[]` | One entry per publisher: `key`, display `name`, report `count`, a representative `source_id`. |
+| `story` | The earlier event this one follows, when that event has visible members; otherwise both fields are `null`. |
+
+With `include_members=true`, and always in the detail response, `members` lists the visible
+reports ordered by `report_at` descending, ties broken by `article_id` ascending:
+
+```json
+{
+  "article_id": "…", "title": "…", "title_zh": null,
+  "source_id": "…", "source_name": "…", "source_role": "media", "content_shape": "article",
+  "url": "https://…", "publish_date": "…", "report_at": "…", "published_at": "…",
+  "publisher_key": "…", "is_representative": false, "summary": "…"
+}
+```
+
+`content_shape` is `article`, `social` or `podcast`; `title_zh` is the cached translated
+title when there is one. Timestamps are ISO-8601 strings as archived.
+
+A member carries three different times, and the list is ordered by the second one:
+
+| Field | Meaning |
+| --- | --- |
+| `publish_date` | Publish time as archived from the source, unmodified. It can be missing, unparseable, or later than the time the report was ingested. |
+| `report_at` | Grouping time: `publish_date` clamped into the 72 hours before the report was first seen (the first-seen time when `publish_date` is missing). `members` is sorted by this; a stored `report_at` that cannot be parsed falls back to `publish_date` for ordering. |
+| `published_at` | Display publish time: `publish_date` when it parses and is not later than the report's first-seen time, otherwise `report_at`. The item's `first_report_at` and `latest` are picked by this. |
+
+Because `report_at` is clamped, a report published long ago but ingested recently sorts as
+recent. Do not read `members[0]` as the most recently published report: use the item's
+`latest`, or sort `members` by `published_at`.
+
+Detail response:
+
+```json
+{"status": "success", "event": {}}
+```
+
+`event` carries every list item field plus `members`, `followups`
+(`[{event_id, title, first_seen_at}]`, later events that follow this one) and `merged_into`.
+`rank` refers to the `window_hours` board and is `null` for an event not currently on it — a
+single-publisher event can be fetched by id but never ranks. `previous_rank` is looked up
+separately in the same window's snapshot, so an event that ranked on that snapshot and has
+since dropped off the board returns `rank: null` with a non-null `previous_rank`. An id that
+was merged away returns the surviving event with `merged_into` set to its id. An unknown id,
+or an event with no visible member, returns `404`.
+
+A deployment that predates these endpoints answers `404`; a node running with
+`[runtime] role=collector` answers `403` regardless of version.
+
+**Stability.** These field sets are a delivery contract: additive changes only. They are
+pinned by `tests/test_events_api.py` (`ITEM_KEYS`, `MEMBER_KEYS`, `DETAIL_KEYS`,
+`FEED_BOARD_KEYS`), which fails when a reader-side change adds, renames or drops a key.
+
 ## Per-Subscription Consumer Endpoints
 
 Each subscription also exposes its own token-scoped endpoint (used internally per
@@ -274,8 +415,8 @@ and rotation invalidates the previous token.
 
 - **Per-subscription tokens** (`dsub_` prefix) authorize one subscription's endpoint.
 - **Per-user feed tokens** (`dfeed_` prefix) authorize the personal aggregated feed across
-  all of that user's subscribed sources. One row per user (`reader_feed_tokens`); rotating
-  replaces it in place.
+  all of that user's subscribed sources, and the site-wide hot events board. One row per
+  user (`reader_feed_tokens`); rotating replaces it in place.
 
 Inactive subscriptions return no consumer data, and the feed returns nothing for a user
 with no active subscriptions.

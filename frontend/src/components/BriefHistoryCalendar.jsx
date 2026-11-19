@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLayer } from './layer/useLayer';
+import { usePopMotion } from '../hooks/usePopMotion';
 import Sheet from './layer/Sheet';
 import { formatDateTime } from '../utils/datetime';
 import {
@@ -197,6 +198,7 @@ export default function BriefHistoryCalendar({
     const next = event.relatedTarget;
     if (next && !panelRef.current?.contains(next) && !triggerRef.current?.contains(next)) onClose();
   };
+  usePopMotion(panelRef, { trigger: triggerRef, scope: '.reader-shell' });
 
   const revisions = nav.byKey.get(selDate)?.revisions || [];
 

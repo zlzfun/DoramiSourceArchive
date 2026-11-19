@@ -262,6 +262,47 @@
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── 动效语言(issue #301,conventions §7;样页 docs/design/issue-301-motion-language)──
+     曲线三条:--motion-ease(出入场、位移收尾,沿用上面那条)/ --motion-ease-drawer(来源栏这类整块滑动)/
+     --motion-ease-focus(由虚到实,只给问答面板)。
+     时长在 fast / medium / slow 之外加五档:按下、悬停进 / 出(进快出慢)、常规、整块滑动。
+     弹簧五档由 utils/spring.js 的 MOTION_SPRINGS 取样(守卫 test/motionTokens.test.mjs 逐字比对);
+     -dur 是落定时长,弹簧曲线必须配它用——换别的时长,回弹落的位置就不对了。 */
+  --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --motion-ease-focus: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-press: 120ms;      /* 按下 */
+  --motion-hover-in: 100ms;   /* 悬停底色:进 */
+  --motion-hover-out: 180ms;  /* 悬停底色:出 */
+  --motion-base: 200ms;       /* 行状态换色这类常规过渡 */
+  --motion-drawer: 360ms;     /* 来源栏整块滑入 / 滑出 */
+  --motion-recede: 600ms;     /* 沉浸阅读:导轨 / 来源栏 / 条目列退后——慢,不抢注意;回来用 --motion-fast,一碰就回 */
+  --motion-recede-wait: 240ms; /* 退后之前先等这么久:滚动中途顿一下不至于来回闪 */
+  /* snappy(0.28s · 回弹 0):松手回弹 */
+  --motion-spring-snappy: linear(0, 0.0538, 0.17, 0.3049, 0.4358, 0.5523, 0.6507, 0.731, 0.7951, 0.8453, 0.884, 0.9136, 0.936, 0.9528, 0.9653, 0.9746, 0.9815, 0.9865, 0.9902, 0.9929, 0.9949, 0.9963, 0.9973, 0.9981, 0.9986, 1);
+  --motion-spring-snappy-dur: 413ms;
+  /* glide(0.32s · 回弹 0.12):列表选中块、提示弹入 */
+  --motion-spring-glide: linear(0, 0.0435, 0.144, 0.2688, 0.3974, 0.5179, 0.6243, 0.7143, 0.7878, 0.8462, 0.8914, 0.9256, 0.9508, 0.969, 0.9817, 0.9904, 0.996, 0.9995, 1.0015, 1.0026, 1.0029, 1.0029, 1.0027, 1.0023, 1.0019, 1.0016, 1.0012, 1);
+  --motion-spring-glide-dur: 446ms;
+  /* move(0.42s · 回弹 0.12):位移——筛选后的行、分数逐位滚动 */
+  --motion-spring-move: linear(0, 0.0269, 0.0929, 0.1809, 0.2786, 0.3778, 0.4728, 0.5605, 0.6391, 0.7078, 0.7667, 0.8164, 0.8576, 0.8913, 0.9185, 0.9401, 0.957, 0.9701, 0.98, 0.9874, 0.9928, 0.9967, 0.9993, 1.001, 1.0021, 1.0027, 1.0029, 1.0029, 1.0028, 1.0026, 1.0023, 1.002, 1.0017, 1.0014, 1.0012, 1);
+  --motion-spring-move-dur: 583ms;
+  /* settle(0.50s · 回弹 0.18):大变形——卡面展开成页、到场 */
+  --motion-spring-settle: linear(0, 0.0198, 0.0704, 0.1411, 0.2232, 0.3104, 0.3979, 0.4823, 0.5615, 0.6339, 0.6988, 0.7561, 0.8057, 0.8481, 0.8838, 0.9134, 0.9376, 0.9571, 0.9725, 0.9844, 0.9934, 1, 1.0047, 1.0079, 1.0098, 1.0108, 1.0111, 1.0109, 1.0104, 1.0096, 1.0087, 1.0077, 1.0067, 1.0058, 1.0049, 1.0041, 1.0034, 1.0027, 1.0022, 1.0017, 1.0013, 1);
+  --motion-spring-settle-dur: 687ms;
+  /* pop(0.35s · 回弹 0.45):落点——星标、导轨图标、订阅钮 */
+  --motion-spring-pop: linear(0, 0.0404, 0.1428, 0.282, 0.4369, 0.5913, 0.7334, 0.8559, 0.9549, 1.0294, 1.0807, 1.1113, 1.1248, 1.125, 1.1155, 1.0999, 1.081, 1.0612, 1.0424, 1.0256, 1.0115, 1.0006, 0.9927, 0.9876, 0.9848, 0.984, 0.9847, 0.9863, 0.9886, 0.991, 0.9935, 0.9958, 0.9977, 0.9993, 1.0005, 1.0013, 1.0018, 1.002, 1.002, 1.0018, 1.0016, 1.0013, 1);
+  --motion-spring-pop-dur: 704ms;
+}
+/* 不支持 linear() 的浏览器(Chrome < 113 / Safari < 17.2):五档弹簧退回 ease-out,时长不变 */
+@supports not (transition-timing-function: linear(0, 1)) {
+  :root {
+    --motion-spring-snappy: var(--motion-ease);
+    --motion-spring-glide: var(--motion-ease);
+    --motion-spring-move: var(--motion-ease);
+    --motion-spring-settle: var(--motion-ease);
+    --motion-spring-pop: var(--motion-ease);
+  }
 }
 
 /* ── 移动 token(issue #230 移动规范,conventions「移动端」节;取自样页 docs/design/issue-230-mobile「token 与落地注记」)──
@@ -8590,14 +8631,8 @@ input[type="radio"] {
   /* ── 体验二波(对照 Folo,reader-polish-wave2):微动效 / 扫视密度 ──
      动效原则:120-250ms、ease-out、一次一属性——仪器阻尼感,非表演。 */
 
-  /* A1 · 切换动效:正文切换淡入+轻上移(key 重挂载触发);切源列表淡入 */
-  @keyframes reader-enter {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: none; }
-  }
-
-  .reader-enter { animation: reader-enter 180ms var(--motion-ease) both; }
-
+  /* A1 · 切换动效:切源列表淡入。正文切换的入场(原 reader-enter:整窗淡入 + 上移 6px,180ms,键盘换篇也播)
+     issue #301 第二批改由 utils/readerMotion.enterPane 编排——标题区淡入上移、其余一起淡入,键盘触发不动。 */
   @keyframes reader-list-enter {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -8669,7 +8704,6 @@ input[type="radio"] {
     color: transparent;
   }
 
-  :root[data-motion="reduce"] .reader-enter,
   :root[data-motion="reduce"] .reader-list-enter,
   :root[data-motion="reduce"] .reader-search-inline,
   :root[data-motion="reduce"] .skeleton-delay { animation: none; opacity: 1; }
@@ -15729,3 +15763,375 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
     .sync-pick button:hover { background: var(--dorami-hover); }
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+   动效语言 · 桌面读者面(issue #301,conventions §7;样页 docs/design/issue-301-motion-language)
+   这一段全部挂在 .reader-shell 下:手机壳(.m-shell)与管理面不经过这里,观感不动。
+   写在文件尾的未分层区:压得过前面 @layer components 里各类自己的 transition / :active。
+   ══════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 反馈层(第二批)· 悬停与按下 ──
+   小件按下缩到 0.97,松手用 snappy 弹簧回去;悬停底色「进快出慢」(进 100ms、出 180ms)。
+   整行面积大,只缩到 0.985(榜单行更宽,0.99);行里的次动作被按下时行自己不跟着缩——条目行的收藏星与订阅点是 span(点击由外层分流),
+   按类名排除;榜单行铺满整行的 .rk-hit 是主命中,不算次动作。
+   键盘触发的不动:按下缩放只在最近一次输入不是键盘时生效(<html data-input>,utils/inputModality 维护)。
+   悬停一律包在 @media (hover: hover) 里(守卫 hoverGuard.test.mjs;触屏没有「移开」,不该停在进场时长上)。
+   导轨:块不动,只缩图标,松手带一点回弹。 */
+.reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
+    .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
+    .reader-source-row, .reader-scope-btn, .reader-src-more,
+    .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
+    .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
+    .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
+    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+    .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row) {
+  transition:
+    transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy),
+    background-color var(--motion-hover-out) ease,
+    color var(--motion-hover-out) ease,
+    border-color var(--motion-hover-out) ease,
+    box-shadow var(--motion-hover-out) ease;
+}
+@media (hover: hover) {
+  .reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
+      .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
+      .reader-source-row, .reader-scope-btn, .reader-src-more,
+      .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
+      .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
+      .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
+      .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+      .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row):hover {
+    transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
+  }
+}
+/* 现网原有的两条整钮按下(阅读窗图标钮 0.92、发现页订阅钮 0.96)在这里归零,统一由下面那条 0.97 接手;键盘按住空格时不缩 */
+.reader-shell :is(.reader-pane-iconbtn, .reader-disc-sub):active { transform: none; }
+:root:not([data-input="key"]) .reader-shell :is(.reader-seg-btn, .reader-tr-seg-btn, .reader-axis-btn, .reader-kind-chip, .reader-tab,
+    .reader-unread-icon, .reader-search-icon, .reader-fav-icon, .reader-pane-iconbtn, .reader-src-fold,
+    .reader-source-row, .reader-scope-btn, .reader-src-more,
+    .reader-pane-back, .reader-pane-next, .reader-pane-act, .reader-pane-sub, .reader-ai-dims,
+    .reader-load-more, .reader-pager-btn, .reader-ai-summary-generate,
+    .reader-disc-sub, .reader-disc-sort, .reader-disc-add, .reader-disc-back,
+    .bp-btn, .bp-hist, .bp-lbtn, .bp-chip, .bp-cal-nav, .bp-cal-day, .rk-back, .rk-latest,
+    .mini-seg-btn, .share-primary, .share-menu-close, .reader-ai-head-btn, .reader-ai-send, .reader-ai-seg-btn, .reader-ai-ref-row):active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in);
+  transition-timing-function: var(--motion-ease), ease, ease, ease, ease;
+}
+/* 整行 */
+.reader-shell :is(.reader-entry, .rk-row, .rk-tl-item) {
+  transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, box-shadow var(--motion-hover-out) ease;
+}
+@media (hover: hover) {
+  .reader-shell :is(.reader-entry, .rk-row, .rk-tl-item):hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .reader-shell .reader-entry:active:not(:has(:is(.reader-entry-fav, .reader-entry-unsub):active)) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+:root:not([data-input="key"]) .reader-shell .rk-row:active:not(:has(:is(a, button:not(.rk-hit)):active)) { transform: scale(0.99); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+/* 事件页时间线的条目是整块可点的一行,同条目行 */
+:root:not([data-input="key"]) .reader-shell .rk-tl-item:active { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+/* 早报条目里的收藏星:它自己还有一条「悬停才浮出」的明度过渡,单独写,别被上面那条简写盖掉 */
+.reader-shell .bp-fav {
+  transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), opacity var(--motion-fast) var(--motion-ease), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease;
+}
+@media (hover: hover) {
+  .reader-shell .bp-fav:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .reader-shell .bp-fav:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-fast), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), var(--motion-ease), ease, ease; }
+/* 早报条目、发现页的来源卡:标题那颗钮的 ::after 铺满整块,整块可点——按在它上面时整块缩 0.985(同条目行)。
+   次动作(收藏星、订阅钮)叠在它上层,按它们时这条不命中。合集卡自己就是整块的钮,按里面的订阅钮时不缩。
+   两类各有一条原有的过渡(条目的明度、卡片的阴影),简写里一并带上 */
+.reader-shell .bp-item { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), opacity var(--motion-medium) var(--motion-ease); }
+.reader-shell .reader-disc-card { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), box-shadow var(--motion-fast) var(--motion-ease); }
+:root:not([data-input="key"]) .reader-shell .bp-item:has(.bp-item-open:active) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-medium); transition-timing-function: var(--motion-ease), var(--motion-ease); }
+:root:not([data-input="key"]) .reader-shell .reader-disc-card:has(.reader-disc-open:active),
+:root:not([data-input="key"]) .reader-shell .reader-disc-coll-card:active:not(:has(.reader-disc-sub:active)) { transform: scale(0.985); transition-duration: var(--motion-press), var(--motion-fast); transition-timing-function: var(--motion-ease), var(--motion-ease); }
+/* 右键菜单挂在 body 上(portal),不在 .reader-shell 里;它只有桌面读者面在用 */
+.ctx-menu .ctx-item { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
+@media (hover: hover) {
+  .ctx-menu .ctx-item:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .ctx-menu .ctx-item:active:not(:disabled) { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+/* 吸顶栏里的文字动作:原规则挂在 .reader-col-read .reader-pane-bar 下,特异性高一档,单独点名 */
+.reader-shell .reader-col-read .reader-pane-bar .reader-pane-act {
+  transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease;
+}
+@media (hover: hover) {
+  .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act:hover { transition-duration: var(--motion-spring-snappy-dur), var(--motion-hover-in), var(--motion-hover-in); }
+}
+:root:not([data-input="key"]) .reader-shell .reader-col-read .reader-pane-bar .reader-pane-act:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+.reader-shell .reader-entry + .reader-entry::before { transition: opacity var(--motion-hover-out) ease; }
+@media (hover: hover) {
+  .reader-shell .reader-entry:hover::before, .reader-shell .reader-entry:hover + .reader-entry::before { transition-duration: var(--motion-hover-in); }
+}
+/* 导轨(图标常态上移 7px 给标签让位,按下时在这个位置上缩) */
+.reader-shell .reader-vrail-btn { transition: background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
+@media (hover: hover) {
+  .reader-shell .reader-vrail-btn:hover { transition-duration: var(--motion-hover-in); }
+}
+.reader-shell .reader-vrail-btn:active { transform: none; }
+.reader-shell .reader-vrail .reader-vrail-btn > svg { transition: transform var(--motion-spring-pop-dur) var(--motion-spring-pop); }
+:root:not([data-input="key"]) .reader-shell .reader-vrail .reader-vrail-btn:active > svg { transform: translateY(-7px) scale(0.86); transition: transform var(--motion-press) var(--motion-ease); }
+
+/* ── 反馈层 · 速读卡分数逐位滚动 ──
+   结构沿用里程表的格子与竖条(.reader-ai-odo-*);过渡交给 WAAPI(AiReadingCard.ScoreRoll),样式表里那条 2.2s 的过渡在这里关掉。
+   卡头的分数是行内小字:格宽跟数字自己走(齐线等宽数字,与旁边静态的那个维度同宽),不用页边大数字的定宽格。 */
+.reader-shell .reader-ai-odo.is-roll .reader-ai-odo-strip { transition: none; }
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-cell,
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-dot { width: auto; height: 1em; line-height: 1; }
+.reader-shell .reader-ai-odo.is-inline .reader-ai-odo-digit { height: 1em; line-height: 1; }
+
+/* ── 反馈层 · 行读态换色 ──
+   标题颜色 200ms 过渡;粗细直接换(两种字重交叉淡化会出重影)。全部标读时各行按 --read-delay 依次换(每行晚 20ms,最多晚 160ms)(utils/readerMotion.armReadCascade)。 */
+.reader-shell .reader-entry .reader-entry-title {
+  transition: color var(--motion-base) ease var(--read-delay, 0ms), font-weight 0s linear var(--read-delay, 0ms);
+}
+
+/* ── 反馈层 · 明暗切换 ── 整页交叉淡化 180ms(utils/readerMotion.themeFade 在过渡期间挂 .theme-fading) */
+:root.theme-fading::view-transition-old(root),
+:root.theme-fading::view-transition-new(root) { animation-duration: 180ms; animation-timing-function: linear; }
+
+/* ── 反馈层 · 浮层开合 ──
+   往期日历、分享、右键菜单的入场改由 WAAPI 编排(hooks/usePopMotion:对准触发钮 0.96 → 1,150ms;离场 100ms 替身),
+   样式表里原来那条 dorami-popover-in / share-menu-in 在桌面读者面关掉,免得叠两次。来源下拉原来没有动画。
+   右键菜单 portal 在 body 下,只有桌面读者面在用(手机壳是动作单)。 */
+.reader-shell :is(.bp-pop, .share-menu), .ctx-menu { animation: none; }
+
+/* ── 反馈层 · 提示 ──
+   自下弹入(glide 弹簧)+ 120ms 淡入,原路退出 180ms。提示是全站共用的一个元素(App 根上),
+   用「页面里有正在显示的桌面读者面」限定:手机壳与管理面仍是原来那组 toast-in / toast-out。管理员从阅读器回到管理面时
+   阅读器仍挂着、只是所在的 .tab-panel 带 is-off,所以要把它排除掉。键盘触发出来的提示不位移,只淡入淡出——
+   是键盘还是指针,看提示自己身上的 data-input(Toast 在出现的那一刻记下),不看 <html data-input>:
+   提示在场的两三秒里人换了输入方式,动画名跟着变,入场会被重播一遍。 */
+/* 提示里的钮(动作钮、关闭钮)同小件:按下 0.97 */
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop button { transition: transform var(--motion-spring-snappy-dur) var(--motion-spring-snappy), background-color var(--motion-hover-out) ease, color var(--motion-hover-out) ease; }
+:root:not([data-input="key"]):has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop button:active { transform: scale(0.97); transition-duration: var(--motion-press), var(--motion-hover-in), var(--motion-hover-in); transition-timing-function: var(--motion-ease), ease, ease; }
+@keyframes reader-toast-in { from { transform: translate(-50%, calc(100% + 24px)); } to { transform: translate(-50%, 0); } }
+@keyframes reader-toast-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes reader-toast-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(100% + 24px)); } }
+/* 原位淡入淡出(键盘触发时用):水平居中的 -50% 是烘在动画的 transform 里的,这两组也得带着 */
+@keyframes reader-toast-still-in { from { opacity: 0; transform: translate(-50%, 0); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes reader-toast-still-out { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, 0); } }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop { animation: reader-toast-still-in 120ms linear both; }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving { animation: reader-toast-still-out var(--motion-hover-out) linear both; }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop:not([data-input="key"]) { animation: reader-toast-in var(--motion-spring-glide-dur) var(--motion-spring-glide) both, reader-toast-fade 120ms linear both; }
+:root:has(.reader-shell):not(:has(.tab-panel.is-off .reader-shell)) .toast-pop.is-leaving:not([data-input="key"]) { animation: reader-toast-out var(--motion-hover-out) var(--motion-ease) both; }
+
+/* ── 指示器与列表(第三批)· 滑动指示器 ──
+   选中项的底色 / 底线由每个宿主里的一块 .reader-ind 来画(utils/glideIndicators.js 摆位与滑动),宿主带 .has-ind 时各项自己的让出来;
+   这一层没挂上时各项照旧自己着色。指示器垫在各项下面:一般宿主用 z-index: -1 + isolation;导轨不能自成层叠上下文
+   (它的浮签要压在右边各栏之上),改为把指示器放在最前、不设层级。 */
+.reader-shell :is(.reader-seg, .reader-axis, .mini-seg, .reader-tabs, .reader-kind-band, .reader-source-scroll, .reader-list-scroll).has-ind { position: relative; isolation: isolate; }
+.reader-shell .reader-vrail.has-ind { position: relative; }
+.reader-shell .reader-ind { position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none; transform-origin: 0 0; will-change: transform; }
+.reader-shell .reader-ind.is-front { z-index: auto; }
+.reader-shell .reader-ind.is-seg { background: var(--dorami-surface); box-shadow: var(--sh-1); }
+.reader-shell .reader-ind.is-select { background: var(--dorami-select); }
+.reader-shell .reader-ind.is-line { background: var(--dorami-ink); }
+/* 各项自己的选中底让出来 */
+.reader-shell .reader-vrail.has-ind .reader-vrail-btn.is-on:not(.reader-vrail-qa) { background: transparent; }
+.reader-shell :is(.reader-seg, .reader-axis, .mini-seg).has-ind > .is-on { background: transparent; box-shadow: none; }
+.reader-shell .reader-kind-band.has-ind > .reader-kind-chip.is-on { background: transparent; }
+.reader-shell .reader-tabs.has-ind > .reader-tab.is-on::after,
+.reader-shell > .reader-disc .reader-disc-viewseg.has-ind .reader-seg-btn.is-on::after { content: none; }
+.reader-shell .reader-source-scroll.has-ind .reader-source-row-active,
+.reader-shell .reader-list-scroll.has-ind .reader-entry.is-active { background: transparent; }
+
+/* ── 指示器与列表 · 筛选后留下的行滑到新位置 ──
+   替身层(utils/listFlip.js):筛选重拉期间盖在列表上、把旧行留在原位。选中行的替身自己带选中底(真指示器被这一层挡在下面)。 */
+.reader-shell :is(.reader-list-scroll, .rk-wrap, .reader-disc):has(> .reader-flip-layer) { position: relative; }
+.reader-shell .reader-flip-layer { position: absolute; left: 0; top: 0; right: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.reader-shell .reader-list-scroll .reader-flip-layer .reader-entry.is-active,
+.reader-shell .reader-list-scroll.has-ind .reader-flip-layer .reader-entry.is-active { background: var(--dorami-select); }
+
+/* ── 空间转场(第四批)· 标题滚动停靠 ──
+   大标题滚出阅读窗顶时,吸顶栏里它的小字版随滚动位置连续地浮进来,往回滚原路退——没有时间轴,进度就是滚动位置。
+   吸顶栏在滚动容器外面,时间线由大标题在滚动容器里声明、经 timeline-scope 提到两者共同的祖先上。
+   不支持滚动驱动动画的浏览器走 utils/spatialMotion.mountTitleDock 的脚本退路(同样的明度与位移)。 */
+.reader-shell .reader-bar-title {
+  flex: 1 1 0; min-width: 0; margin: 0 12px 0 10px; padding-left: 12px; font-size: 13px; font-weight: 600; line-height: 20px;
+  color: var(--dorami-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: inset 1px 0 0 var(--dorami-border); opacity: 0;
+}
+@keyframes reader-dock { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes reader-dock-fade { from { opacity: 0; } to { opacity: 1; } }
+@supports (animation-timeline: view()) and (timeline-scope: --x) {
+  /* 这一栏上原本就挂着阅读进度线的时间线(--reader-scroll);timeline-scope 不是叠加的,两条要写在一起,否则进度线失效 */
+  .reader-shell .reader-col-read { timeline-scope: --reader-scroll, --reader-h1; }
+  .reader-shell .reader-pane .reader-pane-title { view-timeline: --reader-h1 block; }
+  .reader-shell .reader-bar-title { animation: reader-dock linear both; animation-timeline: --reader-h1; animation-range: exit 0% exit 100%; }
+  :root[data-motion="reduce"] .reader-shell .reader-bar-title { animation-name: reader-dock-fade; }
+}
+
+/* ── 空间转场(第四批)· View Transitions ──
+   只有两处用:榜单卡展开成事件页(rk-open / rk-back)、来源下拉变成来源栏(src-unfold)。编排在 utils/readerMotion.viewTransit:
+   过渡期间 <html data-vt="类型">,参与的元素临时带 view-transition-name。明暗切换另有一条(.theme-fading),不经这里。
+   命名元素被单独拍走后,所在的面上会留一个洞;洞里垫面色,免得中途露出画布色。 */
+:root[data-vt]::view-transition { background: var(--dorami-surface); }
+:root[data-vt]::view-transition-group(*) { animation-duration: var(--motion-spring-move-dur); animation-timing-function: var(--motion-spring-move); }
+:root[data-vt]::view-transition-old(*), :root[data-vt]::view-transition-new(*) { mix-blend-mode: normal; }
+/* 根:新界面直接垫底,动的只有命名的那几件(卡面展开除外:旧榜单留在下面,新页从卡里长出来) */
+:root[data-vt]::view-transition-old(root) { animation: none; opacity: 0; }
+:root[data-vt]::view-transition-new(root) { animation: none; opacity: 1; }
+:root[data-vt="rk-open"]::view-transition-old(root) { opacity: 1; }
+:root[data-vt="rk-open"]::view-transition-new(root) { opacity: 0; }
+@keyframes vt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes vt-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* 榜单卡 ⇄ 事件页:窗口从卡的位置长到整页(settle 弹簧),窗里的内容不缩放、锚在左上 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { z-index: 3; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card) { z-index: 2; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-group(rk-title) { animation-duration: var(--motion-spring-settle-dur); animation-timing-function: var(--motion-spring-settle); }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-card), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-card) { block-size: 100%; object-fit: none; object-position: left top; }
+/* 窗口自己垫面色:展开时盖住下面的旧榜单,收拢时盖住已经回来的榜单——窗口里只见两份内容交替,不叠字 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-image-pair(rk-card) { background: var(--dorami-surface); }
+:root[data-vt="rk-open"]::view-transition-old(rk-card) { animation: vt-fade-out 140ms linear both; }
+:root[data-vt="rk-open"]::view-transition-new(rk-card) { animation: vt-fade-in 200ms 60ms linear both; }
+:root[data-vt="rk-back"]::view-transition-old(rk-card) { animation: vt-fade-out 260ms linear both; }
+:root[data-vt="rk-back"]::view-transition-new(rk-card) { animation: vt-fade-in 220ms 140ms linear both; }
+/* 共享标题:两头字号不同。旧字从自身字号放大到新字号、新字从旧字号长到自身字号,全程两张图里的字一样大,只在前段交叉淡化 */
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title), :root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { block-size: auto; transform-origin: left top; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-old(rk-title) { inline-size: var(--vt-title-ow, auto); animation: vt-title-old var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-out var(--motion-spring-settle-dur) linear both; }
+:root:is([data-vt="rk-open"], [data-vt="rk-back"])::view-transition-new(rk-title) { inline-size: var(--vt-title-nw, auto); animation: vt-title-new var(--motion-spring-settle-dur) var(--motion-spring-settle) both, vt-x-in var(--motion-spring-settle-dur) linear both; }
+@keyframes vt-title-old { from { transform: scale(1); } to { transform: scale(var(--vt-title-ratio, 1)); } }
+@keyframes vt-title-new { from { transform: scale(calc(1 / var(--vt-title-ratio, 1))); } to { transform: scale(1); } }
+@keyframes vt-x-out { 0%, 8% { opacity: 1; } 34%, 100% { opacity: 0; } }
+@keyframes vt-x-in { 0%, 6% { opacity: 0; } 36%, 100% { opacity: 1; } }
+/* 返回时那张卡已不在视口(类型在转场中途换成 rk-swap):旧页与旧标题没有同名的新端接手,各自原地淡出,榜单在下面淡入;
+   上面那组卡面 / 标题的缩放规则只认 rk-open 与 rk-back,不会落到这里 */
+:root[data-vt="rk-swap"]::view-transition-old(rk-card), :root[data-vt="rk-swap"]::view-transition-old(rk-title) { animation: vt-fade-out 120ms linear both; }
+:root[data-vt="rk-swap"]::view-transition-new(root) { animation: vt-fade-in 180ms linear both; }
+
+/* 来源下拉变成来源栏(从「固定来源栏」展开):浮层的窗口长成来源栏,条目列与阅读窗跟着让出位置(位置与尺寸走 move 弹簧) */
+:root[data-vt="src-unfold"]::view-transition-group(src-bar) { z-index: 2; }
+:root[data-vt="src-unfold"]::view-transition-old(src-bar), :root[data-vt="src-unfold"]::view-transition-new(src-bar),
+:root[data-vt="src-unfold"]::view-transition-new(src-pane) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-vt="src-unfold"]::view-transition-image-pair(src-bar) { background: var(--dorami-canvas); }   /* 垫来源栏自己的底色(画布色),不是面色 */
+:root[data-vt="src-unfold"]::view-transition-old(src-bar) { animation: vt-fade-out 120ms linear both; }
+:root[data-vt="src-unfold"]::view-transition-new(src-bar) { animation: vt-fade-in 200ms 80ms linear both; }
+:root[data-vt="src-unfold"]::view-transition-old(src-list), :root[data-vt="src-unfold"]::view-transition-old(src-pane) { animation: none; opacity: 0; }
+:root[data-vt="src-unfold"]::view-transition-new(src-list), :root[data-vt="src-unfold"]::view-transition-new(src-pane) { animation: none; opacity: 1; }
+
+/* 来源栏收起 / 滑出(utils/readerMotion.slideSourcesAway / slideSourcesIn):栅格列宽在动的这一小段里,导轨自己仍按原宽靠左;
+   替身的裁切框与来源栏同位同大,替身往左滑出时被它的左边切掉——看上去就是滑到导轨下面 */
+.reader-shell[data-src-sliding] > .reader-vrail { width: var(--vrail); justify-self: start; }
+.reader-shell[data-src-sliding] > .reader-col-sources { overflow: hidden; min-width: 0; }
+.reader-shell .reader-src-ghost { position: absolute; z-index: 3; overflow: hidden; pointer-events: none; }
+.reader-shell .reader-src-ghost > * { width: 100%; height: 100%; }
+
+/* ══ 问答的光(第五批)══
+   光——玻璃、由虚到实、极光——只许出现在问答面板上(conventions §7)。现网的问答是右下角的浮窗,光就落在浮窗上;
+   面板打开时导轨上的问答钮泛一次光晕,是光唯一落在面板之外的地方(它是面板的来处)。
+   护栏:模糊只落在面板这一块有边界的东西上且不超过 300ms;本批新增的循环动画只有等待时的那一行流光;减少动效时极光与流光不出现。 */
+@property --ai-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }    /* 极光在边框上的位置 */
+@property --ai-ring { syntax: "<number>"; inherits: false; initial-value: 0; }     /* 极光过后整圈的余辉 */
+
+/* 面板:玻璃,用站内镀层那一组 token(--glass-bg / --glass-blur / --glass-edge;不支持 backdrop-filter 时 --glass-bg 自己退到近实色);
+   由虚到实 260ms,退场虚化 160ms */
+.reader-shell .reader-ai-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--dorami-shadow), var(--glass-edge);
+  transform-origin: center;
+  animation: reader-ai-focus-in 260ms var(--motion-ease-focus) both;
+}
+.reader-shell .reader-ai-panel.is-closing { animation: reader-ai-focus-out 160ms ease-out forwards; }
+@keyframes reader-ai-focus-in { from { opacity: 0; filter: blur(8px); transform: scale(0.985); } to { opacity: 1; filter: blur(0); transform: none; } }
+@keyframes reader-ai-focus-out { from { opacity: 1; filter: blur(0); } to { opacity: 0; filter: blur(6px); } }
+/* 键盘开合:不动。是不是键盘,看面板自己身上的 is-still(开 / 合的那一刻由组件记下),不看 <html data-input>——
+   面板开着的时候人换了输入方式,动画名跟着变,入场会被重播一遍 */
+.reader-shell .reader-ai-panel.is-still { animation: none; }
+.reader-shell .reader-ai-panel.is-still.is-closing { animation: none; opacity: 0; }
+/* 压暗:面板开着时工作区退后一步(导轨不压——问答钮在那儿亮着)。不拦点击 */
+.reader-shell { --qa-scrim: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+[data-theme="dark"] .reader-shell { --qa-scrim: rgb(0 0 0 / 0.34); }
+.reader-shell .reader-ai-scrim { position: absolute; inset: 0 0 0 var(--vrail); z-index: 30; pointer-events: none; background: var(--qa-scrim); animation: reader-ai-scrim-in 240ms ease-out both; }
+.reader-shell .reader-ai-scrim.is-off { animation: reader-ai-scrim-out 140ms ease-out forwards; }
+.reader-shell .reader-ai-scrim.is-still { animation: none; }
+.reader-shell .reader-ai-scrim.is-still.is-off { animation: none; opacity: 0; }
+@keyframes reader-ai-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes reader-ai-scrim-out { from { opacity: 1; } to { opacity: 0; } }
+/* 面板里几块原来各自铺实底的,让出来给玻璃 */
+.reader-shell .reader-ai-panel :is(.reader-ai-head, .reader-ai-thread, .reader-ai-composer) { background: transparent; }
+
+/* 极光:沿边走一圈,过后留一瞬整圈的余辉。打开时一次,每次提问再一次(元素按序号重挂载) */
+.reader-shell .reader-ai-aurora {
+  position: absolute; inset: 0; z-index: 2; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background:
+    conic-gradient(from var(--ai-ang), transparent 0deg, transparent 205deg, color-mix(in srgb, var(--ai-g1) 80%, transparent) 280deg, var(--ai-g2) 338deg, color-mix(in srgb, white 62%, var(--ai-g2)) 357deg, transparent 360deg),
+    linear-gradient(118deg, color-mix(in srgb, var(--ai-g1) calc(var(--ai-ring) * 100%), transparent), color-mix(in srgb, var(--ai-g2) calc(var(--ai-ring) * 100%), transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: reader-ai-sweep 1150ms cubic-bezier(0.45, 0, 0.25, 1) both;
+}
+@keyframes reader-ai-sweep {
+  0% { --ai-ang: -75deg; --ai-ring: 0; opacity: 0; }
+  12% { opacity: 1; }
+  58% { --ai-ring: 0.42; }
+  84% { opacity: 1; }
+  100% { --ai-ang: 285deg; --ai-ring: 0; opacity: 0; }
+}
+/* 键盘打开时那一圈不演;提问的那一圈照常(提问多半就是回车发出的,它回应的是「开始想了」) */
+.reader-shell .reader-ai-aurora.is-quiet { animation: none; }
+:root[data-motion="reduce"] .reader-shell .reader-ai-aurora { animation: none; opacity: 0; }
+
+/* 导轨上的问答钮:面板由指针打开时泛一次光晕——在 utils/qaMotion.haloQaButton 里(一次性的、要看触发方式的,不放在样式里) */
+
+/* 等待:正在做的那一步是一行流光(循环;登记在案的例外见 conventions §7),出现时淡入;圆点不再自己跳。
+   做完的那几步不带动画——一步做完时它从「正在做」换成「做完了」,若还挂着入场动画,动画名一变就会重播一遍 */
+.reader-shell .reader-ai-wait-row { animation: none; }
+.reader-shell .reader-ai-wait-row.is-active {
+  width: fit-content; color: transparent;
+  background: linear-gradient(100deg, var(--dorami-faint) 30%, var(--ai-g1) 44%, var(--ai-g2) 56%, var(--dorami-faint) 70%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: reader-ai-shimmer 1.15s linear infinite, reader-ai-wait-in 180ms ease-out 120ms both;
+}
+@keyframes reader-ai-wait-in { from { opacity: 0; } to { opacity: 1; } }
+.reader-shell .reader-ai-wait-row.is-active .reader-ai-wait-dot { animation: none; }
+@keyframes reader-ai-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+:root[data-motion="reduce"] .reader-shell .reader-ai-wait-row.is-active { animation: none; background: none; color: inherit; }
+
+/* 空态的三行建议:面板打开、切范围时直接在(面板自己有入场,不叠第二层;键盘打开也不该动)。
+   定时轮换(4.5 秒一换,2026 年目检三轮定下的氛围动效)保留——换上来的那一批才以浮现相进场(组件在第一次轮换后加 is-rotated) */
+.reader-shell .reader-ai-suggest:not(.is-rotated) .reader-ai-suggest-btn { animation: none; }
+/* 一轮问答:整块不再自己淡入上移(面板重新打开时旧的几轮会跟着面板再入场一遍,一个容器两层入场)。
+   提问的那一刻问句由虚到实、回答到达时各段依次由虚到实,都在 utils/qaMotion 里,各只演一次;重新挂载的旧问答直接在 */
+.reader-shell .reader-ai-turn,
+.reader-shell .reader-ai-a { animation: none; }
+
+/* ══ 沉浸阅读(第六批)══
+   正文往下读过一屏,导轨、来源栏、条目列退后到 30%(utils/immersiveRead.js 在外壳上写 data-reading);
+   指针碰到、往回滚、按键、焦点进来、换了一篇,立刻回来。只降明度:不动版式、不藏入口、不拦点击。
+   退得慢(600ms,先等 240ms)、回得快(150ms)。减少动效时不退。
+   来源栏与条目列直接降自己的明度。导轨不能这样做:明度小于 1 的元素自成层叠上下文,导轨上的悬停浮签(.reader-vrail-tip)
+   要盖在旁边一栏之上,会被困在导轨里(回场的 150ms 里浮签被来源栏盖住,到 100% 才跳出来)——
+   所以导轨是盖一层同底色、70% 的罩(与内容降到 30% 是同一个结果),浮签的层级在罩之上。 */
+.reader-shell > :is(.reader-col-sources, .reader-col-list) { transition: opacity var(--motion-fast) var(--motion-ease); }
+.reader-shell[data-reading] > :is(.reader-col-sources, .reader-col-list) { opacity: 0.3; transition: opacity var(--motion-recede) ease-in-out var(--motion-recede-wait); }
+.reader-shell > .reader-vrail { position: relative; }
+.reader-shell > .reader-vrail::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: var(--dorami-canvas); opacity: 0; transition: opacity var(--motion-fast) var(--motion-ease);
+}
+.reader-shell[data-reading] > .reader-vrail::after { opacity: 0.7; transition: opacity var(--motion-recede) ease-in-out var(--motion-recede-wait); }
+:root[data-motion="reduce"] .reader-shell[data-reading] > :is(.reader-col-sources, .reader-col-list) { opacity: 1; }
+:root[data-motion="reduce"] .reader-shell[data-reading] > .reader-vrail::after { opacity: 0; }
+
+/* ══ 对拍补差(第七批)══ 对着样页选定稿逐场景核对后补上的几件 */
+/* 「依据」展开 / 收起:行高 0fr ⇄ 1fr(编排在 readerMotion.foldRows;这里只给容器)。
+   「依据」块自己的下外边距 12px 留在内层里面(页面卡里下面的正文块没有上外边距,间距与改动前相同),收到 0 时一起收掉、卸载前后不跳 */
+.reader-shell .reader-ai-fold { display: grid; grid-template-rows: 1fr; }
+.reader-shell .reader-ai-fold > .reader-ai-fold-in { min-height: 0; overflow: hidden; }
+
+/* 吸顶栏下缘的阴影:正文一开始往下滚就渐渐出来(0 → 72px),回到顶上原路退——进度就是滚动位置,没有时间轴。
+   用的是阅读进度线那一条时间线(--reader-scroll,阅读窗的滚动);不支持滚动驱动动画的浏览器没有这条阴影 */
+.reader-shell .reader-col-read .reader-pane-bar { position: relative; }
+.reader-shell .reader-col-read .reader-pane-bar::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none; opacity: 0;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--dorami-ink) 7%, transparent), transparent);
+}
+@supports (animation-timeline: scroll()) and (timeline-scope: --x) {
+  .reader-shell .reader-col-read .reader-pane-bar::after { animation: reader-bar-shade linear both; animation-timeline: --reader-scroll; animation-range: 0px 72px; }
+}
+@keyframes reader-bar-shade { from { opacity: 0; } to { opacity: 1; } }

@@ -1,0 +1,39 @@
+/* 哆啦美 · 动效样页 —— 在场与退场:四个与方向无关的显隐选项,由样页开关条的「在场」一组打开(<html class="p-…">)。
+   共同的规矩:退场的只能是当前这件事用不到的东西;悬停、键盘焦点、往回滚三条路都能把它叫回来;入口本身不藏。 */
+:root {
+  --p-out: 600ms cubic-bezier(0.4, 0, 0.2, 1);   /* 退场:慢,不抢注意 */
+  --p-in: 160ms cubic-bezier(0.23, 1, 0.32, 1);  /* 回场:快,一碰就回 */
+  --p-drawer: 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ① 沉浸阅读:正文往下读过一屏,导轨 / 来源栏 / 列表暗下去;指针碰到、往回滚、按键,立刻回来 */
+.p-immersive .rail, .p-immersive .srcbar, .p-immersive .list { transition: opacity var(--p-in); }
+.p-immersive.reading .rail, .p-immersive.reading .srcbar, .p-immersive.reading .list { opacity: 0.3; transition: opacity var(--p-out) 240ms; }
+
+/* ② 行内动作:行上常态只有内容;悬停或键盘焦点落入时,右下角淡入「收藏 / 标为已读」。已收藏的星常显——它是状态,不是动作 */
+.row-act { display: none; }
+.p-rowact .row-act { position: absolute; right: 6px; bottom: 6px; z-index: 2; display: flex; gap: 2px; padding-left: 28px; border-radius: var(--r-control); background: linear-gradient(90deg, transparent, var(--row-bg, var(--dorami-surface)) 26px); opacity: 0; transform: translateX(4px); transition: opacity 140ms ease-out, transform 140ms ease-out; pointer-events: none; }
+.p-rowact .row:is(:hover, :focus-within, .m-hover) .row-act { opacity: 1; transform: none; pointer-events: auto; transition-duration: 100ms; }
+.p-rowact .row:is(:hover, .m-hover) { --row-bg: color-mix(in srgb, var(--dorami-ink) 4.5%, var(--dorami-surface)); }
+.p-rowact .row.on { --row-bg: color-mix(in srgb, var(--dorami-ink) 7.5%, var(--dorami-surface)); }
+.p-rowact .row-act .tool { width: 28px; height: 28px; }
+.p-rowact .row-act .tool.faved { color: var(--dorami-accent); }
+.p-rowact .row-act .tool.faved .ic { fill: currentColor; }
+.p-rowact .row-star { position: absolute; right: 46px; top: 14px; color: var(--dorami-accent); display: grid; }
+.p-rowact .row-star .ic { fill: currentColor; }
+
+/* ③ 来源栏探出:来源栏收起时,指针靠到列表左缘停一下,栏从导轨后面滑出来盖在列表上;移开后稍等再收回 */
+.peek-edge { display: none; }
+.p-peek .feed.fold { position: relative; }
+.p-peek .feed.fold .peek-edge { display: block; position: absolute; z-index: 24; left: 0; top: 0; bottom: 0; width: 14px; }
+.p-peek .feed.fold .peek-edge::after { content: ""; position: absolute; left: 3px; top: 50%; width: 3px; height: 44px; margin-top: -22px; border-radius: 2px; background: var(--dorami-ink); opacity: 0; transition: opacity 160ms; }
+.p-peek .feed.fold .peek-edge:is(:hover, .m-hover)::after { opacity: 0.22; }
+.p-peek.peek-armed .feed.fold .srcbar { overflow: visible; position: relative; z-index: 25; }
+.p-peek.peek-armed .feed.fold .srcbar-in { position: absolute; left: 0; top: 0; bottom: 0; height: auto; background: var(--dorami-canvas); border-right: 1px solid var(--dorami-border-soft); box-shadow: 12px 0 32px -12px rgba(0, 0, 0, 0.28); transform: translateX(-100%); visibility: hidden; transition: transform var(--p-drawer), visibility 0s 240ms; clip-path: inset(0 -48px 0 0); }
+.p-peek.peek-armed.peeking .feed.fold .srcbar-in { transform: none; visibility: visible; transition: transform var(--p-drawer), visibility 0s; }
+
+/* ④ 吸顶栏收放:往下读时吸顶栏上收,往回滚或指针靠近窗顶就回来 */
+.p-bar .pane-bar { transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1); }
+.p-bar.bar-away .pane-bar { transform: translateY(-101%); transition: transform 320ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+:root[data-motion="reduce"].reading .rail, :root[data-motion="reduce"].reading .srcbar, :root[data-motion="reduce"].reading .list { opacity: 1; }
