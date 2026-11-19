@@ -1,0 +1,258 @@
+/* C 光 —— 夜航的屏在暗处:东西不位移(≤ 4px),而是亮起、对上焦、熄灭。
+   材料:焦点(模糊 ⇄ 清晰)、光标照明与辉光、极光(--ai-g1 → --ai-g2 沿边游走)、明度、玻璃。
+   护栏:blur 只落在有边界的块上且 ≤ 300ms(长正文只做明度);整屏级的虚化只给 View Transitions 的静态快照;
+        循环动画全站只有一处(早报头条光晕的呼吸),不可见时停。
+   亮色主题下「光」是 accent 的淡染,不是白光。 */
+
+@property --mc-a { syntax: "<number>"; inherits: false; initial-value: 0; }      /* 光标照明的开合 0 → 1 */
+@property --mc-on { syntax: "<number>"; inherits: false; initial-value: 0; }     /* 选中行的底光 0 → 1 */
+@property --mc-r { syntax: "<length>"; inherits: false; initial-value: 230px; }  /* 光池半径 */
+@property --mc-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }  /* 极光在边框上的位置 */
+@property --mc-ring { syntax: "<number>"; inherits: false; initial-value: 0; }   /* 极光过后整圈的余辉 */
+
+/* ───────────── token ───────────── */
+[data-dir="c"] {
+  --mc-focus: 260ms;                                  /* 对焦:由虚到实 */
+  --mc-focus-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --mc-blur: 8px;                                     /* 对焦起点的模糊半径(6–10px;标题逐行 14px) */
+  --mc-fade: 200ms;                                   /* 明度类:交叉淡化、淡入 */
+  --mc-out: 140ms;                                    /* 离场 */
+  --mc-trail: 320ms;                                  /* 光条指示器滑动 */
+  --mc-glow: 600ms;                                   /* 点亮一次 */
+  --mc-sweep: 1150ms;                                 /* 极光沿边一圈 */
+  --mc-dawn: 1400ms;                                  /* 早报到场:光晕绽开 */
+  --mc-terminator: 700ms;                             /* 明暗切换:晨昏线 */
+  /* 光的颜色与强度 */
+  --mc-spot-rgb: var(--dorami-accent-rgb); --mc-spot-a: 0.075; --mc-edge-a: 0.42; --mc-wash-a: 0.1; --mc-dip: 0.965; --mc-glow-a: 0.34;
+  --mc-scrim-pop: rgba(22, 25, 34, 0.035); --mc-scrim-qa: rgba(22, 25, 34, 0.07);
+  --mc-glass: color-mix(in srgb, var(--dorami-surface) 76%, transparent);
+  --mc-glass-pop: color-mix(in srgb, var(--dorami-surface) 86%, transparent);
+  --mc-glass-edge: inset 0 0 0 1px color-mix(in srgb, var(--dorami-ink) 9%, transparent), inset 0 1px 0 0 rgba(255, 255, 255, 0.7);
+  --mc-toast: rgba(24, 26, 34, 0.8); --mc-toast-ink: #f4f4f7;
+}
+[data-dir="c"][data-theme="dark"] {
+  --mc-spot-rgb: 255, 255, 255; --mc-spot-a: 0.06; --mc-edge-a: 0.3; --mc-wash-a: 0.15; --mc-dip: 0.9; --mc-glow-a: 0.62;
+  --mc-scrim-pop: rgba(0, 0, 0, 0.2); --mc-scrim-qa: rgba(0, 0, 0, 0.34);
+  --mc-glass: color-mix(in srgb, var(--dorami-raised) 66%, transparent);
+  --mc-glass-pop: color-mix(in srgb, var(--dorami-raised) 78%, transparent);
+  --mc-glass-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.09), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+  --mc-toast: rgba(44, 46, 56, 0.62); --mc-toast-ink: var(--dorami-ink);
+}
+/* 键盘路径与方向切换的那一帧:什么都不过渡 */
+:root.mc-now[data-dir="c"] *, :root.mc-now[data-dir="c"] *::before, :root.mc-now[data-dir="c"] *::after { transition: none !important; }
+
+/* ───────────── 悬停与按下:光标照明 ─────────────
+   --mx / --my(光标在元素内的位置)与 --mt / --mb(离上 / 下沿的远近)由 dir-c.js 写到悬停元素上。 */
+
+/* 条目行:一团跟着指针的光池 + 上下两条发丝线在光标附近亮起;选中行 = 左缘一条光 + 自左而右的底光 */
+[data-dir="c"] .row {
+  background-color: transparent;
+  background-image:
+    radial-gradient(150px 1.4px at var(--mx, 50%) 0.5px, rgba(var(--mc-spot-rgb), calc(var(--mc-a) * var(--mt, 0.5) * var(--mc-edge-a))), transparent),
+    radial-gradient(150px 1.4px at var(--mx, 50%) calc(100% - 0.5px), rgba(var(--mc-spot-rgb), calc(var(--mc-a) * var(--mb, 0.5) * var(--mc-edge-a))), transparent),
+    radial-gradient(circle var(--mc-r) at var(--mx, 50%) var(--my, 50%), rgba(var(--mc-spot-rgb), calc(var(--mc-a) * var(--mc-spot-a))), transparent),
+    linear-gradient(90deg, rgba(var(--dorami-accent-rgb), calc(var(--mc-on) * var(--mc-wash-a))), transparent 86%);
+  transition: --mc-a 260ms ease-out, --mc-r 200ms ease-out, --mc-on 400ms ease-out, filter 140ms ease-out;
+}
+[data-dir="c"] .row:is(:hover, .m-hover) { --mc-a: 1; transition-duration: 110ms, 200ms, 400ms, 140ms; }
+[data-dir="c"] .row.on { --mc-on: 1; transition-duration: 260ms, 200ms, 300ms, 140ms; }
+[data-dir="c"] .row:is(:active, .m-press) { --mc-a: 1.7; --mc-r: 150px; filter: brightness(var(--mc-dip)); transition-duration: 80ms, 120ms, 300ms, 80ms; }
+[data-dir="c"] .row:hover:not(.on)::before, [data-dir="c"] .row:hover:not(.on) + .row:not(.on)::before { opacity: 1; }
+[data-dir="c"] .row::after {
+  content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; pointer-events: none;
+  background: var(--dorami-accent); box-shadow: 0 0 10px 1px rgba(var(--dorami-accent-rgb), var(--mc-glow-a)), 0 0 2px rgba(var(--dorami-accent-rgb), 0.9);
+  opacity: 0; transform: scaleY(0.45); transition: opacity 400ms ease-out, transform 400ms ease-out;   /* 熄灭:400ms 余晖 */
+}
+[data-dir="c"] .row.on::after { opacity: 1; transform: none; transition-duration: 300ms; }               /* 亮起:300ms */
+
+/* 有底的钮:钮面上的一小团光 */
+[data-dir="c"] .btn, [data-dir="c"] .btn:is(:hover, .m-hover) {
+  background-image: radial-gradient(circle 72px at var(--mx, 50%) var(--my, 50%), rgba(var(--mc-spot-rgb), calc(var(--mc-a) * 0.15)), transparent);
+}
+[data-dir="c"] .btn { transition: --mc-a 240ms ease-out, background-color var(--motion-fast), box-shadow var(--motion-fast), filter 120ms ease-out; }
+[data-dir="c"] .btn:is(:hover, .m-hover) { --mc-a: 1; }
+[data-dir="c"] .btn.primary { --mc-spot-rgb: 255, 255, 255; }
+[data-dir="c"] .btn.primary:is(:hover, .m-hover) { --mc-a: 1.5; }
+[data-dir="c"] .btn:is(:active, .m-press) { --mc-a: 1.9; filter: brightness(var(--mc-dip)); }
+[data-dir="c"] :is(.src, .qa-sug button, .qa-src button, .menu button, .pop-f button, .doc-nav button),
+[data-dir="c"] :is(.src, .qa-sug button, .qa-src button, .menu button, .pop-f button, .doc-nav button):is(:hover, .m-hover) {
+  background-image: radial-gradient(circle 120px at var(--mx, 50%) var(--my, 50%), rgba(var(--mc-spot-rgb), calc(var(--mc-a) * var(--mc-spot-a) * 1.25)), transparent);
+}
+[data-dir="c"] :is(.src, .qa-sug button, .qa-src button, .menu button, .pop-f button, .doc-nav button) { transition: --mc-a 240ms ease-out, background-color var(--motion-fast), filter 120ms ease-out; }
+[data-dir="c"] :is(.src, .qa-sug button, .qa-src button, .menu button, .pop-f button, .doc-nav button):is(:hover, .m-hover) { --mc-a: 1; }
+[data-dir="c"] :is(.src, .qa-sug button, .qa-src button, .menu button, .pop-f button, .doc-nav button):is(:active, .m-press) { --mc-a: 1.8; filter: brightness(var(--mc-dip)); }
+
+/* 没有底的块(早报条目、榜单卡、来源卡、时间线条目):在块背后放一片比它略大的光 */
+[data-dir="c"] :is(.bi, .rk, .sc-card, .tl-i[data-open]) { position: relative; isolation: isolate; transition: filter 140ms ease-out; }
+[data-dir="c"] :is(.bi, .rk, .sc-card)::before, [data-dir="c"] .tl-i[data-open]::after {
+  content: ""; position: absolute; inset: -14px -18px; z-index: -1; border-radius: var(--r-overlay); pointer-events: none; opacity: 0;
+  background: radial-gradient(circle 280px at calc(var(--mx, 50%) + 18px) calc(var(--my, 50%) + 14px), rgba(var(--mc-spot-rgb), calc(var(--mc-spot-a) * 1.35)), rgba(var(--mc-spot-rgb), calc(var(--mc-spot-a) * 0.25)));
+  box-shadow: inset 0 0 0 1px rgba(var(--mc-spot-rgb), calc(var(--mc-spot-a) * 1.1));
+  transition: opacity 280ms ease-out;
+}
+[data-dir="c"] .bi::before { bottom: 12px; }
+[data-dir="c"] .rk::before { inset: 6px -20px; }
+[data-dir="c"] .sc-card::before { inset: 4px -12px; }
+[data-dir="c"] .tl-i[data-open]::after { inset: 2px -12px 2px 62px; }
+[data-dir="c"] :is(.bi, .rk, .sc-card):is(:hover, .m-hover)::before, [data-dir="c"] .tl-i[data-open]:is(:hover, .m-hover)::after { opacity: 1; transition-duration: 130ms; }
+[data-dir="c"] :is(.bi, .rk, .sc-card, .tl-i[data-open]):is(:active, .m-press) { filter: brightness(var(--mc-dip)); }
+[data-dir="c"] .bi:hover h3, [data-dir="c"] .rk:hover h3, [data-dir="c"] .tl-i[data-open]:hover h4, [data-dir="c"] .sc-card:hover h4 > span { text-decoration: none; }
+
+/* 图标钮与导轨:图标泛光 */
+[data-dir="c"] .tool { transition: background var(--motion-fast), color var(--motion-fast), filter 120ms ease-out; }
+[data-dir="c"] .tool .ic, [data-dir="c"] .bi-fav .ic { transition: filter 220ms ease-out; }
+[data-dir="c"] .tool:is(:hover, .m-hover), [data-dir="c"] .bi-fav:is(:hover, .m-hover) { background: var(--dorami-hover); color: var(--dorami-ink); }
+[data-dir="c"] :is(.tool, .bi-fav):is(:hover, .m-hover) .ic { filter: drop-shadow(0 0 5px rgba(var(--dorami-accent-rgb), var(--mc-glow-a))); }
+[data-dir="c"] :is(.tool, .bi-fav, .rail a):is(:active, .m-press) { filter: brightness(var(--mc-dip)); }
+[data-dir="c"] :is(.tool, .bi-fav, .btn).faved .ic { filter: drop-shadow(0 0 5px rgba(var(--dorami-accent-rgb), calc(var(--mc-glow-a) * 0.9))); }   /* 点亮的星一直亮着 */
+[data-dir="c"] [data-fav] { position: relative; }
+[data-dir="c"] .mc-ring { position: absolute; width: 18px; height: 18px; border-radius: 50%; pointer-events: none; border: 1.5px solid var(--dorami-accent); box-shadow: 0 0 10px rgba(var(--dorami-accent-rgb), var(--mc-glow-a)), inset 0 0 6px rgba(var(--dorami-accent-rgb), 0.35); }
+
+/* ───────────── 指示器:一条光(M.glide 负责位置,滑动时拉长带拖影)───────────── */
+[data-dir="c"] .rail { position: relative; }
+[data-dir="c"] .rail a { position: relative; z-index: 1; }
+[data-dir="c"] .rail a:is(:hover, .m-hover) { background: var(--dorami-hover); color: var(--dorami-ink); }
+[data-dir="c"] .rail-nav a.on { background: none; }
+[data-dir="c"] .rail a .ic { transition: transform 0.72s var(--motion-ease), opacity 0.72s var(--motion-ease), filter 240ms ease-out; }
+[data-dir="c"] .rail a:is(:hover, .m-hover) .ic { filter: drop-shadow(0 0 6px rgba(var(--dorami-accent-rgb), var(--mc-glow-a))); }
+[data-dir="c"] .rail a.on .ic { filter: drop-shadow(0 0 7px rgba(var(--dorami-accent-rgb), calc(var(--mc-glow-a) * 0.75))); }
+[data-dir="c"] .rail [data-act="qa"].on .ic { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--ai-g2) 80%, transparent)); }
+[data-dir="c"] .rail > .m-ind { border-radius: var(--r-control); background: var(--dorami-select); }
+[data-dir="c"] .rail > .m-ind::before, [data-dir="c"] .srcbar-b > .m-ind::before {
+  content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px;
+  background: var(--dorami-accent); box-shadow: 0 0 10px 1px rgba(var(--dorami-accent-rgb), var(--mc-glow-a)), 0 0 2px rgba(var(--dorami-accent-rgb), 0.9);
+}
+[data-dir="c"] .srcbar-b { position: relative; }
+[data-dir="c"] .srcbar-b .src { position: relative; z-index: 1; }
+[data-dir="c"] .srcbar-b .src.on { background-color: transparent; }
+[data-dir="c"] .srcbar-b > .m-ind { border-radius: var(--r-control); background: var(--dorami-select); }
+[data-dir="c"] .srcbar-b > .m-ind::before { top: 9px; bottom: 9px; }
+
+[data-dir="c"] .seg { position: relative; }
+[data-dir="c"] .seg button { position: relative; z-index: 1; }
+[data-dir="c"] .seg button.on { background: none; box-shadow: none; }
+[data-dir="c"] .seg > .m-ind { border-radius: 7px; background: var(--dorami-surface); box-shadow: var(--sh-1), 0 0 12px -2px rgba(var(--dorami-accent-rgb), calc(var(--mc-glow-a) * 0.55)); }
+[data-dir="c"] .seg.mini > .m-ind { border-radius: 8px; }
+[data-dir="c"][data-theme="dark"] .seg > .m-ind { background: var(--dorami-raised); box-shadow: var(--sh-1), inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 12px -2px rgba(var(--dorami-accent-rgb), 0.3); }
+
+[data-dir="c"] .tabs { position: relative; }
+[data-dir="c"] .tabs button { z-index: 1; }
+[data-dir="c"] .tabs button.on::after { content: none; }
+[data-dir="c"] .tabs > .m-ind::after, [data-dir="c"] .kinds > .m-ind::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px;
+  background: var(--dorami-accent); box-shadow: 0 0 10px rgba(var(--dorami-accent-rgb), var(--mc-glow-a)), 0 0 2px rgba(var(--dorami-accent-rgb), 0.9);
+}
+[data-dir="c"] .kinds { position: relative; }
+[data-dir="c"] .kinds button { position: relative; z-index: 1; }
+[data-dir="c"] .kinds button.on { background: none; }
+[data-dir="c"] .kinds > .m-ind { border-radius: var(--r-sm); background: var(--dorami-select); }
+[data-dir="c"] .kinds > .m-ind::after { left: 8px; right: 8px; bottom: 0; height: 1.5px; opacity: 0.9; }
+
+/* ───────────── 玻璃:浮在上面的东西(浮层、问答、提示、滚动后的吸顶栏、早报目录)───────────── */
+[data-dir="c"] .pop { background: var(--mc-glass-pop); -webkit-backdrop-filter: blur(22px) saturate(1.5); backdrop-filter: blur(22px) saturate(1.5); box-shadow: var(--sh-3), var(--mc-glass-edge); }
+[data-dir="c"] .qa { background: var(--mc-glass); -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6); box-shadow: var(--sh-3), var(--mc-glass-edge); }
+[data-dir="c"] .qa-h { border-bottom-color: color-mix(in srgb, var(--dorami-ink) 7%, transparent); }
+[data-dir="c"] .qa-in { background: color-mix(in srgb, var(--dorami-ink) 6%, transparent); }
+[data-dir="c"] .pane-bar { transition: background-color var(--mc-fade) ease-out, border-color var(--mc-fade) ease-out; }
+[data-dir="c"] .pane-bar.mc-glass { background: var(--mc-glass); -webkit-backdrop-filter: blur(16px) saturate(1.5); backdrop-filter: blur(16px) saturate(1.5); border-bottom-color: color-mix(in srgb, var(--dorami-ink) 8%, transparent); }
+[data-dir="c"] .toc { background: var(--mc-glass-pop); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); }
+/* 进度线:一条发光的细线 */
+[data-dir="c"] .pane-bar::after {
+  height: 1.5px; opacity: 1; border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ai-g1) 35%, transparent), var(--ai-g2));
+  box-shadow: 0 0 8px rgba(var(--dorami-accent-rgb), var(--mc-glow-a)), 0 0 2px var(--ai-g2);
+}
+
+/* 压暗:浮层 / 问答面板下面的工作区退后一步 */
+[data-dir="c"] .mc-scrim { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 240ms ease-out; }
+[data-dir="c"] .mc-scrim.on { opacity: 1; }
+[data-dir="c"] .mc-scrim.off { opacity: 0; transition-duration: var(--mc-out); }
+[data-dir="c"] .mc-scrim[data-k="pop"] { background: var(--mc-scrim-pop); }
+[data-dir="c"] .mc-scrim[data-k="qa"] { background: var(--mc-scrim-qa); z-index: 35; }
+
+/* ───────────── 极光:沿边走一圈(AI 速读卡、问答面板、订阅成功的来源卡)───────────── */
+[data-dir="c"] .ai { position: relative; }
+[data-dir="c"] :is(.qa, .ai)::before, [data-dir="c"] .sc-card::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background:
+    conic-gradient(from var(--mc-ang), transparent 0deg, transparent 205deg, color-mix(in srgb, var(--ai-g1) 80%, transparent) 280deg, var(--ai-g2) 338deg, color-mix(in srgb, #fff 62%, var(--ai-g2)) 357deg, transparent 360deg),
+    linear-gradient(118deg, color-mix(in srgb, var(--ai-g1) calc(var(--mc-ring) * 100%), transparent), color-mix(in srgb, var(--ai-g2) calc(var(--mc-ring) * 100%), transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+[data-dir="c"] .sc-card::after { inset: 4px -12px; border-radius: var(--r-overlay); }
+[data-dir="c"] .mc-sweep:is(.qa, .ai)::before, [data-dir="c"] .sc-card.mc-sweep::after { animation: mc-sweep var(--mc-sweep) cubic-bezier(0.45, 0, 0.25, 1) both; }
+@keyframes mc-sweep {
+  0% { --mc-ang: -75deg; --mc-ring: 0; opacity: 0; }
+  12% { opacity: 1; }
+  58% { --mc-ring: 0.42; }
+  84% { opacity: 1; }
+  100% { --mc-ang: 285deg; --mc-ring: 0; opacity: 0; }
+}
+
+/* 问答:等待时的一行流光 */
+[data-dir="c"] .mc-think {
+  width: fit-content; margin: 2px 0 14px; font-size: 14px; color: transparent;
+  background: linear-gradient(100deg, var(--dorami-faint) 30%, var(--ai-g1) 44%, var(--ai-g2) 56%, var(--dorami-faint) 70%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text; animation: mc-shimmer 1.15s linear infinite;
+}
+@keyframes mc-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+[data-dir="c"] .qa-a.mc-wait > * { opacity: 0; }
+
+/* ───────────── 提示:深色玻璃胶囊 + 字上一道扫光 ───────────── */
+[data-dir="c"] .toast {
+  border-radius: var(--r-pill); padding: 0 6px 0 18px; overflow: hidden; background: var(--mc-toast); color: var(--mc-toast-ink);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: var(--sh-3), inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+[data-dir="c"] .toast.plain { padding-right: 18px; }
+[data-dir="c"] .toast button { border-radius: var(--r-pill); }
+[data-dir="c"] .toast button:is(:hover, .m-hover) { background: rgba(255, 255, 255, 0.14); }
+[data-dir="c"] .toast::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.26) 50%, transparent 62%) 130% 0 / 260% 100% no-repeat;
+}
+[data-dir="c"] .toast.mc-gloss::after { animation: mc-gloss var(--mc-glow) cubic-bezier(0.4, 0, 0.2, 1) 120ms both; }
+@keyframes mc-gloss { 0% { background-position: 130% 0; opacity: 1; } 100% { background-position: -30% 0; opacity: 1; } }
+
+/* ───────────── 来源栏:列宽 300ms,栏内内容淡出并虚化 ───────────── */
+[data-dir="c"] .feed { transition: grid-template-columns 300ms var(--mc-focus-ease); }
+[data-dir="c"] .srcbar-in { transition: opacity 260ms ease-out 60ms, filter 260ms ease-out 60ms; }
+[data-dir="c"] .feed.fold .srcbar-in { opacity: 0; filter: blur(4px); transition: opacity 160ms ease-out, filter 160ms ease-out; }
+
+/* ───────────── 早报:头条光晕(到场时绽开由 dir-c.js 编排;之后极慢地呼吸,不可见时停)───────────── */
+[data-dir="c"] .hero-glow {
+  background: radial-gradient(38% 46% at 66% 44%, color-mix(in oklab, var(--ai-g2) 19%, transparent), transparent 100%), radial-gradient(34% 44% at 30% 30%, color-mix(in oklab, var(--ai-g1) 14%, transparent), transparent 100%);
+  animation: mc-breathe 16s ease-in-out infinite;
+}
+@keyframes mc-breathe { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+:root.mc-hidden[data-dir="c"] .hero-glow, [data-dir="c"] .hero-glow.mc-off { animation-play-state: paused; }
+
+/* ───────────── 整屏转场(View Transitions;虚化落在静态快照上)───────────── */
+/* 切视图 / 进出事件页 / 从早报、榜单打开文章:旧的暗下去并略虚,新的清晰起来。导轨不参与 */
+:root[data-vt~="c-swap"] #app > .stage { view-transition-name: mc-stage; }
+:root[data-vt~="c-swap"]::view-transition-old(root), :root[data-vt~="c-swap"]::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+:root[data-vt~="c-swap"]::view-transition-group(mc-stage) { animation: none; }
+:root[data-vt~="c-swap"]::view-transition-old(mc-stage) { mix-blend-mode: normal; animation: mc-dim-out 120ms ease-out both; }
+:root[data-vt~="c-swap"]::view-transition-new(mc-stage) { mix-blend-mode: normal; animation: mc-clear-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) 60ms both; }
+@keyframes mc-dim-out { to { opacity: 0; filter: blur(3px) brightness(0.82); } }
+@keyframes mc-clear-in { from { opacity: 0; } }
+
+/* 明暗切换「晨昏线」:一条带羽化边(30% 屏宽)的斜线扫过整屏,线后是新主题。入夜自右向左,天亮自左向右 */
+:root[data-vt~="c-theme"]::view-transition-old(root) { animation: none; mix-blend-mode: normal; }
+:root[data-vt~="c-theme"]::view-transition-new(root) {
+  mix-blend-mode: normal; animation: mc-terminator var(--mc-terminator) cubic-bezier(0.6, 0, 0.3, 1) both;
+  -webkit-mask-image: linear-gradient(100deg, #000 0%, #000 45%, transparent 55%, transparent 100%); mask-image: linear-gradient(100deg, #000 0%, #000 45%, transparent 55%, transparent 100%);
+  -webkit-mask-size: 300% 100%; mask-size: 300% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
+:root[data-vt~="c-to-dark"]::view-transition-new(root) {
+  animation-name: mc-terminator-r;
+  -webkit-mask-image: linear-gradient(100deg, transparent 0%, transparent 45%, #000 55%, #000 100%); mask-image: linear-gradient(100deg, transparent 0%, transparent 45%, #000 55%, #000 100%);
+}
+@keyframes mc-terminator { from { -webkit-mask-position: 100% 0; mask-position: 100% 0; } to { -webkit-mask-position: 0% 0; mask-position: 0% 0; } }
+@keyframes mc-terminator-r { from { -webkit-mask-position: 0% 0; mask-position: 0% 0; } to { -webkit-mask-position: 100% 0; mask-position: 100% 0; } }
+
+/* ───────────── 减少动效:循环停掉,极光与扫光不出现;光标照明是指针反馈,保留 ───────────── */
+:root[data-motion="reduce"][data-dir="c"] .hero-glow { animation: none; opacity: 0.9; }
+:root[data-motion="reduce"][data-dir="c"] :is(.qa, .ai)::before, :root[data-motion="reduce"][data-dir="c"] .sc-card::after, :root[data-motion="reduce"][data-dir="c"] .toast::after { animation: none; opacity: 0; }
+:root[data-motion="reduce"][data-dir="c"] .mc-think { animation: none; background-position: 50% 0; }

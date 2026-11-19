@@ -1,0 +1,36 @@
+/* 现网 —— 对照基线。取值逐条取自 frontend/src/index.css(v3.68.0-alpha,2026-11-17 的 main):
+   · 阅读窗换篇 reader-enter 180ms(淡入 + 上移 6px,按文章 id 重挂载,键盘 j / k 同样触发)
+   · 列表换范围 reader-list-enter 130ms 淡入
+   · 浮层 dorami-popover-in × --motion-fast;分享菜单 share-menu-in × --motion-fast;都没有离场
+   · 问答面板 reader-ai-rise 300ms cubic-bezier(0.32, 1.2, 0.42, 1)(右下角为原点)/ reader-ai-fall 200ms;问答块 reader-ai-block-in 220ms
+   · 提示 toast-in 300ms(--motion-spring)/ toast-out 240ms
+   · 列表搜索框 reader-search-expand 220ms(自右向左展开)
+   · AI 速读分数里程表 2200ms
+   来源栏列宽 240ms 取自 #279 原型(现网对应处没有逐条核实)。
+   其余交互现网没有动效:切视图、明暗切换、榜单进事件页、订阅钮、指示器都是直接换。 */
+[data-dir="0"] .pop { animation: d0-popover-in var(--motion-fast) var(--motion-ease); }
+@keyframes d0-popover-in { from { opacity: 0; transform: translateY(-6px) scale(0.97); } }
+[data-dir="0"] .pop.menu { animation-name: d0-share-menu-in; }
+@keyframes d0-share-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+[data-dir="0"] #pane.d0-enter > * { animation: d0-reader-enter 180ms var(--motion-ease) both; }
+@keyframes d0-reader-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+[data-dir="0"] .list-b.d0-enter { animation: d0-list-enter 130ms ease-out both; }
+@keyframes d0-list-enter { from { opacity: 0; } to { opacity: 1; } }
+[data-dir="0"] .qa { transform-origin: bottom right; }
+[data-dir="0"] .qa.d0-enter { animation: d0-ai-rise var(--motion-slow) cubic-bezier(0.32, 1.2, 0.42, 1); }
+@keyframes d0-ai-rise { from { opacity: 0; transform: translateY(16px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+[data-dir="0"] .qa-b.d0-enter > * { animation: d0-ai-block-in 220ms var(--motion-ease); }
+@keyframes d0-ai-block-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+[data-dir="0"] .list-find.d0-enter { animation: d0-search-expand 220ms var(--motion-ease) both; }
+@keyframes d0-search-expand { from { opacity: 0; clip-path: inset(0 0 0 88%); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
+[data-dir="0"] .toast { animation: d0-toast-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes d0-toast-in { from { opacity: 0; transform: translate(-50%, 18px) scale(0.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+[data-dir="0"] .feed { transition: grid-template-columns var(--motion-medium) var(--motion-ease); }
+
+/* 里程表:每位数字住定宽格,格内 0–9 竖条滑到分值,十分位晚 220ms 起步 */
+[data-dir="0"] .sc.odo { display: inline-flex; align-items: baseline; background: none; -webkit-background-clip: border-box; background-clip: border-box; }
+[data-dir="0"] .odo-cell { display: inline-block; width: 0.64em; height: 1.2em; overflow: hidden; text-align: center; vertical-align: top; }
+[data-dir="0"] .odo-dot { display: inline-block; width: 0.3em; height: 1.2em; line-height: 1.2em; text-align: center; }
+[data-dir="0"] .odo-strip { display: block; will-change: transform; transition: transform 2200ms cubic-bezier(0.16, 1, 0.3, 1); }
+[data-dir="0"] .odo-strip > span { display: block; height: 1.2em; line-height: 1.2em; }
+[data-dir="0"] .sc.odo:is(.t1, .t2, .t3, .t4) :is(.odo-strip > span, .odo-dot) { background-image: linear-gradient(118deg, color-mix(in oklab, var(--ai-g1), var(--dorami-faint) var(--mix)), color-mix(in oklab, var(--ai-g2), var(--dorami-faint) var(--mix))); -webkit-background-clip: text; background-clip: text; color: transparent; }

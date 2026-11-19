@@ -1,0 +1,157 @@
+/* B 连续 —— 东西不凭空出现:每个界面从上一个界面里长出来,关掉时回到来处。
+   空间有方向:导轨是纵轴(上下切视图),列表到正文是横轴(前进 = 向左),浮层从触发它的钮里长出来。
+   材料:共享元素(View Transitions)、容器变形(clip-path)、有方向的位移、FLIP。
+
+   token(位移与明度分两族,同 Material 3 的 spatial / effects):
+     位移弹簧  --mb-move-*    spring(感知 0.42s, bounce 0.12)   行 / 视图 / 共享元素的位置
+     大变形    --mb-settle-*  spring(感知 0.50s, bounce 0.18)   卡面展开成页、到场
+     明度      --mb-fx        180ms × --mb-ease-out             淡入淡出,不带位移
+     按下      --mb-press     120ms
+   两条弹簧由 dir-b.js 取样成 linear() 写到 <html> 上;这里的取值是取样失败时的兜底。 */
+[data-dir="b"] {
+  --mb-press: 120ms;
+  --mb-fx: 180ms;
+  --mb-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --mb-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --mb-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --mb-move-dur: 520ms; --mb-move-ease: var(--mb-ease-out);
+  --mb-settle-dur: 620ms; --mb-settle-ease: var(--mb-ease-out);
+  --mb-t-ow: auto; --mb-t-nw: auto; --mb-t-fr: 1;
+  --mb-s-ow: auto; --mb-s-nw: auto; --mb-s-fr: 1;
+}
+
+/* ───────────── 按下:同一套语法,按下的件就是下一幕的起点 ───────────── */
+[data-dir="b"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .scope, .pane-link, .back, .cal-g button, .qa-sug button, .qa-src button, .doc-nav button, .dock-play, .bi-fav, .menu button, .pop-f button, .toc a) {
+  transition: transform 220ms var(--mb-ease-out), background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
+}
+[data-dir="b"] :is(.btn, .tool, .seg button, .kinds button, .tabs button, .src, .scope, .pane-link, .back, .cal-g button, .qa-sug button, .qa-src button, .doc-nav button, .dock-play, .bi-fav, .menu button, .pop-f button, .toc a):is(:active, .m-press) {
+  transform: scale(0.97); transition-duration: var(--mb-press);
+}
+[data-dir="b"] :is(.row, .bi, .rk, .sc-card, .tl-i[data-open]) { transition: transform 260ms var(--mb-ease-out); }
+[data-dir="b"] :is(.row, .bi, .rk, .sc-card, .tl-i[data-open]):is(:active, .m-press):not(:has(:is(button, a):is(:active, .m-press))) { transform: scale(0.985); transition-duration: var(--mb-press); }
+[data-dir="b"] .hero-title { transform-origin: left center; transition: transform 260ms var(--mb-ease-out); }
+[data-dir="b"] .hero:is(:active, .m-press):not(:has(:is(button, a):is(:active, .m-press))) .hero-title { transform: scale(0.992); transition-duration: var(--mb-press); }
+[data-dir="b"] .rail a .ic { transition: transform 240ms var(--mb-ease-out); }
+[data-dir="b"] .rail a:is(:active, .m-press) .ic { transform: scale(0.88); transition-duration: var(--mb-press); }
+
+/* ───────────── 指示器:选中底色让给 .m-ind,由它滑过去 ───────────── */
+[data-dir="b"] :is(.seg, .tabs, .kinds, .rail, .srcbar-b, .list-b) { position: relative; }
+[data-dir="b"] :is(.seg, .tabs, .kinds) > button, [data-dir="b"] .srcbar-b > .src { position: relative; z-index: 1; }
+[data-dir="b"] :is(.rail-logo, .rail-nav, .rail-tools) { position: relative; z-index: 1; }
+[data-dir="b"] .m-ind { will-change: transform; }
+
+[data-dir="b"] .seg > button.on { background: none; box-shadow: none; }
+[data-dir="b"] .seg > .m-ind { background: var(--dorami-surface); box-shadow: var(--sh-1); border-radius: 7px; }
+[data-dir="b"] .seg.mini > .m-ind { border-radius: 8px; }
+[data-dir="b"] .tabs > button.on::after { display: none; }
+[data-dir="b"] .tabs > .m-ind { box-shadow: 0 1px 0 var(--dorami-ink), inset 0 -1px 0 var(--dorami-ink); }
+[data-dir="b"] .kinds > button.on { background: none; }
+[data-dir="b"] .kinds > .m-ind { background: var(--dorami-select); border-radius: var(--r-sm); }
+[data-dir="b"] .rail-nav a.on { background: none; }
+[data-dir="b"] .rail > .m-ind { background: var(--dorami-select); border-radius: var(--r-control); }
+[data-dir="b"] .srcbar-b > .src.on { background: none; }
+[data-dir="b"] .srcbar-b > .m-ind { background: var(--dorami-select); border-radius: var(--r-control); }
+[data-dir="b"] .list-b .row.on { background: none; }
+[data-dir="b"] .list-b > .m-ind { background: var(--dorami-select); border-radius: var(--r-control); }
+
+/* ───────────── 来源栏:整块滑到导轨下面,不是被挤扁 ───────────── */
+[data-dir="b"] .feed { transition: grid-template-columns 360ms var(--mb-ease-drawer); }
+[data-dir="b"] .srcbar-in { transition: transform 360ms var(--mb-ease-drawer); }
+[data-dir="b"] .feed.fold .srcbar-in { transform: translateX(-100%); }
+
+/* ───────────── 吸顶栏:大标题滚出时停靠进来(随滚动位置连续、可逆)───────────── */
+[data-dir="b"] .mb-bar-title { flex: 0 1 auto; min-width: 0; margin-left: 10px; padding-left: 12px; font-size: 13px; font-weight: 600; color: var(--dorami-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 1px 0 0 var(--dorami-border); opacity: 0; }
+[data-dir="b"] .pane-bar::before { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 14px; pointer-events: none; background: linear-gradient(to bottom, color-mix(in srgb, var(--dorami-ink) 7%, transparent), transparent); opacity: 0; }
+@supports (animation-timeline: view()) {
+  [data-dir="b"] #pane { timeline-scope: --mb-h1; }
+  [data-dir="b"] #pane .doc h1 { view-timeline: --mb-h1 block; view-timeline-inset: 52px 0px; }
+  [data-dir="b"] .mb-bar-title { animation: mb-dock linear both; animation-timeline: --mb-h1; animation-range: exit 0% exit 100%; }
+  [data-dir="b"] .pane-bar::before { animation: mb-fade-in linear both; animation-timeline: scroll(nearest block); animation-range: 0px 72px; }
+  :root[data-motion="reduce"][data-dir="b"] .mb-bar-title { animation-name: mb-fade-in; }
+}
+@keyframes mb-dock { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes mb-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mb-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* ───────────── View Transitions ─────────────
+   命名元素被单独拍走后,所在的面上会留一个洞;洞里垫面色,免得中途露出画布色。 */
+:root[data-dir="b"][data-vt]::view-transition { background: var(--dorami-surface); }
+:root[data-dir="b"][data-vt]::view-transition-group(*) { animation-duration: var(--mb-move-dur); animation-timing-function: var(--mb-move-ease); }
+:root[data-dir="b"][data-vt]::view-transition-old(*), :root[data-dir="b"][data-vt]::view-transition-new(*) { mix-blend-mode: normal; }
+/* 组的叠放按旧界面的绘制顺序排:行里的标题排在阅读窗前面,会被阅读窗盖住——飞行的几件一律提到上面 */
+:root[data-dir="b"][data-vt]::view-transition-group(mb-title), :root[data-dir="b"][data-vt]::view-transition-group(mb-score),
+:root[data-dir="b"][data-vt]::view-transition-group(mb-logo), :root[data-dir="b"][data-vt]::view-transition-group(mb-src) { z-index: 3; }
+:root[data-dir="b"][data-vt]::view-transition-group(mb-srcbar), :root[data-dir="b"][data-vt]::view-transition-group(mb-card) { z-index: 2; }
+
+/* 根:除了「明暗」与「卡面展开」,其余都是新界面直接垫底,动的只有命名的那几件 */
+:root[data-dir="b"][data-vt]::view-transition-old(root) { animation: none; opacity: 0; }
+:root[data-dir="b"][data-vt]::view-transition-new(root) { animation: none; opacity: 1; }
+:root[data-dir="b"][data-vt="mb-theme"]::view-transition-old(root) { opacity: 1; }
+:root[data-dir="b"][data-vt="mb-ev-open"]::view-transition-old(root) { opacity: 1; }
+:root[data-dir="b"][data-vt="mb-ev-open"]::view-transition-new(root) { opacity: 0; }
+
+/* 共享标题:两头字号不同。旧字从自身字号放大到新字号、新字从旧字号长到自身字号,
+   全程两张图里的字一样大,只在前段交叉淡化——不会被拉成一团。锚点在左上。 */
+:root[data-dir="b"][data-vt]::view-transition-old(mb-title), :root[data-dir="b"][data-vt]::view-transition-new(mb-title),
+:root[data-dir="b"][data-vt]::view-transition-old(mb-score), :root[data-dir="b"][data-vt]::view-transition-new(mb-score) { block-size: auto; transform-origin: left top; }
+:root[data-dir="b"][data-vt]::view-transition-old(mb-title) { inline-size: var(--mb-t-ow); animation: mb-t-old var(--mb-move-dur) var(--mb-move-ease) both, mb-x-out var(--mb-move-dur) linear both; }
+:root[data-dir="b"][data-vt]::view-transition-new(mb-title) { inline-size: var(--mb-t-nw); animation: mb-t-new var(--mb-move-dur) var(--mb-move-ease) both, mb-x-in var(--mb-move-dur) linear both; }
+:root[data-dir="b"][data-vt]::view-transition-old(mb-score) { inline-size: var(--mb-s-ow); animation: mb-s-old var(--mb-move-dur) var(--mb-move-ease) both, mb-x-out var(--mb-move-dur) linear both; }
+:root[data-dir="b"][data-vt]::view-transition-new(mb-score) { inline-size: var(--mb-s-nw); animation: mb-s-new var(--mb-move-dur) var(--mb-move-ease) both, mb-x-in var(--mb-move-dur) linear both; }
+@keyframes mb-t-old { from { transform: scale(1); } to { transform: scale(var(--mb-t-fr)); } }
+@keyframes mb-t-new { from { transform: scale(calc(1 / var(--mb-t-fr))); } to { transform: scale(1); } }
+@keyframes mb-s-old { from { transform: scale(1); } to { transform: scale(var(--mb-s-fr)); } }
+@keyframes mb-s-new { from { transform: scale(calc(1 / var(--mb-s-fr))); } to { transform: scale(1); } }
+@keyframes mb-x-out { 0%, 8% { opacity: 1; } 34%, 100% { opacity: 0; } }
+@keyframes mb-x-in { 0%, 6% { opacity: 0; } 36%, 100% { opacity: 1; } }
+:root[data-dir="b"][data-vt]::view-transition-old(mb-logo), :root[data-dir="b"][data-vt]::view-transition-new(mb-logo),
+:root[data-dir="b"][data-vt]::view-transition-old(mb-src), :root[data-dir="b"][data-vt]::view-transition-new(mb-src) { animation-duration: 200ms; }
+
+/* 打开文章(列表内):阅读窗新的盖在旧的上面淡入,里面的内容由 dir-b.js 抬起来 */
+:root[data-dir="b"][data-vt="mb-open"]::view-transition-old(mb-pane) { animation: none; opacity: 1; }
+:root[data-dir="b"][data-vt="mb-open"]::view-transition-new(mb-pane) { animation: mb-fade-in 160ms linear both; }
+
+/* 横轴:前进 = 旧页向左退、新页自右来;返回反之 */
+:root[data-dir="b"][data-vt="mb-fwd"]::view-transition-old(mb-stage) { animation: mb-out-left 200ms var(--mb-ease-out) both; }
+:root[data-dir="b"][data-vt="mb-fwd"]::view-transition-new(mb-stage) { animation: mb-in-right var(--mb-move-dur) var(--mb-move-ease) both, mb-fade-in 220ms linear both; }
+:root[data-dir="b"][data-vt="mb-back"]::view-transition-old(mb-stage) { animation: mb-out-right 200ms var(--mb-ease-out) both; }
+:root[data-dir="b"][data-vt="mb-back"]::view-transition-new(mb-stage) { animation: mb-in-left var(--mb-move-dur) var(--mb-move-ease) both, mb-fade-in 220ms linear both; }
+@keyframes mb-out-left { to { opacity: 0; transform: translateX(-36px); } }
+@keyframes mb-out-right { to { opacity: 0; transform: translateX(36px); } }
+@keyframes mb-in-right { from { transform: translateX(56px); } to { transform: none; } }
+@keyframes mb-in-left { from { transform: translateX(-56px); } to { transform: none; } }
+
+/* 纵轴:沿导轨方向 */
+:root[data-dir="b"][data-vt="mb-nav-down"]::view-transition-old(mb-stage) { animation: mb-out-up 170ms var(--mb-ease-out) both; }
+:root[data-dir="b"][data-vt="mb-nav-down"]::view-transition-new(mb-stage) { animation: mb-in-up var(--mb-move-dur) var(--mb-move-ease) both, mb-fade-in 200ms linear both; }
+:root[data-dir="b"][data-vt="mb-nav-up"]::view-transition-old(mb-stage) { animation: mb-out-down 170ms var(--mb-ease-out) both; }
+:root[data-dir="b"][data-vt="mb-nav-up"]::view-transition-new(mb-stage) { animation: mb-in-down var(--mb-move-dur) var(--mb-move-ease) both, mb-fade-in 200ms linear both; }
+:root[data-dir="b"][data-vt="mb-nav-same"]::view-transition-old(mb-stage) { animation: mb-fade-out 120ms linear both; }
+:root[data-dir="b"][data-vt="mb-nav-same"]::view-transition-new(mb-stage) { animation: mb-fade-in 180ms linear both; }
+@keyframes mb-out-up { to { opacity: 0; transform: translateY(-18px); } }
+@keyframes mb-out-down { to { opacity: 0; transform: translateY(18px); } }
+@keyframes mb-in-up { from { transform: translateY(28px); } to { transform: none; } }
+@keyframes mb-in-down { from { transform: translateY(-28px); } to { transform: none; } }
+
+/* 卡面展开成页 / 页收回卡里:窗口从卡的位置长到整页,窗里的内容不缩放、锚在左上 */
+:root[data-dir="b"][data-vt^="mb-ev"]::view-transition-group(mb-card), :root[data-dir="b"][data-vt^="mb-ev"]::view-transition-group(mb-title) { animation-duration: var(--mb-settle-dur); animation-timing-function: var(--mb-settle-ease); }
+:root[data-dir="b"][data-vt^="mb-ev"]::view-transition-old(mb-title) { animation-duration: var(--mb-settle-dur); animation-timing-function: var(--mb-settle-ease), linear; }
+:root[data-dir="b"][data-vt^="mb-ev"]::view-transition-new(mb-title) { animation-duration: var(--mb-settle-dur); animation-timing-function: var(--mb-settle-ease), linear; }
+:root[data-dir="b"][data-vt^="mb-ev"]::view-transition-old(mb-card), :root[data-dir="b"][data-vt^="mb-ev"]::view-transition-new(mb-card) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-dir="b"][data-vt="mb-ev-open"]::view-transition-image-pair(mb-card) { background: var(--dorami-surface); }
+:root[data-dir="b"][data-vt="mb-ev-open"]::view-transition-old(mb-card) { animation: mb-fade-out 140ms linear both; }
+:root[data-dir="b"][data-vt="mb-ev-open"]::view-transition-new(mb-card) { animation: mb-fade-in 200ms 60ms linear both; }
+:root[data-dir="b"][data-vt="mb-ev-back"]::view-transition-old(mb-card) { animation: mb-fade-out 260ms linear both; }
+:root[data-dir="b"][data-vt="mb-ev-back"]::view-transition-new(mb-card) { animation: mb-fade-in 220ms 140ms linear both; }
+
+/* 浮层变形成来源栏 */
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-old(mb-srcbar), :root[data-dir="b"][data-vt="mb-unfold"]::view-transition-new(mb-srcbar),
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-new(mb-pane) { block-size: 100%; object-fit: none; object-position: left top; }
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-image-pair(mb-srcbar) { background: var(--dorami-canvas); }
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-old(mb-srcbar) { animation: mb-fade-out 120ms linear both; }
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-new(mb-srcbar) { animation: mb-fade-in 200ms 80ms linear both; }
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-old(mb-list), :root[data-dir="b"][data-vt="mb-unfold"]::view-transition-old(mb-pane) { animation: none; opacity: 0; }
+:root[data-dir="b"][data-vt="mb-unfold"]::view-transition-new(mb-list), :root[data-dir="b"][data-vt="mb-unfold"]::view-transition-new(mb-pane) { animation: none; opacity: 1; }
+
+/* 飞行件(订阅时的来源徽标、问答的星标) */
+[data-dir="b"] .mb-fly { position: fixed; left: 0; top: 0; z-index: 95; pointer-events: none; will-change: transform; }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>哆啦美 · 动效样页 · 整机原型</title>
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-serif-v1/dorami-serif.css">
+<link rel="stylesheet" href="../../../frontend/public/fonts/dorami-latin-v1/dorami-latin.css">
+<link rel="stylesheet" href="assets/base.css?v=1119c">
+<link rel="stylesheet" href="assets/motion-core.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-0.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-a.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-b.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-c.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-d.css?v=1119c">
+<link rel="stylesheet" href="assets/dir-s.css?v=1119c">
+<link rel="stylesheet" href="assets/presence.css?v=1119c">
+</head>
+<body>
+<div id="lab">
+  <b>动效</b>
+  <div class="lab-g"><button data-lab="dir:s">选定稿</button><button data-lab="dir:0">现网</button><button data-lab="dir:a">A 精密</button><button data-lab="dir:b">B 连续</button><button data-lab="dir:c">C 光</button><button data-lab="dir:d">D 刊物</button></div>
+  <span class="lab-t">速度</span><div class="lab-g"><button data-lab="speed:1">1×</button><button data-lab="speed:0.5">½</button><button data-lab="speed:0.25">¼</button><button data-lab="speed:0.1">⅒</button></div>
+  <button class="lab-chip" data-lab="replay:1">重新到场</button>
+  <span class="lab-t">明暗</span><div class="lab-g"><button data-lab="theme:light">亮</button><button data-lab="theme:dark">暗</button></div>
+  <span class="lab-t">在场</span>
+  <button class="lab-chip" data-lab="p:immersive">沉浸阅读</button>
+  <button class="lab-chip" data-lab="p:rowact">行内动作</button>
+  <button class="lab-chip" data-lab="p:peek">来源栏探出</button>
+  <button class="lab-chip" data-lab="p:bar">吸顶栏收放</button>
+  <span class="lab-t">减少动效</span><div class="lab-g"><button data-lab="motion:full">关</button><button data-lab="motion:reduce">开</button></div>
+  <span class="lab-sp"></span>
+  <a href="index.html">总览与对照</a>
+</div>
+<div id="app"></div>
+<script src="../issue-279-frontend-refactor/assets/data.js"></script>
+<script src="assets/motion-core.js?v=1119c"></script>
+<script src="assets/dir-0.js?v=1119c"></script>
+<script src="assets/dir-a.js?v=1119c"></script>
+<script src="assets/dir-b.js?v=1119c"></script>
+<script src="assets/dir-c.js?v=1119c"></script>
+<script src="assets/dir-d.js?v=1119c"></script>
+<script src="assets/dir-s.js?v=1119c"></script>
+<script src="assets/presence.js?v=1119c"></script>
+<script src="assets/app.js?v=1119c"></script>
+</body>
+</html>

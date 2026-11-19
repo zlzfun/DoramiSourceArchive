@@ -262,6 +262,45 @@
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── 动效语言(issue #301,conventions §7;样页 docs/design/issue-301-motion-language)──
+     曲线三条:--motion-ease(出入场、位移收尾,沿用上面那条)/ --motion-ease-drawer(来源栏这类整块滑动)/
+     --motion-ease-focus(由虚到实,只给问答面板)。
+     时长在 fast / medium / slow 之外加五档:按下、悬停进 / 出(进快出慢)、常规、整块滑动。
+     弹簧五档由 utils/spring.js 的 MOTION_SPRINGS 取样(守卫 test/motionTokens.test.mjs 逐字比对);
+     -dur 是落定时长,弹簧曲线必须配它用——换别的时长,回弹落的位置就不对了。 */
+  --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --motion-ease-focus: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-press: 120ms;      /* 按下 */
+  --motion-hover-in: 100ms;   /* 悬停底色:进 */
+  --motion-hover-out: 180ms;  /* 悬停底色:出 */
+  --motion-base: 200ms;       /* 行状态换色这类常规过渡 */
+  --motion-drawer: 360ms;     /* 来源栏整块滑入 / 滑出 */
+  /* snappy(0.28s · 回弹 0):松手回弹 */
+  --motion-spring-snappy: linear(0, 0.0538, 0.17, 0.3049, 0.4358, 0.5523, 0.6507, 0.731, 0.7951, 0.8453, 0.884, 0.9136, 0.936, 0.9528, 0.9653, 0.9746, 0.9815, 0.9865, 0.9902, 0.9929, 0.9949, 0.9963, 0.9973, 0.9981, 0.9986, 1);
+  --motion-spring-snappy-dur: 413ms;
+  /* glide(0.32s · 回弹 0.12):列表选中块、提示弹入 */
+  --motion-spring-glide: linear(0, 0.0435, 0.144, 0.2688, 0.3974, 0.5179, 0.6243, 0.7143, 0.7878, 0.8462, 0.8914, 0.9256, 0.9508, 0.969, 0.9817, 0.9904, 0.996, 0.9995, 1.0015, 1.0026, 1.0029, 1.0029, 1.0027, 1.0023, 1.0019, 1.0016, 1.0012, 1);
+  --motion-spring-glide-dur: 446ms;
+  /* move(0.42s · 回弹 0.12):位移——筛选后的行、分数逐位滚动 */
+  --motion-spring-move: linear(0, 0.0269, 0.0929, 0.1809, 0.2786, 0.3778, 0.4728, 0.5605, 0.6391, 0.7078, 0.7667, 0.8164, 0.8576, 0.8913, 0.9185, 0.9401, 0.957, 0.9701, 0.98, 0.9874, 0.9928, 0.9967, 0.9993, 1.001, 1.0021, 1.0027, 1.0029, 1.0029, 1.0028, 1.0026, 1.0023, 1.002, 1.0017, 1.0014, 1.0012, 1);
+  --motion-spring-move-dur: 583ms;
+  /* settle(0.50s · 回弹 0.18):大变形——卡面展开成页、到场 */
+  --motion-spring-settle: linear(0, 0.0198, 0.0704, 0.1411, 0.2232, 0.3104, 0.3979, 0.4823, 0.5615, 0.6339, 0.6988, 0.7561, 0.8057, 0.8481, 0.8838, 0.9134, 0.9376, 0.9571, 0.9725, 0.9844, 0.9934, 1, 1.0047, 1.0079, 1.0098, 1.0108, 1.0111, 1.0109, 1.0104, 1.0096, 1.0087, 1.0077, 1.0067, 1.0058, 1.0049, 1.0041, 1.0034, 1.0027, 1.0022, 1.0017, 1.0013, 1);
+  --motion-spring-settle-dur: 687ms;
+  /* pop(0.35s · 回弹 0.45):落点——星标、导轨图标、订阅钮 */
+  --motion-spring-pop: linear(0, 0.0404, 0.1428, 0.282, 0.4369, 0.5913, 0.7334, 0.8559, 0.9549, 1.0294, 1.0807, 1.1113, 1.1248, 1.125, 1.1155, 1.0999, 1.081, 1.0612, 1.0424, 1.0256, 1.0115, 1.0006, 0.9927, 0.9876, 0.9848, 0.984, 0.9847, 0.9863, 0.9886, 0.991, 0.9935, 0.9958, 0.9977, 0.9993, 1.0005, 1.0013, 1.0018, 1.002, 1.002, 1.0018, 1.0016, 1.0013, 1);
+  --motion-spring-pop-dur: 704ms;
+}
+/* 不支持 linear() 的浏览器(Chrome < 113 / Safari < 17.2):五档弹簧退回 ease-out,时长不变 */
+@supports not (transition-timing-function: linear(0, 1)) {
+  :root {
+    --motion-spring-snappy: var(--motion-ease);
+    --motion-spring-glide: var(--motion-ease);
+    --motion-spring-move: var(--motion-ease);
+    --motion-spring-settle: var(--motion-ease);
+    --motion-spring-pop: var(--motion-ease);
+  }
 }
 
 /* ── 移动 token(issue #230 移动规范,conventions「移动端」节;取自样页 docs/design/issue-230-mobile「token 与落地注记」)──
