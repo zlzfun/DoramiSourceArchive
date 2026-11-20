@@ -177,6 +177,7 @@ from llm.client import UsageMeta
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
+from api.delivery_metering import record_mcp_usage
 from mcp_server import build_mcp_app
 from config import settings
 
@@ -567,7 +568,11 @@ async def lifespan(app: FastAPI):
             else:
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-        mcp = build_mcp_app(db_sink, subscription_resolver=resolve_subscription_sources_by_token)
+        mcp = build_mcp_app(
+            db_sink,
+            subscription_resolver=resolve_subscription_sources_by_token,
+            usage_recorder=record_mcp_usage,  # 令牌交付计量(issue #312)
+        )
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None

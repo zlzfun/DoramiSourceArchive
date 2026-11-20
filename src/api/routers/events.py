@@ -17,9 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from api import deps
-from api.feed_service import resolve_feed_token_owner
+from api.delivery_metering import meter_call, meter_rejected
+from api.feed_service import resolve_feed_token_identity
 from api.tokens import read_bearer_or_query_token
 from services import event_board as event_board_service
+from services import token_usage as token_usage_service
+from services.token_usage import TokenIdentity
 
 router = APIRouter(tags=["events"])
 
@@ -78,11 +81,19 @@ def get_reader_event(
 # ── 对外交付面(dfeed_ 令牌) ──
 
 
-def _require_feed_token(request: Request, session: Session) -> None:
-    """核对个人聚合令牌;先于参数取值校验——令牌无效时不回窗口 / 条数范围类的 400。"""
+def _require_feed_token(request: Request, session: Session, channel: str) -> TokenIdentity:
+    """核对个人聚合令牌;先于参数取值校验——令牌无效时不回窗口 / 条数范围类的 400。
 
-    if not resolve_feed_token_owner(session, read_bearer_or_query_token(request)):
+    返回「这是谁的哪一枚令牌」供交付计量(issue #312);校验不过时,这枚令牌若曾经有效,
+    在它名下记一次被拒。
+    """
+
+    token = read_bearer_or_query_token(request)
+    identity = resolve_feed_token_identity(session, token)
+    if identity is None:
+        meter_rejected(token, channel)
         raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    return identity
 
 
 @router.get("/api/public/feed/events")
@@ -95,12 +106,13 @@ def get_public_feed_events(
 ):
     """热点事件榜的令牌化拉取:与读者面榜单同一份数据;``include_members=true`` 时每件事带成员报道。"""
 
-    _require_feed_token(request, session)
+    identity = _require_feed_token(request, session, token_usage_service.FEED_EVENTS)
     _check_window(window_hours)
     _check_limit(limit)
     board = event_board_service.read_board(
         session, window_hours=window_hours, limit=limit, include_members=include_members
     )
+    meter_call(identity, token_usage_service.FEED_EVENTS, len(board["items"]))
     return {"status": "success", "count": len(board["items"]), **board}
 
 
@@ -113,11 +125,12 @@ def get_public_feed_event(
 ):
     """单个事件的令牌化拉取:榜单字段 + 成员报道 + 后续事件;合并掉的旧 ID 返回新事件并带 ``merged_into``。"""
 
-    _require_feed_token(request, session)
+    identity = _require_feed_token(request, session, token_usage_service.FEED_EVENT_DETAIL)
     _check_window(window_hours)
     result = event_board_service.read_event(session, event_id, window_hours=window_hours)
     if result is None:
         raise HTTPException(status_code=404, detail="事件不存在")
+    meter_call(identity, token_usage_service.FEED_EVENT_DETAIL, 1)
     return {"status": "success", "event": result}
 
 

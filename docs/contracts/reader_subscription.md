@@ -155,6 +155,10 @@ GET  /api/reader/feed-token          # status + preview (never echoes plaintext)
 POST /api/reader/feed-token/rotate   # create/rotate; returns plaintext once
 ```
 
+The status response also reports how the **current** token has been used (issue #312):
+`last_used_at` (last successful call, any time; `null` if never), `usage_calls` (successful
+calls in the last `usage_window_days` = 30 days). Rotating starts a new token, so both reset.
+
 The feed resolves the union of the caller's active subscribed `source_id`s and returns
 articles across all of them, **ordered by publish date (newest first)**. Supported
 filters:
@@ -420,6 +424,23 @@ and rotation invalidates the previous token.
 
 Inactive subscriptions return no consumer data, and the feed returns nothing for a user
 with no active subscriptions.
+
+## Call Metering (issue #312)
+
+Every **successful** call made with a `dfeed_` or `dsub_` token is counted, per day, per
+token, per endpoint: the aggregated feed (JSON / Markdown / Atom), the hot events board and
+event detail, the per-subscription pull and search, and the four content MCP tools. What is
+stored is the call count, the number of items returned and the time of the last call — not the
+request parameters, not the returned content, not the caller's IP. Administrators see the
+totals per account and per token; a reader sees the usage of their own current token in
+接入集成 → 聚合接口.
+
+- Requests that fail validation (400) or hit a missing event (404) are not calls.
+- A token that fails authentication is not recorded, with one exception: a token that used to
+  be valid (rotated or belonging to a removed subscription) gets a "rejected after retirement"
+  count under its old record, so an administrator can tell that something is still using it.
+- Metering never changes a response and never fails a request.
+- Counts are per node; they are not carried by Archive Sync.
 
 ## Current Limits
 

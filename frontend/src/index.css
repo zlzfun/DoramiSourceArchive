@@ -5145,6 +5145,25 @@ input[type="radio"] {
     font-variant-numeric: tabular-nums;
   }
 
+  /* ── 用户活动抽屉「接口调用」区(issue #312;刻度 1:1 取自 docs/design/issue-312-token-usage/assets/proto.css)──
+     一枚令牌一张卡:卡头两行(类型 + 尾号 + 条件性的「已作废」 | 调用次数;最近调用 | 返回条数),展开是它调过的接口。 */
+  .tok-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .tok-kind { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tok-prev { font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tok-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .tok-card { background: var(--dorami-soft); border-radius: var(--r-control); }
+  .tok-card > summary {
+    list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline; gap: 2px 12px; padding: 10px 12px;
+  }
+  .tok-card > summary::-webkit-details-marker { display: none; }
+  .tok-n { font-size: 18px; line-height: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--dorami-ink); text-align: right; }
+  .tok-n.is-zero { color: var(--dorami-faint); font-weight: 400; }
+  .tok-meta, .tok-items { font-size: 12px; line-height: 18px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .tok-items { text-align: right; }
+  .tok-chs { padding: 4px 6px 8px; border-top: 1px solid var(--dorami-border-soft); }
+  .tok-ch-name { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* 榜单列表(收藏文章 TOP) */
   .toplist { display: flex; flex-direction: column; }
   .toplist-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--dorami-border); }

@@ -24,6 +24,7 @@ from api.tokens import hash_subscription_token, normalize_delivery_policy
 from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord, UserRecord
 from services import source_visibility
 from services.accounts import account_username_for
+from services.token_usage import KIND_FEED, KIND_SUBSCRIPTION, TokenIdentity
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -168,15 +169,60 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
     return sorted(collected)
 
 
-def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
-    """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
+def subscription_token_identity(record: ReaderSubscriptionRecord) -> TokenIdentity:
+    """一条订阅自带的 ``dsub_`` 令牌是谁的、是哪一枚(交付计量用,issue #312)。"""
+    return TokenIdentity(
+        username=record.owner_username or "",
+        kind=KIND_SUBSCRIPTION,
+        token_hash=record.token_hash,
+        preview=record.token_preview,
+        subscription_id=record.id,
+    )
+
+
+def resolve_feed_token_identity(session: Session, token: str) -> Optional[TokenIdentity]:
+    """个人聚合令牌 → 它是谁的、是哪一枚；令牌缺失/无效返回 None。"""
     if not token:
         return None
     token_hash = hash_subscription_token(token)
     record = session.exec(
         select(ReaderFeedTokenRecord).where(ReaderFeedTokenRecord.token_hash == token_hash)
     ).first()
-    return record.owner_username if record else None
+    if record is None:
+        return None
+    return TokenIdentity(
+        username=record.owner_username,
+        kind=KIND_FEED,
+        token_hash=record.token_hash,
+        preview=record.token_preview,
+    )
+
+
+def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
+    """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
+    identity = resolve_feed_token_identity(session, token)
+    return identity.username if identity else None
+
+
+def resolve_token_identity(token: str) -> Optional[TokenIdentity]:
+    """任一读取类令牌 → 它是谁的、是哪一枚(供 MCP 记交付计量)。
+
+    与 ``resolve_subscription_sources_by_token`` 同一套先后:先按单订阅令牌(启用中的订阅)找,
+    再按个人聚合令牌找;都对不上返回 None。
+    """
+    if not token:
+        return None
+    token_hash = hash_subscription_token(token)
+    with Session(deps.get_db_sink().engine) as session:
+        record = session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.token_hash == token_hash,
+                ReaderSubscriptionRecord.is_active == True,  # noqa: E712
+            )
+        ).first()
+        if record:
+            return subscription_token_identity(record)
+        return resolve_feed_token_identity(session, token)
 
 
 def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:

@@ -1,0 +1,146 @@
+# 令牌交付计量:账户 · 令牌 · 接口调用量(issue #312)
+
+> **归档于 2026-11-20(issue #312,开发版 3.70.0-alpha)**:现状以 `docs/architecture/admin-ops.md`「令牌交付计量」与代码为准,文中路径与状态为当时记录。
+> 状态:归档(2026-11-19 立项、出第一轮样页;11-20 用户拍板方向 A「并入现有」,其余按推荐;同日实现)。
+> 样页:[`docs/design/issue-312-token-usage/`](../design/issue-312-token-usage/README.md)。实现方 Claude Code(Fable 5.2);检视方 Codex(见 §8)。
+
+## 1. 来由
+
+同事开始用令牌程序化取平台内容(issue #310 刚上线热点事件榜的令牌化交付口)。问到「这些调用现在能不能统计」,答案是不能:
+
+- `dfeed_` / `dsub_` 两张令牌表只有创建、更新时间,没有使用痕迹。
+- 交付路径——文章 feed(JSON / Markdown / Atom)、热点事件榜、单订阅接口、MCP 工具——鉴权通过后直接返回,不写计量。
+- 现有四类计量(AI 用量、阅读、登录、游客)都不覆盖它。阅读计量只认登录读者在阅读器里打开文章。
+- 唯一的痕迹是 nginx 访问日志:令牌走 `Authorization` 头,日志里没有,只能按路径数次数、按 IP 猜人;外网宿主机留 14 天,容器内那份每次部署清空。
+
+对照:收录推送令牌(`ingest_tokens`)有 `last_used_at`,分享链接有 `view_count`,读取类令牌是空白。
+
+用户要的效果(2026-11-19):**账户 → 它的令牌 → 接口调用与调用量** 能连起来。
+
+## 2. 当时的现状(v3.69.0)
+
+| 令牌 | 表 | 一个账号几枚 | 重新生成 | 界面 |
+|---|---|---|---|---|
+| `dfeed_` 个人聚合令牌 | `reader_feed_tokens`(主键 `owner_username`) | 一枚 | 原地换 `token_hash`,`created_at` 不变 | 设置 → 接入集成 → 聚合接口 |
+| `dsub_` 单订阅令牌 | `reader_subscriptions.token_hash` | 每个订阅一枚(一键订阅时自动生成) | 原地换 | 没有界面,明文只在创建 / 轮换接口返回一次 |
+
+带令牌的读取面:
+
+| 接口 | 认哪种令牌 | 解析处 |
+|---|---|---|
+| `GET /api/public/feed/articles`、`.md`、`.xml` | `dfeed_` | `api.feed_service.resolve_feed_token_owner` |
+| `GET /api/public/feed/events`、`/{event_id}` | `dfeed_` | 同上 |
+| `GET /api/public/subscriptions/{id}/articles`、`POST …/vector/search` | `dsub_` | `resolve_subscription_by_token` |
+| MCP `browse_articles` `get_article` `search_articles` `get_rag_context` | `dfeed_` 或 `dsub_` | `resolve_subscription_sources_by_token`(只回来源范围,不回是谁) |
+| MCP `list_sources` | 不需要令牌 | — |
+
+## 3. 拍板(2026-11-20,用户:「我个人觉得并入现有比较好,令牌相关在账户管理的总览列表仅显示『接口』列,详细内容在展开的账户抽屉中显示。其它按推荐。」)
+
+1. **账户页:A 并入现有**——账户表只加「接口」一列,明细进单用户抽屉;不加板块、不做令牌台账。
+2. 接口的叫法:真实路径(`feed/articles`、`mcp · search_articles`)。
+3. 重新生成令牌之后:旧令牌的记录留在它自己名下,标「已作废」。
+4. 已作废的令牌还被调:在旧令牌名下记一个数。
+5. 订阅令牌:只列调过的。
+6. 谁能看:聚合数全体管理员,逐账号明细根管理员(落地时的出入见 §5 第 1 条)。
+7. 留存 365 天。
+8. 设置卡:A——令牌下加一行使用情况。
+9. 首页磁贴:本波不动。
+
+## 4. 做法
+
+### 4.1 记什么
+
+一次调用 = 令牌有效、成功返回的一次请求(MCP 是带令牌的一次工具调用)。参数不合法(400)、事件不存在(404)没有成功返回,不算。条数 = 这次返回了多少条:文章数 / 事件数 / 检索结果数;取单篇与事件详情记 1;`get_rag_context` 记拼进上下文的片段数。
+
+一行 = **日 × 账号 × 令牌 × 接口**,累加调用次数与返回条数,记最近一次成功调用的时间。
+
+不记:认不出的令牌(不知道是谁的)、MCP `list_sources`(不需要令牌)、阅读器里的阅读(已有阅读计量)、没有归属账号的历史全局订阅令牌(记了也挂不到任何账户上)。
+
+### 4.2 表(一张,形制同 `ai_usage` / `reader_reads`)
+
+`token_delivery_usage`(`models.db.TokenDeliveryUsageRecord`,迁移 `3cfd474ffd83`):
+
+| 列 | 含义 |
+|---|---|
+| `day` | 本地日期 `YYYY-MM-DD` |
+| `username` | 令牌归属账号 |
+| `token_kind` | `feed` / `subscription` |
+| `token_fp` | 令牌哈希的前 16 位。哈希本身是带站点密钥的 HMAC,前缀不可逆;用它区分同一账号先后几枚令牌 |
+| `token_preview` | 尾号(签发时已存在令牌表里的那份),给界面显示 |
+| `subscription_id` | 订阅令牌所属订阅,聚合令牌为空 |
+| `channel` | 接口:`feed/articles`、`feed/articles.md`、`feed/articles.xml`、`feed/events`、`feed/events/{id}`、`subscriptions/{id}/articles`、`subscriptions/{id}/vector/search`、`mcp:<工具名>` |
+| `calls` / `items` | 累计成功调用次数 / 返回条数 |
+| `rejected` | 这枚令牌作废之后仍被调、被拒的次数 |
+| `last_at` / `updated_at` | 最近一次成功调用 / 最近一次累加 |
+
+唯一索引 `(day, username, token_fp, channel)`,写入走 SQLite `INSERT … ON CONFLICT DO UPDATE` 原子累加。一枚令牌是否仍是「现用」不落库:读的时候拿 `token_fp` 与令牌表当前哈希比对,对不上(重新生成过 / 订阅停用或已删)就是已作废。
+
+接口分四组(`services.token_usage.channel_group`):文章 / 热点事件 / 单订阅 / MCP,界面按组上色、按组画每日走势。
+
+留存进 `services/retention.py` 的逐表策略,365 天。删号时计量行合并进墓碑名 `deleted:<原名>`(`token_usage.tombstone_user`,与 AI 用量 / 阅读计量同一语义)。
+
+### 4.3 写入点
+
+- `api/feed_service.py`:解析函数各加一个回「是谁的哪一枚令牌」的版本(`resolve_feed_token_identity` / `subscription_token_identity` / `resolve_token_identity`),原 `resolve_feed_token_owner` 成薄壳,现有调用方不动。
+- `api/delivery_metering.py`:`meter_call` / `meter_rejected` / `record_mcp_usage`。用自己的短会话写库——不碰请求会话(提交会让请求里已加载的对象过期);任何异常只打日志,不影响交付。
+- HTTP 端点在组好返回值之后记一笔;校验不过时,这枚令牌若以前留过记录(曾经有效),在它名下 `rejected` 加一,认不出的不留行。
+- 两处事件循环上的调用(`POST …/vector/search` 是 async 端点;MCP 工具)把计量写库放线程池,不占事件循环。为此 MCP 四个内容工具的包装函数由同步改成 async,工具的名字、参数、返回值不变。
+
+### 4.4 读接口
+
+- `GET /api/admin/accounts`:逐行加 `api_calls`,排序键加 `api`,`summary` 加 `api_calls`、`api_tokens_active`、`top_api`。
+- `GET /api/admin/accounts/{username}/activity`:加 `delivery`——窗口合计、令牌清单(类型、尾号、指纹、现用 / 已作废、所属订阅、调用 / 条数 / 被拒 / 最近调用、各接口明细)、逐日 × 接口组。列出的令牌 = 现用的聚合令牌(没调过也列)+ 窗口内留过记录的任何令牌。哈希不出接口。
+- `GET /api/reader/feed-token`:加 `last_used_at`、`usage_calls`、`usage_window_days`(30)。只算现用的这一枚,重新生成后从零算起。
+
+### 4.5 前端
+
+- `components/admin/pages/AccountsPage.jsx`:页头 KPI 第六格「接口调用 / N 枚令牌在用」;活跃用户 Top 加「按接口」;账户表加「接口」列(`ThSort`,76px,可排序);抽屉在「登录」之后渲染 `components/admin/AccountDelivery.jsx`。
+- `AccountDelivery.jsx`:一枚令牌一张卡(类型 + 尾号 + 条件性的「已作废」| 调用次数;最近调用 · 作废后仍被调 N 次 | 返回条数),展开是各接口的名称 + 次数 · 条数 + 细条;其下「每日接口调用」图(调用 / 条数可切)。没有可列的令牌时整区不出;只用接口、不在阅读器里读的账号不再补「没有阅读 / 收藏 / AI 调用记录」那句空态。
+- `utils/deliveryChannels.js`:组的名称 / 颜色 / 固定次序、接口与令牌的叫法、标题与卡片第二行、逐日透视。
+- `components/settings/FeedTokenSection.jsx`:令牌下那一行由「签发于 …」变成「签发于 … · 最近调用 … · 近 30 天 N 次」(没调过只有签发日期)。
+- 样式 `.tok-*` 进 `frontend/src/index.css`,刻度取自样页 `assets/proto.css`。
+
+## 5. 与拍板 / 样页的出入
+
+1. **KPI 第六格只有根管理员看得到**。拍板第 6 条是「聚合数全体管理员」,那是按方向 B 的独立板块设想的;方向 A 把这一格并进了现有的「窗口活跃概览」,而那一条本来就只给根管理员(非根管理员看到的是四格账户分布,不含任何窗口活动数)。没有为这一个数给非根管理员另开位置。要给的话再议。
+2. **用户原话里账户页只点了「接口」列**;KPI 第六格与活跃榜「按接口」是样页方向 A 里带着的,照样页做了。不要的话删两处即可。
+3. 抽屉的每日图复用现有 `MultiSeriesBars`(加了 `colorFor` / `alwaysLegend` 两个可选参数),不是样页里自画的 SVG;取值相同,多了现网图表已有的悬停浮层与空日刻度。
+4. 设置卡:最近一次调用早于 30 天窗口时只写「最近调用 …」,不写「近 30 天 0 次」。
+5. 样页的数字是示意;沙箱里用同一组形状造了数据(另有真实令牌的几次调用),见 §8。
+
+## 6. 部署顺序与混版本
+
+计量是各节点本机的事:一张新表、一条迁移,各记各的,不进 Archive Sync,不改任何同步流的字段、枚举、导出范围或删除语义。
+
+- 新外网 + 旧内网:外网开始记外网的调用;内网照旧不记。互不影响。
+- 旧外网 + 新内网:反过来,同样互不影响。
+- 升级前的调用没有记录,也补不回来(访问日志里没有令牌)。
+- 回滚到旧版:新表留在库里没人读写,无害;再升上来接着记,中间那段是空的。
+- 交付接口的请求与返回一字未改,脚本与 MCP 客户端不用动。
+
+## 7. 本波不做
+
+- 方向 B 的板块「接口调用」(每日全站走势 + 令牌台账):拍板选了 A。
+- 设置卡 B(逐接口计数、列出热点事件地址):issue #310 留下的「设置页入口」仍在 backlog。
+- 首页磁贴加数。
+- 按 IP / UA 的来源分析、限流与配额:这波只记账,不拦人。
+- 历史回填:访问日志里没有令牌,对不上账号。
+- 计量跨节点汇总:各节点各看各的。
+- 手机壳:手机设置不列「接入集成」(issue #230),运维面这波只做桌面。
+
+## 8. 自测与检视
+
+### 自测(2026-11-20)
+
+- **后端** `tests/test_token_usage.py` 14 条。服务层:同日同令牌同接口累加;没有归属账号的令牌不记;被拒只认留过记录的令牌、不动成功计数;账户 → 令牌 → 接口的汇总(重新生成后现用的排前、旧的标已作废并带被拒数);没调过的聚合令牌列出而订阅令牌不列,订阅停用 / 删除后转已作废;窗口、墓碑与游客排除;同名账号删 → 重建 → 再删的合并;留存 365 天。接线:三种 feed 格式与事件榜各记各的、400 / 404 不算;认不出的令牌不留行、重新生成后的旧令牌记被拒;单订阅文章与检索;MCP 四个工具(`list_sources`、没带令牌、认不出的令牌都不留行);计量抛错不影响交付。读接口:账户列表的 `api_calls` / 排序 / summary、抽屉 `delivery`、读者令牌卡、重新生成后从零算起、哈希不出接口。
+- **反向对照** 九项全红(逐个改坏再还原):事件榜端点不记账 / 认不出的令牌也留行 / 重新生成后旧令牌仍算现用 / 被拒也算进调用次数 / 计量异常冒泡到交付 / MCP 不回调计量 / 删号不合并计量 / 账户列表不按接口排序 / 前端少认一个接口组。
+- **后端全量** 3914 通过、1 跳过(本机 `-n 4`)。首跑 `tests/test_migrations.py` 挂了 6 条:新表在老库收养路径(`create_all` 建过全量表再 `upgrade heads`)上被重建,迁移补 `has_table` 守卫后绿。已发布迁移守卫(`scripts/check_released_migrations.py`)通过。
+- **前端** `npm run lint` / `npm test`(含新增 `deliveryChannels.test.mjs` 7 条)/ `npm run build` 通过。
+- **沙箱**(开发库副本,密钥清空、自动任务全关;播种 30 天的示意调用,形状对齐样页):Playwright 走一遍——设置页重新生成令牌,用这枚真令牌调 5 次(都是 200)、错令牌 1 次(401),卡上随即出现「最近调用 … · 近 30 天 5 次」;账户页 KPI 第六格、活跃榜「按接口」、账户表按「接口」排序;六种账号的抽屉(重新生成过 / 只走 MCP / 管理员 / 订阅令牌 / 签了没用 / 没有调用),展开作废的那枚、切「条数」;亮暗各截。控制台零报错;账户表表头 36px、行高 46px、各列头中线差 ≤ 0.4px。
+- **没验证的**:真实数据量下每次调用多一次写库对交付耗时的影响(没在生产库上量);MCP 经真实流式 HTTP 传输的端到端(测试直接调 `mcp.call_tool`);Windows(新增部分只用现有字体栈与实色条)。
+
+### 交叉检视
+
+实现方 Claude Code(Fable 5.2);检视方 Codex(`gpt-6-astra`,effort ultra,本地 `codex exec` 只读沙箱)。任务书、报告、表态与修复清单在 worktree `.review/`(不入库)。
+
+REVIEW_PLACEHOLDER

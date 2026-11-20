@@ -17,17 +17,20 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from api import deps
 from api.articles_view import article_to_markdown, serialize_feed_article
+from api.delivery_metering import meter_call, meter_rejected
 from api.feed_service import (
     feed_articles_for_owner,
     query_subscription_articles,
-    resolve_feed_token_owner,
+    resolve_feed_token_identity,
     resolve_subscription_by_token,
     serialize_subscription,
+    subscription_token_identity,
 )
 from api.sources import _friendly_source_name, _registry_source_meta, subscription_source_ids
 from api.textutils import _json_dumps, _json_loads, _model_dump, _model_to_clean_dict, _now_iso
@@ -40,6 +43,7 @@ from api.tokens import (
 )
 from models.db import ReaderSubscriptionRecord
 from services import subscription_mutations as subscription_mutations_service
+from services import token_usage as token_usage_service
 
 router = APIRouter(tags=["subscriptions"])
 
@@ -215,6 +219,20 @@ def _atom_feed_xml(owner: str, records: list, include_content: bool) -> bytes:
 
     return ET.tostring(feed, encoding="utf-8", xml_declaration=True)
 
+
+# ==================== 令牌校验 + 交付计量(issue #312)====================
+# 校验通过拿到「这是谁的哪一枚令牌」,交付成功后记一笔;校验不过时,这枚令牌若曾经有效
+# (重新生成前的旧令牌等)在它名下记一次被拒。计量的口径与表见 services/token_usage。
+
+def _feed_identity_or_401(session: Session, request: Request, channel: str):
+    token = read_bearer_or_query_token(request)
+    identity = resolve_feed_token_identity(session, token)
+    if identity is None:
+        meter_rejected(token, channel)
+        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    return identity
+
+
 @router.get("/api/public/feed/articles")
 def get_public_feed_articles(
         request: Request,
@@ -235,10 +253,8 @@ def get_public_feed_articles(
     支持按发布时间（publish_date_start/end）、来源、类型、关键词筛选；适合日报等下游场景。
     """
     safe_limit = min(max(limit, 1), 500)
-    token = read_bearer_or_query_token(request)
-    owner = resolve_feed_token_owner(session, token)
-    if not owner:
-        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    identity = _feed_identity_or_401(session, request, token_usage_service.FEED_ARTICLES)
+    owner = identity.username
     records = feed_articles_for_owner(
         session, owner,
         content_type=content_type, content_types=content_types, source_ids=source_ids,
@@ -246,7 +262,7 @@ def get_public_feed_articles(
         publish_date_start=publish_date_start, publish_date_end=publish_date_end,
         skip=skip, limit=safe_limit,
     )
-    return {
+    payload = {
         "status": "success",
         "count": len(records),
         "skip": skip,
@@ -254,6 +270,8 @@ def get_public_feed_articles(
         "next_skip": skip + len(records) if len(records) == safe_limit else None,
         "items": [serialize_feed_article(record, include_content=include_content) for record in records],
     }
+    meter_call(identity, token_usage_service.FEED_ARTICLES, len(records))
+    return payload
 
 
 @router.get("/api/public/feed/articles.md")
@@ -272,10 +290,8 @@ def export_public_feed_articles_markdown(
 ):
     """个人聚合拉取接口的 Markdown 批量导出变体（最多 200 条）。"""
     safe_limit = min(max(limit, 1), PUBLIC_FEED_EXPORT_LIMIT)
-    token = read_bearer_or_query_token(request)
-    owner = resolve_feed_token_owner(session, token)
-    if not owner:
-        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    identity = _feed_identity_or_401(session, request, token_usage_service.FEED_ARTICLES_MARKDOWN)
+    owner = identity.username
     records = feed_articles_for_owner(
         session, owner,
         content_type=content_type, content_types=content_types, source_ids=source_ids,
@@ -284,6 +300,7 @@ def export_public_feed_articles_markdown(
         skip=skip, limit=safe_limit,
     )
     body = "\n\n---\n\n".join(article_to_markdown(record, external_delivery=True) for record in records)
+    meter_call(identity, token_usage_service.FEED_ARTICLES_MARKDOWN, len(records))
     return Response(content=body, media_type="text/markdown; charset=utf-8")
 
 
@@ -304,10 +321,8 @@ def export_public_feed_articles_atom(
 ):
     """个人聚合拉取接口的 Atom 1.0 变体（最多 200 条）。"""
     safe_limit = min(max(limit, 1), PUBLIC_FEED_EXPORT_LIMIT)
-    token = read_bearer_or_query_token(request)
-    owner = resolve_feed_token_owner(session, token)
-    if not owner:
-        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    identity = _feed_identity_or_401(session, request, token_usage_service.FEED_ARTICLES_ATOM)
+    owner = identity.username
     records = feed_articles_for_owner(
         session, owner,
         content_type=content_type, content_types=content_types, source_ids=source_ids,
@@ -315,10 +330,9 @@ def export_public_feed_articles_atom(
         publish_date_start=publish_date_start, publish_date_end=publish_date_end,
         skip=skip, limit=safe_limit,
     )
-    return Response(
-        content=_atom_feed_xml(owner, records, include_content),
-        media_type="application/atom+xml",
-    )
+    content = _atom_feed_xml(owner, records, include_content)
+    meter_call(identity, token_usage_service.FEED_ARTICLES_ATOM, len(records))
+    return Response(content=content, media_type="application/atom+xml")
 
 
 # ==================== 订阅生命周期（owner 作用域）====================
@@ -475,14 +489,17 @@ def get_public_subscription_articles(
         limit: Optional[int] = None,
         session: Session = Depends(deps.get_session),
 ):
-    subscription = resolve_subscription_by_token(
-        session, subscription_id, read_bearer_or_query_token(request),
-    )
+    token = read_bearer_or_query_token(request)
+    try:
+        subscription = resolve_subscription_by_token(session, subscription_id, token)
+    except HTTPException:
+        meter_rejected(token, token_usage_service.SUBSCRIPTION_ARTICLES)
+        raise
     records, query_info = query_subscription_articles(session, subscription, skip=skip, limit=limit)
 
     include_content = query_info["policy"]["include_content"]
     safe_limit = query_info["limit"]
-    return {
+    payload = {
         "status": "success",
         "subscription": {
             "id": subscription.id,
@@ -494,6 +511,8 @@ def get_public_subscription_articles(
         "next_skip": skip + len(records) if len(records) == safe_limit else None,
         "items": [serialize_feed_article(record, include_content=include_content) for record in records],
     }
+    meter_call(subscription_token_identity(subscription), token_usage_service.SUBSCRIPTION_ARTICLES, len(records))
+    return payload
 
 
 @router.post("/api/public/subscriptions/{subscription_id}/vector/search")
@@ -509,10 +528,15 @@ async def public_subscription_vector_search(
     """
     from mcp_server import _search_articles_impl
 
+    token = read_bearer_or_query_token(request)
     with Session(deps.get_db_sink().engine) as session:
-        subscription = resolve_subscription_by_token(
-            session, subscription_id, read_bearer_or_query_token(request),
-        )
+        try:
+            subscription = resolve_subscription_by_token(session, subscription_id, token)
+        except HTTPException:
+            # 本端点是 async:计量写库放线程池,不占事件循环(成功路径同)。
+            await run_in_threadpool(meter_rejected, token, token_usage_service.SUBSCRIPTION_SEARCH)
+            raise
+        identity = subscription_token_identity(subscription)
         filters = _json_loads(subscription.filters_json, {})
         source_ids = subscription_source_ids(subscription)
         if not source_ids:
@@ -533,6 +557,7 @@ async def public_subscription_vector_search(
         # 曾 `or None` 把空 filters 订阅放大成全库检索,连私有用户源一起搜)。
         source_ids=source_ids,
     )
+    await run_in_threadpool(meter_call, identity, token_usage_service.SUBSCRIPTION_SEARCH, len(results))
     return {
         "status": "success",
         "subscription": {"id": sub_id, "name": sub_name},

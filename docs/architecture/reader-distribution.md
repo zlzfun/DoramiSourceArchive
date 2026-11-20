@@ -11,6 +11,10 @@ Reader accounts build a personalized subscription scope over already-archived re
 
 `GET /api/reader/sources` 的每个条目带服务端算好的 `origin` 与 `listing`。收录通道建的临时源 `listing=unlisted`:发现页与「订阅全部 X 源」不列,条目上的来源名仍可进源页单独订阅,订阅者源栏归「收录」组;退役源(含已下线墓碑)与主人不可考的 `user_rss_` 孤儿只对订阅者保留退订入口。隐藏源全量排除于交付,公共日报候选池与 `/api/feed/articles[.md]` 也不例外。临时源的多源印证 / 日报 / 付费处理口径见 [`contracts/ingest_push.md`](../contracts/ingest_push.md)。
 
+## 令牌调用的计量(issue #312)
+
+带 `dfeed_` / `dsub_` 令牌的每一次成功取数(文章 feed、热点事件榜、单订阅接口、MCP 内容工具)按「日 × 账号 × 令牌 × 接口」记进 `token_delivery_usage`,管理面在账户抽屉里按令牌、按接口看调用量;读者自己的令牌卡显示最近调用与近 30 天次数。计量不改任何交付接口的请求与返回,写入失败也不影响交付。口径与落点见 [`admin-ops.md`「令牌交付计量」](./admin-ops.md)。
+
 ## 热点事件榜的令牌化交付(issue #310)
 
 `GET /api/public/feed/events[/{event_id}]` 用 `dfeed_` 个人聚合令牌拉榜单页「热点事件」那份数据,路由在 `src/api/routers/events.py`,与读者面 `/api/reader/events` 同调 `services/event_board`。榜单是全站口径:令牌只决定能不能拿,不按订阅范围裁剪(读者面本来就对所有读者与游客开放);隐藏 / 私有 / 凭据源成员照旧在读取时剔除。`dsub_` 单订阅令牌与登录会话都不是这里的凭据。读者面榜单载荷的键自此也是对外契约(只加不改不删),契约见 [`contracts/reader_subscription.md`](../contracts/reader_subscription.md)「Hot Events Board」。

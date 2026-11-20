@@ -39,6 +39,7 @@ from models.db import (
     ReaderSubscriptionRecord,
     UserRecord,
 )
+from services import token_usage as token_usage_service
 
 VALID_ROLES = ("admin", "user")
 VALID_SURFACES = ("console", "reader")
@@ -800,7 +801,7 @@ def delete_user(session: Session, username: str) -> None:
     - **个人资产物理删除并即时失效**：订阅行与聚合令牌、收藏、公开分享链接
       （行删即 404）、逐篇读态与按源水位、反馈、公告 dismiss；该用户订阅的
       自定源随退订走既有「无人订阅即物理删」语义。
-    - **计量历史墓碑化**：AI 用量/阅读计量/登录事件改写为 ``deleted:<原名>``——
+    - **计量历史墓碑化**：AI 用量/阅读计量/令牌交付计量/登录事件改写为 ``deleted:<原名>``——
       运维看板与成本历史保持完整真实，同名重建不继承任何历史。
     - **保留原名**：管理审计日志（操作历史即历史）与 JobRecord.created_by。
     此前版本只删账户行+订阅+令牌且分两次提交——收藏/分享/计量等残留可被同名
@@ -869,6 +870,8 @@ def delete_user(session: Session, username: str) -> None:
         sum_cols=("reads",),
         username=username, tombstone=tombstone,
     )
+    # 令牌交付计量(issue #312):同样合并进墓碑名下;令牌本身已在 ② 随订阅行 / 聚合令牌删除。
+    token_usage_service.tombstone_user(session, username, tombstone)
     # 登录事件是明细流、无唯一键,裸改写安全。
     session.exec(
         update(LoginEventRecord)

@@ -1,4 +1,4 @@
-# 运维管理面与计量(AI 用量 / 阅读 / 登录)
+# 运维管理面与计量(AI 用量 / 阅读 / 登录 / 令牌交付)
 
 > 状态:耐久参考(快照 2026-10-21)。自 `CLAUDE.md`「Key Design Decisions」**原文迁出**(2026-10-21,文档整理波 issue #210),内容按域归档、未改写;现状以代码为准。本域不变量变化时更新对应节,并在 `docs/version-history.md` 记一行。
 > 相关:[`docs/frontend/conventions.md`](../frontend/conventions.md) §8 管理面纪律 · 归档 [`archive/admin-surface-refactor-plan.md`](../archive/admin-surface-refactor-plan.md) · [`archive/admin-usability-audit.md`](../archive/admin-usability-audit.md)
@@ -35,6 +35,20 @@ parallel to AI metering but for plain reads — `src/services/reader_activity.py
 ## Login metering (登录计量)
 
 `accounts.touch_login` writes a `LoginEventRecord` (raw event with precise timestamp) on every successful login **in addition to** updating the `UserRecord.last_login_at` snapshot — the event stream backs windowed login counts and the "最近若干次登录时间" list (logins are low-frequency, so raw retention is fine). `accounts.logins_by_user` (windowed per-user count) enriches the account list / 活跃用户 Top's 登录 dimension; `accounts.summarize_user_logins` (count + by_day + recent N timestamps) feeds the per-user drawer's expandable 最近登录 list.
+
+## 令牌交付计量(issue #312)
+
+读取类令牌(`dfeed_` 个人聚合令牌 / `dsub_` 单订阅令牌)每一次成功取走内容记一笔,让管理面能把 **账户 → 它的令牌 → 接口调用与调用量** 连起来。口径、表与落点:
+
+- **记什么**:一次调用 = 令牌有效、成功返回的一次请求(MCP 是带令牌的一次工具调用;400 / 404 不算);条数 = 返回了多少条(文章 / 事件 / 检索结果,取单篇与事件详情记 1,`get_rag_context` 记片段数)。一行 = 日 × 账号 × 令牌 × 接口,表 `token_delivery_usage`(`TokenDeliveryUsageRecord`,聚合键唯一索引 + `ON CONFLICT DO UPDATE` 原子累加,同 `ai_usage`)。覆盖文章 feed 三种格式、热点事件榜与详情、单订阅文章与检索、MCP 四个内容工具;`list_sources` 不需要令牌,不记。
+- **令牌怎么认**:行里存的是令牌哈希的前 16 位(`token_fp`,哈希是带站点密钥的 HMAC,前缀不可逆)加尾号预览。**是不是「现用」不落库**——读的时候拿指纹与令牌表当前哈希比对,对不上(重新生成过、订阅停用或已删)就是「已作废」;所以重新生成之后,旧令牌的记录留在它自己名下。
+- **被拒**:令牌没通过校验时,只有它以前留过记录(曾经有效)才在它名下 `rejected` 加一;认不出的令牌不留行(随手试出来的字符串不该进库)。没有归属账号的历史全局订阅令牌不记。
+- **不阻断交付**:`api/delivery_metering.py` 用自己的短会话写库,任何异常只打日志;事件循环上的两处(async 的订阅检索端点、MCP 工具)把写库放线程池。
+- **读**:`services/token_usage.py`——`calls_by_user` 富化账户列表与活跃榜、`window_summary` 给页头(调用次数 / 在用的令牌数)、`summarize_user` 给单用户抽屉(令牌清单 = 现用的聚合令牌 + 窗口内留过记录的任何令牌;没调过的订阅令牌不列)、`feed_token_usage` 给读者自己的令牌卡。账户口径排除 `deleted:*` 与 `guest:*`。
+- **界面**(方向 A「并入现有」,样页 `docs/design/issue-312-token-usage/`):「运维 → 账户」页头 KPI 第六格、活跃用户 Top 的「按接口」、账户表可排序的「接口」列;关系本身在单用户抽屉的「接口调用」区(`components/admin/AccountDelivery.jsx`:一枚令牌一张卡,展开是它调过的每个接口,其下每日接口调用图)。接口分四组上色(文章 / 热点事件 / 单订阅 / MCP,`utils/deliveryChannels.js`,组由后端 `channel_group` 给),接口名就写真实路径。这几处都在根管理员才见的区域里。读者侧只在 设置 → 聚合接口 的令牌下多一行「最近调用 · 近 30 天 N 次」。
+- **生命周期**:留存 365 天(`services/retention.py`);删号时合并进墓碑名 `deleted:<原名>`(`token_usage.tombstone_user`);各节点各记各的,不进 Archive Sync。
+
+拍板、与样页的出入、本波不做见 [归档方案](../archive/issue-312-token-usage.md)。
 
 ## 游客区与游客计量(issue #213)
 

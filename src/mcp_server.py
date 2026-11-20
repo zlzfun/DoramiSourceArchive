@@ -1,6 +1,9 @@
 from __future__ import annotations
 import json
+import logging
 from typing import Optional
+
+import anyio
 from mcp.server.fastmcp import FastMCP
 # 内部模块路径:mcp 顶层与 mcp.server.fastmcp 都不导出 TransportSecuritySettings。
 # pyproject 的 mcp<2 上限是这行成立的前提,2.x 会移动该模块。
@@ -14,6 +17,8 @@ from services.source_naming import friendly_source_name
 from services.paper_content import delivery_body
 from fetchers.registry import fetcher_registry
 
+
+logger = logging.getLogger(__name__)
 
 # 内容类工具缺/错令牌时的统一报错：明确指引去哪里取令牌，便于 Agent 转告用户。
 _TOKEN_REQUIRED_MSG = (
@@ -29,6 +34,11 @@ def _parse_bearer(auth: Optional[str]) -> Optional[str]:
     if auth and auth.lower().startswith("bearer "):
         return auth[7:].strip() or None
     return None
+
+
+def _count_items(rows: list) -> int:
+    """交付计量的条数:列表里真正的条目数(工具把报错也装成一条 ``{"error": …}`` 返回,不算)。"""
+    return sum(1 for row in rows if not (isinstance(row, dict) and "error" in row))
 
 
 def _resolve_scope(resolver, token: Optional[str], *, require_token: bool = True):
@@ -252,12 +262,17 @@ async def _get_rag_context_impl(
 def build_mcp_app(
     db_sink: DatabaseStorage,
     subscription_resolver=None,
+    usage_recorder=None,
 ) -> FastMCP:
     """构建 FastMCP 实例。
 
     subscription_resolver: 可选的 ``token -> Optional[list[str]]`` 回调。
     当工具收到 ``subscription_token`` 时，用它把检索范围约束到该订阅覆盖的 source_id。
     返回 None 表示令牌无效；返回 [] 表示订阅未限定来源。
+
+    usage_recorder: 可选的 ``(token, tool, items, ok) -> None`` 回调(同步,会写库),交付计量用
+    (issue #312):带令牌的内容类工具每调一次回调一次——``ok=True`` 是成功返回、``items`` 是
+    返回了几条;``ok=False`` 是令牌没通过校验。回调放线程池跑,不占事件循环;它抛什么都不影响工具。
     """
     mcp = FastMCP(
         "dorami-archive",
@@ -282,12 +297,21 @@ def build_mcp_app(
         return _parse_bearer(auth)
 
     def _resolve_subscription_scope(subscription_token: Optional[str]):
-        """返回 (ok, source_ids)。内容类工具必须携带有效令牌，否则 ok=False。
+        """返回 (ok, source_ids, token)。内容类工具必须携带有效令牌，否则 ok=False。
 
         令牌来源优先级：显式入参 ``subscription_token`` > 请求头 ``Authorization: Bearer``。
         """
         token = subscription_token or _token_from_header()
-        return _resolve_scope(subscription_resolver, token, require_token=True)
+        ok, source_ids = _resolve_scope(subscription_resolver, token, require_token=True)
+        return ok, source_ids, token
+
+    async def _record_usage(token: Optional[str], tool: str, items: int, ok: bool) -> None:
+        if usage_recorder is None or not token:
+            return
+        try:
+            await anyio.to_thread.run_sync(usage_recorder, token, tool, items, ok)
+        except Exception:  # noqa: BLE001 - 计量不阻断工具
+            logger.warning("MCP 交付计量回调失败(不影响工具):%s", tool, exc_info=True)
 
     @mcp.tool()
     def list_sources() -> list[dict]:
@@ -299,7 +323,7 @@ def build_mcp_app(
         return _list_sources_impl(db_sink)
 
     @mcp.tool()
-    def browse_articles(
+    async def browse_articles(
         source_id: Optional[str] = None,
         content_type: Optional[str] = None,
         publish_date_start: Optional[str] = None,
@@ -317,17 +341,20 @@ def build_mcp_app(
             可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
             支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token = _resolve_subscription_scope(subscription_token)
         if not ok:
+            await _record_usage(token, "browse_articles", 0, False)
             return [{"error": _TOKEN_REQUIRED_MSG}]
-        return _browse_articles_impl(
+        rows = _browse_articles_impl(
             db_sink, source_id=source_id, source_ids=scope_ids, content_type=content_type,
             publish_date_start=publish_date_start, publish_date_end=publish_date_end,
             has_content=has_content, limit=limit, skip=skip,
         )
+        await _record_usage(token, "browse_articles", _count_items(rows), True)
+        return rows
 
     @mcp.tool()
-    def get_article(article_id: str, subscription_token: Optional[str] = None) -> dict:
+    async def get_article(article_id: str, subscription_token: Optional[str] = None) -> dict:
         """按 ID 获取单篇文章完整内容（含正文、extensions 元数据）。
         Get full content of a single article by its ID.
         Use article IDs from browse_articles or search_articles results.
@@ -335,10 +362,13 @@ def build_mcp_app(
         subscription_token: 仅允许读取访问令牌覆盖来源内的文章。可经本参数传入，
             或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token = _resolve_subscription_scope(subscription_token)
         if not ok:
+            await _record_usage(token, "get_article", 0, False)
             return {"error": _TOKEN_REQUIRED_MSG}
-        return _get_article_impl(db_sink, article_id, source_ids=scope_ids)
+        article = _get_article_impl(db_sink, article_id, source_ids=scope_ids)
+        await _record_usage(token, "get_article", 0 if "error" in article else 1, True)
+        return article
 
     @mcp.tool()
     async def search_articles(
@@ -359,14 +389,17 @@ def build_mcp_app(
             可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
             支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token = _resolve_subscription_scope(subscription_token)
         if not ok:
+            await _record_usage(token, "search_articles", 0, False)
             return [{"error": _TOKEN_REQUIRED_MSG}]
-        return await _search_articles_impl(
+        hits = await _search_articles_impl(
             db_sink, query=query, top_k=top_k,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte,
         )
+        await _record_usage(token, "search_articles", _count_items(hits), True)
+        return hits
 
     @mcp.tool()
     async def get_rag_context(
@@ -388,13 +421,18 @@ def build_mcp_app(
         subscription_token: 把上下文限定在访问令牌覆盖来源内。可经本参数传入，
             或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token = _resolve_subscription_scope(subscription_token)
         if not ok:
+            await _record_usage(token, "get_rag_context", 0, False)
             return f"ERROR: {_TOKEN_REQUIRED_MSG}"
-        return await _get_rag_context_impl(
+        context = await _get_rag_context_impl(
             db_sink, query=query, top_k=top_k, max_chars=max_chars,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte, context_separator=context_separator,
         )
+        # 条数 = 拼进上下文的片段数(按分隔符数;空串即没有命中)。
+        blocks = context.count(context_separator) + 1 if context and context_separator else (1 if context else 0)
+        await _record_usage(token, "get_rag_context", blocks, True)
+        return context
 
     return mcp
