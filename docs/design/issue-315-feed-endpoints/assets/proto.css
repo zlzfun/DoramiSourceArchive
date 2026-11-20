@@ -1,0 +1,45 @@
+/* issue #315 样页新增的样式。
+ * 上半是产品里要落地的部分:class 名即进 frontend/src/index.css 的名字,取值只用现有 token。
+ * 下半(.px-*)是样页自己的开关条,不属于产品界面。 */
+
+/* ── 接口分组:组名 + 范围签(方向 B 在行尾再放一枚分段) ── */
+.ep-group { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+.ep-group + .endpoint, .ep-group + .ep { margin-top: 8px; }
+
+/* ── 方向 A:一个接口一行,点开是它的用法(调用示例 + 参数)。行本身沿用 .endpoint,外面套一层 details ── */
+.ep { margin-top: 6px; background: var(--dorami-well); border-radius: var(--r-control); }
+.ep > summary { list-style: none; cursor: pointer; margin-top: 0; background: none; }
+.ep > summary::-webkit-details-marker { display: none; }
+.ep > summary::before {
+  content: "\25B8"; flex: none; width: 8px; height: 18px; display: grid; place-items: center;
+  font-size: 9px; line-height: 1; color: var(--dorami-faint);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+.ep[open] > summary::before { transform: rotate(90deg); }
+.ep > summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-control); }
+.endpoint-fmt { flex: none; font-size: 12px; color: var(--dorami-faint); }
+.ep-body { margin: 0 8px 0 12px; padding: 9px 0 11px 16px; border-top: 1px solid var(--dorami-border); }
+.ep-code {
+  position: relative; padding-right: 34px; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  color: var(--dorami-ink-2); white-space: pre; overflow-x: auto;
+}
+.ep-code .copybtn { position: absolute; top: -3px; right: 0; }
+.ep-params { margin-top: 8px; font-size: 12px; line-height: 1.7; color: var(--dorami-muted); }
+.ep-params p + p { margin-top: 3px; }
+
+/* ── 方向 B:示例贴着它上面那条地址 ── */
+.endpoint + .codeblock { margin-top: 6px; }
+
+/* ══ 以下只属于样页 ══ */
+.px-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 400;
+  display: flex; align-items: center; gap: 14px; padding: 7px 12px; border-radius: 999px;
+  background: #14161c; color: #c9cedb; font: 12px/1 -apple-system, "PingFang SC", sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .32); white-space: nowrap;
+}
+.px-grp { display: inline-flex; align-items: center; gap: 2px; }
+.px-lbl { color: #7d8496; margin-right: 6px; }
+.px-btn { border: 0; background: none; color: inherit; font: inherit; padding: 6px 9px; border-radius: 999px; cursor: pointer; }
+.px-btn:hover { color: #fff; }
+.px-btn.is-on { background: #f2f3f7; color: #14161c; font-weight: 600; }
+.px-sep { width: 1px; height: 16px; background: #343846; }
