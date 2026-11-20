@@ -9,12 +9,21 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.69.0` / main `f4387bef3529ef594ebd026013e76703ff1e362e`(2026-11-19 正式发布,自动同步合入,见下) |
-| 本清单最近核对 | 2026-11-19(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
+| `UPSTREAM_BASE` | `v3.70.0` / main `afba463a41a38f50d787ce969064fcc4c15d427c`(2026-11-20 正式发布,自动同步合入,见下) |
+| 本清单最近核对 | 2026-11-20(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-20 正式版 `v3.70.0` 已自动无冲突合入(`cfec07ce`)。本版三块:令牌交付计量(issue #312:带 `dfeed_` / `dsub_` 令牌取内容的每次成功调用按「日 × 账号 × 令牌 × 接口」记进新表 `token_delivery_usage`,
+运维 → 账户加「接口」列与抽屉里的「接口调用」区)、设置 → 聚合接口列全令牌能调的五个接口(issue #315,纯前端 + 一条读后端源码的对账测试)、公共日报逐批记录跨天去重判定(issue #313 / PR #314,新表 `daily_brief_dedup_runs`,只在生成日报的节点落数)。
+后端不涉 §2.1 的 8 个适配文件,没有新增 httpx client,Archive Sync 的流、字段、导出范围与接收端进度都没动,部署脚本未动;相对上一版,内网源码差异(8 个适配文件 + `scripts/repair_intranet_briefs.py`)逐行对拍一致。
+内网接手注意:① **本版带两条迁移**(`a313b6d9c1e0` → `3cfd474ffd83`,各建一张新表,不动既有表),部署时照常 `upgrade heads`;升级后要回上一版须先恢复部署前的库备份(旧代码不认识新 revision);
+② 令牌计量各节点各记各的、不随 Archive Sync 传,内网升级之后的调用才开始有记录,此前的补不回来;计量走后台队列写库,升级后留意 `令牌交付计量` 开头的告警日志(写入失败、队列已满丢弃);
+③ 前端 `SettingsModal.jsx` 改了一行(给聚合接口卡多传一个 `onOpenMcp`),`App.jsx` 未动;内网托管仓若在该文件同一处有改动,合并时保留两边;`src/services/accounts.py` 的删号路径多了一步「把计量并入墓碑名」,内网托管仓在账号上的适配请顺带复核;
+④ `frontend/test/feedEndpoints.test.mjs` 读 `src/api/` 下的路由声明与清单对账——内网若在 `/api/public/feed/` 下自加接口,这条测试会红,需同步改 `frontend/src/utils/feedEndpoints.js`;
+⑤ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-19 正式版 `v3.69.0` 已自动无冲突合入(`4fd1e3b7`)。本版两块:读者面桌面动效重构(issue #301,纯前端,31 个前端文件,`App.jsx` / `SettingsModal.jsx` 未动)
 与热点事件榜的令牌化交付口(issue #310:`GET /api/public/feed/events`、`GET /api/public/feed/events/{event_id}`,凭 `dfeed_` 个人聚合令牌,契约见 `docs/contracts/reader_subscription.md`)。
