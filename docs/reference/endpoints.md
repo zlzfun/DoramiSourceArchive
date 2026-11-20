@@ -35,6 +35,7 @@
 - `GET`/`POST /api/daily-brief/config` — read/set cron, top-N, LLM overrides (persisted in `AppSettingRecord` KV)
 - `POST /api/daily-brief/generate` — submit a background digest job; returns `{status, job_id}` (poll `GET /api/jobs/{job_id}` for the result)
 - `GET /api/daily-brief/runs` — recent run history; `GET /api/daily-brief/progress` — live in-memory generation progress; `GET /api/daily-brief/pipeline` — stage/pipeline view
+- `GET /api/daily-brief/dedup-runs/{report_date}` — administrator-only, node-local cross-day decisions per published batch, newest first. Supports `limit` and exclusive `before_id`.
 - `GET /api/skill/daily-brief` — download the templated `dorami-daily-brief` Claude skill zip
 
 **Collection Jobs** (the single scheduling entity; see [Collection Jobs](../architecture/jobs-and-scheduling.md))

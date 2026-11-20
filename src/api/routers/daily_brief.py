@@ -11,9 +11,11 @@
 """
 
 import importlib
+import json
+from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -22,7 +24,7 @@ from api.sources import DAILY_BRIEF_SOURCE_ID
 from llm.client import LLMError, LLMNotConfigured
 from llm.client import ping as llm_ping
 from llm.client import vision_ping as llm_vision_ping
-from models.db import ArticleRecord
+from models.db import ArticleRecord, DailyBriefDedupRunRecord
 from services import credentials
 from services import daily_brief as daily_brief_service
 
@@ -280,6 +282,22 @@ def get_daily_brief_runs(session: Session = Depends(deps.get_session)):
         for row in rows
     ]
     return {"last_run": last_run, "history": history}
+
+
+@router.get("/api/daily-brief/dedup-runs/{report_date}")
+def get_daily_brief_dedup_runs(
+    report_date: date, before_id: Optional[int] = Query(None, gt=0),
+    limit: int = Query(1, ge=1, le=10), session: Session = Depends(deps.get_session),
+):
+    """按新到旧返回本节点的发布批次，下一页用上一页末条 id。旧期没有快照时返回空数组。"""
+    statement = select(DailyBriefDedupRunRecord).where(
+        DailyBriefDedupRunRecord.report_date == report_date.isoformat(),
+    )
+    if before_id is not None:
+        statement = statement.where(DailyBriefDedupRunRecord.id < before_id)
+    runs = session.exec(statement.order_by(DailyBriefDedupRunRecord.id.desc()).limit(limit)).all()
+    return [{"id": run.id, "report_date": run.report_date, "started_at": run.started_at,
+             "trigger": run.trigger, "snapshot": json.loads(run.snapshot_json)} for run in runs]
 
 
 @router.get("/api/daily-brief/progress")
