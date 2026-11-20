@@ -215,6 +215,17 @@ class TranslationCallRecord(SQLModel, table=True):
     created_at: float
 
 
+class DailyBriefDedupRunRecord(SQLModel, table=True):
+    """每次成功发布的跨天判断快照。仅保存在生成节点，管理员可查看。"""
+    __tablename__ = "daily_brief_dedup_runs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    report_date: str = Field(index=True)
+    started_at: str
+    trigger: str
+    snapshot_json: str
+
+
 class DailyBriefCandidateRecord(SQLModel, table=True):
     """Node-local consumption ledger. Pending rows survive cursor advancement."""
     __tablename__ = "daily_brief_candidates"

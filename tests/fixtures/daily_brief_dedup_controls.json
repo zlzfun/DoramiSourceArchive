@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ipo-first-close",
+    "stratum": "anchor_ipo",
+    "history": [{"ref": "D1-01", "title": "Anthropic 公布 IPO 定价", "summary": ["每股发行价 83 美元，预计次日在纳斯达克挂牌。"]}],
+    "today": {"role": "media", "title": "Anthropic 上市首日收盘", "summary": ["发行价为 83 美元。", "首日收于 97.17 美元，较发行价上涨 17.07%。"]},
+    "valid_refs": ["D1-01"],
+    "expected": "保留。可以标为接前报，第二条要点是前报发稿时尚未发生的收盘结果。"
+  },
+  {
+    "id": "qwen-distribution-financials",
+    "stratum": "anchor_financials",
+    "history": [{"ref": "D1-01", "title": "Qwen4-Max 上线第三方平台", "summary": ["用户可以通过新分发渠道访问现有旗舰模型。"]}],
+    "today": {"role": "media", "title": "阿里财报会披露千问训练用芯与机房投资指引", "summary": ["管理层披露下一代千问在平头哥芯片上训练。", "原定 2032 年全球数据中心 20GW 目标可能下调。"]},
+    "valid_refs": [],
+    "expected": "保留。与前报共享公司和产品，披露事项独立。"
+  }
+]

@@ -78,7 +78,28 @@ def test_llm_config_denied_for_reader(monkeypatch, tmp_path):
     with TestClient(app_module.app) as client:
         _login(client, "user", "user")
         assert client.get("/api/llm/config").status_code == 403
+        assert client.get("/api/daily-brief/dedup-runs/2026-11-20").status_code == 403
         assert client.post("/api/daily-brief/config", json={"enabled": True}).status_code == 403
+
+
+def test_dedup_run_snapshots_are_date_scoped_and_page_by_batch(monkeypatch, tmp_path):
+    from models.db import DailyBriefDedupRunRecord
+    from sqlmodel import Session
+
+    app_module = _setup(monkeypatch, tmp_path)
+    with Session(app_module.db_sink.engine) as session:
+        for day in ("2026-11-19", "2026-11-20", "2026-11-20"):
+            session.add(DailyBriefDedupRunRecord(report_date=day, started_at=day+"T08:30:00",
+                                                  trigger="manual", snapshot_json='{"status":"ok"}'))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        _login(client)
+        path = "/api/daily-brief/dedup-runs/"
+        assert client.get(path+"2026-11-18").json() == []
+        run, = client.get(path+"2026-11-20").json()
+        assert run["id"] == 3 and run["snapshot"]["status"] == "ok"
+        page = client.get(path+"2026-11-20", params={"before_id": run["id"], "limit": 10}).json()
+        assert [r["id"] for r in page] == [2]
 
 
 def _poll_job(client, job_id, tries=200):

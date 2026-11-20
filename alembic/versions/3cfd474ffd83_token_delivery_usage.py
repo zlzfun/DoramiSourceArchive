@@ -4,7 +4,7 @@
 只加一张新表,不动既有表;各节点各记各的,不进 Archive Sync。
 
 Revision ID: 3cfd474ffd83
-Revises: a63f1d2c9b70
+Revises: a313b6d9c1e0
 Create Date: 2026-11-20 09:35:47.088631
 
 """
@@ -17,7 +17,7 @@ import sqlmodel  # SQLModel autogen 会产出 sqlmodel.sql.sqltypes.AutoString �
 
 # revision identifiers, used by Alembic.
 revision: str = '3cfd474ffd83'
-down_revision: Union[str, Sequence[str], None] = 'a63f1d2c9b70'
+down_revision: Union[str, Sequence[str], None] = 'a313b6d9c1e0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
