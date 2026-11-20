@@ -19,6 +19,10 @@ Reader accounts build a personalized subscription scope over already-archived re
 
 `GET /api/public/feed/events[/{event_id}]` 用 `dfeed_` 个人聚合令牌拉榜单页「热点事件」那份数据,路由在 `src/api/routers/events.py`,与读者面 `/api/reader/events` 同调 `services/event_board`。榜单是全站口径:令牌只决定能不能拿,不按订阅范围裁剪(读者面本来就对所有读者与游客开放);隐藏 / 私有 / 凭据源成员照旧在读取时剔除。`dsub_` 单订阅令牌与登录会话都不是这里的凭据。读者面榜单载荷的键自此也是对外契约(只加不改不删),契约见 [`contracts/reader_subscription.md`](../contracts/reader_subscription.md)「Hot Events Board」。
 
+## 令牌接口在设置页的清单(issue #315)
+
+读者知道「这枚令牌能调什么」的途径只有设置 → 接入集成 → 聚合接口:应用里没有通往用户手册的入口,自动生成的接口文档页在容器部署下到不了。所以这张卡要列全 `/api/public/feed/` 下的每一个接口——按取到的范围分两组(文章:已订阅来源,管理员是全站公开内容;热点事件:对谁都是全站公开内容),一行一个,点开是调用示例与它认的参数。清单只有一处:`frontend/src/utils/feedEndpoints.js`,`FeedTokenSection.jsx` 照它渲染、自己不写地址。`frontend/test/feedEndpoints.test.mjs` 读后端源码与它对账(路由、方法、认的参数、条数与窗口的上下限、交付计量里的接口名与分组),任一边变了而另一边没跟上就红——**在 `/api/public/feed/` 下加、改、删路由,或改这些接口的参数与上限,要同时改这张清单**。单订阅令牌(`dsub_`)的接口不在清单里(那种令牌没有界面)。
+
 ## Downloadable Claude skill
 
 `src/api/skill_router.py` zips `src/skill_templates/dorami-daily-brief/` on the fly (templating `{BASE_URL}` into the live host) and serves it at `GET /api/skill/daily-brief`, so a user can install a ready-made Claude skill that talks to this deployment's feed/MCP endpoints.

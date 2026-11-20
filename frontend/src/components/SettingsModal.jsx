@@ -159,7 +159,7 @@ export default function SettingsModal({ open, initialSection, onClose, theme, on
               <OpmlSection showToast={showToast} />
             )}
             {activeSection.id === 'feed' && !isGuest && (
-              <FeedTokenSection showToast={showToast} adminScope={isAdmin} />
+              <FeedTokenSection showToast={showToast} adminScope={isAdmin} onOpenMcp={() => setActive('mcp')} />
             )}
             {activeSection.id === 'mcp' && !isGuest && (
               <McpAccessSection

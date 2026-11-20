@@ -7,6 +7,7 @@
 
 ## 热点事件榜的令牌化交付(2026-11,issue #310)
 
+- [issue-315-feed-endpoints.md](./issue-315-feed-endpoints.md) — 设置 → 聚合接口列全个人聚合令牌能调的五个接口(原先只列两个):来由(§1)、当时的现状(§2)、六项拍板(方向 A 分组列全、范围签挂组、Atom 示例地址带令牌、单订阅令牌不列;§3)、清单单点 `utils/feedEndpoints.js` / 设置卡 / 对账测试(§4)、与样页的出入(§5)、部署顺序与混版本(§6)、本波不做(§7)、自测与检视(§8);样页在 `docs/design/issue-315-feed-endpoints/`。
 - [issue-312-token-usage.md](./issue-312-token-usage.md) — 令牌交付计量(账户 → 令牌 → 接口调用量):来由(§1)、当时的令牌与读取面(§2)、九项拍板(方向 A 并入现有;§3)、口径 / 表 `token_delivery_usage` / 写入点 / 读接口 / 前端(§4)、与拍板和样页的出入(§5)、部署顺序与混版本(§6)、本波不做(§7)、自测与检视(§8);样页在 `docs/design/issue-312-token-usage/`。
 - [issue-310-events-feed.md](./issue-310-events-feed.md) — `dfeed_` 令牌拉热点事件榜(`/api/public/feed/events[/{event_id}]`):来由(§1)、做法与落点(§2)、七条取舍(沿用 `dfeed_` / 全站口径不裁订阅 / 不收 `dsub_` / 读者面载荷原样下发并用键集测试钉住 / `include_members` / 令牌先于参数校验,§3)、部署顺序与混版本(§4)、本波不做(设置页入口、MCP 工具、Markdown / Atom,§5)、自测与规模自查(§6)、Codex 两轮检视(§7);PR #311,待发布。
 

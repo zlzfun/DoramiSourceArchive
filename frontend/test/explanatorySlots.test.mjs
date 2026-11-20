@@ -48,6 +48,7 @@ export const SLOTS = {
   'cred-sub': 1, // 凭据卡:只剩 DeepSeek 模型改名的条件提示
   'csrc-kind-note': 1,
   'drawer-title-sub': 3, // 抽屉标题旁的 id(数据)
+  'ep-params': 1, // 聚合接口:点开一行后这条接口认的参数(参考资料,平时收着;原在 scope-note「接口参数」折叠里)
   'flow-stat-sub': 6,
   'guest-gate-sub': 1, // 游客看到的「登录后可用」下一句(登录提示,豁免)
   'has-tip': 1, // 状态修饰类(这一格有悬停提示),不是说明位
@@ -94,7 +95,7 @@ export const SLOTS = {
   'reader-vrail-tip': 9,
   'rk-kicker': 1,
   'run-obj-sub': 1,
-  'scope-note': 3, // 折叠的参考内容(接口参数、启停与取数范围、日报范围)
+  'scope-note': 2, // 折叠的参考内容(启停与取数范围、日报范围);聚合接口的「接口参数」已随 issue #315 挪进各接口行(ep-params)
   'sett-sub': 3, // 设置行名下的小字:账户角色胶囊、游客卡的一句登录提示(豁免)、OPML 导出的数字。不放说明句
   'share-group-note': 2,
   'shared-empty-hint': 2,
