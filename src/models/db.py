@@ -3169,6 +3169,7 @@ class TokenDeliveryUsageRecord(SQLModel, table=True):
     token_fp: str = Field(index=True, description="令牌哈希前 16 位")
     token_preview: str = Field(default="", description="令牌尾号预览(签发时存在令牌表里的那份)")
     subscription_id: Optional[int] = Field(default=None, description="单订阅令牌所属订阅;聚合令牌为空")
+    subscription_name: str = Field(default="", description="订阅当时的名字(鉴权那一刻的快照;订阅删了、id 被重用了也认得出)")
     channel: str = Field(description="接口:feed/articles、feed/events、subscriptions/{id}/articles、mcp:<工具名> 等")
     calls: int = Field(default=0, description="累计成功调用次数")
     items: int = Field(default=0, description="累计返回条数")

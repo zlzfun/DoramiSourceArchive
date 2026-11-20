@@ -35,6 +35,7 @@ def upgrade() -> None:
     sa.Column('token_fp', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('token_preview', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('subscription_id', sa.Integer(), nullable=True),
+    sa.Column('subscription_name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('channel', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('calls', sa.Integer(), nullable=False),
     sa.Column('items', sa.Integer(), nullable=False),

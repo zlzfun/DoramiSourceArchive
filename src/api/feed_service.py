@@ -169,14 +169,26 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
     return sorted(collected)
 
 
-def subscription_token_identity(record: ReaderSubscriptionRecord) -> TokenIdentity:
-    """一条订阅自带的 ``dsub_`` 令牌是谁的、是哪一枚(交付计量用,issue #312)。"""
+def _account_generation(session: Session, username: str) -> str:
+    """账号的世代 = 它的建号时间;同名账号删掉重建后不同。账号行不在时回空串(永远对不上)。"""
+    user = session.get(UserRecord, username) if username else None
+    return (user.created_at or "") if user is not None else ""
+
+
+def subscription_token_identity(session: Session, record: ReaderSubscriptionRecord) -> TokenIdentity:
+    """一条订阅自带的 ``dsub_`` 令牌是谁的、是哪一枚(交付计量用,issue #312)。
+
+    在鉴权通过的那一刻调:账号世代与订阅名都按此刻的取,之后落账不再回头查。
+    """
+    owner = record.owner_username or ""
     return TokenIdentity(
-        username=record.owner_username or "",
+        username=owner,
         kind=KIND_SUBSCRIPTION,
         token_hash=record.token_hash,
         preview=record.token_preview,
         subscription_id=record.id,
+        subscription_name=record.name or "",
+        account_created_at=_account_generation(session, owner),
     )
 
 
@@ -195,6 +207,7 @@ def resolve_feed_token_identity(session: Session, token: str) -> Optional[TokenI
         kind=KIND_FEED,
         token_hash=record.token_hash,
         preview=record.token_preview,
+        account_created_at=_account_generation(session, record.owner_username),
     )
 
 
@@ -205,7 +218,7 @@ def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
 
 
 def resolve_token_identity(token: str) -> Optional[TokenIdentity]:
-    """任一读取类令牌 → 它是谁的、是哪一枚(供 MCP 记交付计量)。
+    """任一读取类令牌 → 它是谁的、是哪一枚(MCP 工具鉴权通过的那一刻调,供交付计量)。
 
     与 ``resolve_subscription_sources_by_token`` 同一套先后:先按单订阅令牌(启用中的订阅)找,
     再按个人聚合令牌找;都对不上返回 None。
@@ -221,7 +234,7 @@ def resolve_token_identity(token: str) -> Optional[TokenIdentity]:
             )
         ).first()
         if record:
-            return subscription_token_identity(record)
+            return subscription_token_identity(session, record)
         return resolve_feed_token_identity(session, token)
 
 

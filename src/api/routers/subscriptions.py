@@ -17,7 +17,6 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
@@ -495,6 +494,7 @@ def get_public_subscription_articles(
     except HTTPException:
         meter_rejected(token, token_usage_service.SUBSCRIPTION_ARTICLES)
         raise
+    identity = subscription_token_identity(session, subscription)   # 鉴权通过的这一刻就定下身份
     records, query_info = query_subscription_articles(session, subscription, skip=skip, limit=limit)
 
     include_content = query_info["policy"]["include_content"]
@@ -511,7 +511,7 @@ def get_public_subscription_articles(
         "next_skip": skip + len(records) if len(records) == safe_limit else None,
         "items": [serialize_feed_article(record, include_content=include_content) for record in records],
     }
-    meter_call(subscription_token_identity(subscription), token_usage_service.SUBSCRIPTION_ARTICLES, len(records))
+    meter_call(identity, token_usage_service.SUBSCRIPTION_ARTICLES, len(records))
     return payload
 
 
@@ -533,10 +533,9 @@ async def public_subscription_vector_search(
         try:
             subscription = resolve_subscription_by_token(session, subscription_id, token)
         except HTTPException:
-            # 本端点是 async:计量写库放线程池,不占事件循环(成功路径同)。
-            await run_in_threadpool(meter_rejected, token, token_usage_service.SUBSCRIPTION_SEARCH)
+            meter_rejected(token, token_usage_service.SUBSCRIPTION_SEARCH)   # 只入队,不写库,async 里可直接调
             raise
-        identity = subscription_token_identity(subscription)
+        identity = subscription_token_identity(session, subscription)
         filters = _json_loads(subscription.filters_json, {})
         source_ids = subscription_source_ids(subscription)
         if not source_ids:
@@ -557,7 +556,7 @@ async def public_subscription_vector_search(
         # 曾 `or None` 把空 filters 订阅放大成全库检索,连私有用户源一起搜)。
         source_ids=source_ids,
     )
-    await run_in_threadpool(meter_call, identity, token_usage_service.SUBSCRIPTION_SEARCH, len(results))
+    meter_call(identity, token_usage_service.SUBSCRIPTION_SEARCH, len(results))
     return {
         "status": "success",
         "subscription": {"id": sub_id, "name": sub_name},
