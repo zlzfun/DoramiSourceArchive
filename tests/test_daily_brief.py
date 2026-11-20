@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from config import LLMConfig  # noqa: E402
-from sqlmodel import Session  # noqa: E402
+from sqlmodel import Session, select  # noqa: E402
 
 import services.daily_brief as db  # noqa: E402
 from services import article_analysis as analysis_mod  # noqa: E402
@@ -656,7 +656,10 @@ def test_cross_day_dedup_degrades_on_failure(monkeypatch):
 
     _patch_llm(monkeypatch, _boom)
     items = [_scored_full(9, item_id="a"), _scored_full(8, item_id="b")]
-    result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED))
+    audit = {}
+    result = asyncio.run(db.cross_day_dedup(items, _recent_days(), CONFIGURED, audit=audit))
+    assert audit["status"] == "fallback" and audit["error_type"] == "RuntimeError"
+    assert "llm down" not in json.dumps(audit) and CONFIGURED.api_key not in json.dumps(audit)
     assert [it.candidate.id for it in result] == ["a", "b"]  # 失败降级不丢条目
 
 
@@ -1489,7 +1492,10 @@ def test_fetch_recent_brief_items_entries_carry_hint(tmp_path):
         session.commit()
         days = db.fetch_recent_brief_items(session, days=3)
     assert days[0]["titles"] == ["带要点条目", "无要点条目"]
-    assert days[0]["entries"] == [{"title": "带要点条目", "hint": "模型：参数 1T"}, {"title": "无要点条目", "hint": ""}]
+    assert days[0]["entries"] == [
+        {"title": "带要点条目", "hint": "模型：参数 1T", "id": None, "summary": ["**模型**：参数 1T", "第二条"]},
+        {"title": "无要点条目", "hint": "", "id": None, "summary": None},
+    ]
     text = prompts.build_cross_day_dedup_user_prompt([], days)
     assert "- 带要点条目（要点：模型：参数 1T）" in text and "- 无要点条目\n" in text + "\n"
     # 旧形状(只有 titles)照旧可用
@@ -1691,6 +1697,17 @@ def test_soft_threshold_reserve_refills_after_cross_day_dedup(tmp_path, monkeypa
     ext = json.loads(record.extensions_json)
     assert [e["id"] for e in ext["items"]] == ["b"]
     assert "标题-a" not in record.content and "按新闻价值分补足 1 条" in record.content
+    with Session(sink.engine) as session:
+        run = session.exec(select(db.DailyBriefDedupRunRecord)).one()
+        snapshot = json.loads(run.snapshot_json)
+    actual = {row["id"]: row["action"] for row in snapshot["decisions"]}
+    assert actual == {"a": "drop", "b": "keep"}
+    index = json.loads(snapshot["raw_response"])["drop"][0]
+    dropped = snapshot["today"][index]
+    assert dropped["id"] == "a" and dropped["summary"] and dropped["title_cn"]
+    assert snapshot["status"] == "ok"
+    assert "【近期日报已收录条目" in snapshot["messages"][1]["content"]
+    assert "snapshot" not in ext and "decisions" not in ext
 
 
 def test_soft_threshold_appendix_capacity_counts_prior_appendix(tmp_path, monkeypatch):
@@ -1915,6 +1932,42 @@ def test_brief_and_ledger_rollback_together_on_commit_failure(tmp_path, monkeypa
     with Session(sink.engine) as session:
         assert session.exec(select(DailyBriefCandidateRecord)).all() == []
         assert db.read_cursor(session) == ''
+        assert session.exec(select(db.DailyBriefDedupRunRecord)).all() == []
+
+
+def test_dedup_audit_failure_rolls_back_publication_and_can_retry(tmp_path, monkeypatch):
+    import pytest
+
+    _patch_llm(monkeypatch, _fake_chat_completion)
+    sink = _make_sink(tmp_path)
+    day = "2026-06-06"
+    _seed(sink.engine, "audit-item", "src", day + "T08:00:00")
+    with sink.engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TRIGGER reject_audit BEFORE INSERT ON daily_brief_dedup_runs "
+                             "BEGIN SELECT RAISE(ABORT,'audit write failed'); END")
+    def generate(**kwargs):
+        return asyncio.run(generate_daily_brief(storage=sink, llm_config=CONFIGURED, report_date=day, **kwargs))
+
+    generate(dry_run=True)
+    with pytest.raises(RuntimeError, match="审计写入失败"):
+        generate()
+    assert asyncio.run(sink.get("daily_brief_" + day)) is None
+    with Session(sink.engine) as session:
+        assert db.read_cursor(session) == ""
+        assert session.exec(select(db.DailyBriefCandidateRecord)).all() == []
+        assert session.exec(select(db.DailyBriefDedupRunRecord)).all() == []
+    with sink.engine.begin() as conn:
+        conn.exec_driver_sql("DROP TRIGGER reject_audit")
+    assert generate()["status"] == "success"
+    _seed(sink.engine, "later-item", "src", day + "T09:00:00")
+    assert generate()["status"] == "success"
+    assert generate()["status"] == "empty"
+    with Session(sink.engine) as session:
+        runs = session.exec(select(db.DailyBriefDedupRunRecord).order_by(db.DailyBriefDedupRunRecord.id)).all()
+        assert [r.report_date for r in runs] == [day, day]
+        snapshots = [json.loads(r.snapshot_json) for r in runs]
+        assert [s["decisions"][0]["id"] for s in snapshots] == ["audit-item", "later-item"]
+        assert all(s["status"] == "no_history" for s in snapshots)
 
 
 def test_deferred_queue_respects_changed_scope_and_cursor_reset(tmp_path, monkeypatch):

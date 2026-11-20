@@ -11,6 +11,8 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **#313 公共日报跨天去重**（2026-11-20）。新增逐批审计、管理员查询与离线配对验收计分。[方案](plans/issue-313-cross-day-dedup.md)
+
 - **热点事件榜的令牌化交付口(issue #310,PR #311,2026-11-19,纯后端 + 契约文档,开发版 3.69.0-alpha,Codex 两轮检视通过、按例外合入,待发布)**:榜单页「热点事件」的数据原先只有会话接口,脚本要先登录或走游客。新增 `GET /api/public/feed/events`(`window_hours` / `limit` / `include_members`)与 `GET /api/public/feed/events/{event_id}`,用 `dfeed_` 个人聚合令牌鉴权,与读者面同调 `services/event_board`、全站口径不按订阅裁剪;读者面榜单载荷的键自此也是对外契约,键集由测试钉住。无迁移、不涉同步流。详见下文 issue #310 段。
 - **读者面桌面动效重构(issue #301,PR #302–#308,开发版 3.69.0-alpha,待发布)**:两轮样页后用户逐场景选定——精密做底(按下、浮层、打开文章、切视图、AI 速读卡、提示、明暗)、连续管空间(指示器与筛选、来源栏、早报到场、滚动停靠、榜单卡进事件页、订阅)、光只给问答面板,另加沉浸阅读。分六批落地(规则与 token / 反馈层 / 指示器与列表 / 空间转场 / 问答的光 / 沉浸阅读),合入后对样页逐场景对拍又补了一批;第二至四批用户逐批目检放行,第五至七批按用户授权由执行者合入、目检待补。第一批(规则与 token):conventions §7 加「桌面读者面的动效语言」;`index.css` 加曲线两条、时长五档、弹簧五档 token;弹簧取样抽成共用 `utils/spring.js`(播放条曲线逐点不变);守卫 `motionTokens.test.mjs`。样式表其余部分零改动、观感零变化。详见下文 issue #301 段与 [方案](archive/issue-301-motion-language.md)。
 - **图片同步公开引用查询（#299，v3.68.1）**：发送端使用生成清单时记录的候选文章 ID 复核公开引用；旧接收端沿用原协议。
@@ -102,6 +104,10 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
+
+## 公共日报跨天去重第一步（#313）
+
+11 月 20 日 18 个预选事件中有 7 个被判为近期重复，旧报告只能确认总数。生成节点从预选阶段保存包括被删稿在内的完整编辑输入，随成功发布追加逐批审计。管理员能区分原始模型提议、官方保护与实际去留，同日重跑分开核对。在冻结的盲标样本上，使用同款辅助模型三轮对照误删、重复消除、引用及两个开发锚点。[协议](plans/issue-313-cross-day-dedup.md)
 
 ## issue #310 热点事件榜的令牌化交付口(PR #311,分支 `feat/issue-310-events-feed`,开发版 3.69.0-alpha,待发布,版本号以实际发版为准)
 

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import json
 import logging
 import re
@@ -53,6 +54,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import and_, case, delete, or_, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import SQLAlchemyError
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -88,6 +90,7 @@ from services.content_classification import (
 from models.db import (
     AppSettingRecord,
     DailyBriefCandidateRecord,
+    DailyBriefDedupRunRecord,
     ArticleAnalysisRecord,
     ArticleRecord,
     ArticleTagAssignmentRecord,
@@ -1343,7 +1346,7 @@ def fetch_recent_brief_items(
     out: List[Dict[str, Any]] = []
     for row in session.exec(statement).all():
         titles: List[str] = []
-        hints: List[str] = []
+        entries: List[Dict[str, Any]] = []
         has_items_contract = False
         try:
             ext = json.loads(row.extensions_json or "{}")
@@ -1360,21 +1363,23 @@ def fetch_recent_brief_items(
                             first = str(summary[0] or "")
                         elif isinstance(summary, str):
                             first = summary
-                        hints.append(first.replace("**", "").strip()[:_RECENT_HINT_CHARS])
+                        entries.append({
+                            "title": title, "hint": first.replace("**", "").strip()[:_RECENT_HINT_CHARS],
+                            "id": it.get("id"), "summary": summary,
+                        })
         except (ValueError, TypeError):
             pass
         # Only pre-items reports need the Markdown fallback. An explicit empty
         # news list may have read/listen headings, which must not suppress news.
         if not has_items_contract and not titles and row.content:
             titles = [m.strip() for m in _BRIEF_HEADING_RE.findall(row.content) if m.strip()]
-            hints = [""] * len(titles)
+            entries = [{"title": t, "hint": "", "id": None, "summary": None} for t in titles]
         if titles:
             titles = titles[:_RECENT_TITLES_PER_DAY]
-            hints = (hints + [""] * len(titles))[:len(titles)]
             out.append({
                 "date": (row.publish_date or "")[:10],
                 "titles": titles,
-                "entries": [{"title": t, "hint": h} for t, h in zip(titles, hints)],
+                "entries": entries[:len(titles)],
             })
     return out
 
@@ -1384,6 +1389,8 @@ async def cross_day_dedup(
     recent_items: List[Dict[str, Any]],
     llm_config: config.LLMConfig,
     usage_username: Optional[str] = None,
+    *,
+    audit: Optional[Dict[str, Any]] = None,
 ) -> List[ScoredItem]:
     """对照近几天日报条目做跨天查重：纯重复剔除、后续进展标注一句增量注。
 
@@ -1395,7 +1402,16 @@ async def cross_day_dedup(
     对照物只有标题，分不清前报是官方还是媒体转述；「媒体先转述、官方后发文」时
     删官方等于系统性压制一手信息。机械保证：官方条目最多被标「接前报」，绝不静默消失。
     """
+    aux = llm_config.for_aux()
+    if audit is not None:
+        audit.update(
+            algorithm="cross-day-v3.69.0", model=aux.model, temperature=aux.temperature,
+            max_tokens=aux.max_tokens, thinking_mode=aux.thinking_mode,
+            today=[it.to_reduce_dict() for it in items], history=recent_items,
+        )
     if not items or not recent_items:
+        if audit is not None:
+            audit["status"] = "no_candidates" if not items else "no_history"
         return items
     role_labels = {"official": "官方", "media": "媒体", "personal": "个人", "leaderboard": "榜单"}
     entries = [
@@ -1408,18 +1424,31 @@ async def cross_day_dedup(
         }
         for i, it in enumerate(items)
     ]
+    messages = [
+        ChatMessage(role="system", content=prompts.CROSS_DAY_DEDUP_SYSTEM_PROMPT),
+        ChatMessage(role="user", content=prompts.build_cross_day_dedup_user_prompt(entries, recent_items)),
+    ]
+    if audit is not None:
+        audit["messages"] = [m.to_dict() for m in messages]
+        audit["system_prompt_sha256"] = hashlib.sha256(messages[0].content.encode()).hexdigest()
+        audit["response_meta"] = {}
     try:
         raw = await chat_completion(
-            messages=[
-                ChatMessage(role="system", content=prompts.CROSS_DAY_DEDUP_SYSTEM_PROMPT),
-                ChatMessage(role="user", content=prompts.build_cross_day_dedup_user_prompt(entries, recent_items)),
-            ],
-            config=llm_config.for_aux(),
+            messages=messages,
+            config=aux,
             response_json=True,
             usage_meta=_usage_meta("daily_brief_reduce", usage_username),
+            response_meta=audit["response_meta"] if audit is not None else None,
         )
+        if audit is not None:
+            audit["raw_response"] = raw[:65536]
+            audit["response_truncated"] = len(raw) > 65536
+            if audit["response_truncated"]:
+                audit["response_sha256"] = hashlib.sha256(raw.encode()).hexdigest()
         data = parse_json_object(raw)
     except (LLMError, Exception) as exc:  # noqa: BLE001 查重失败降级，不中断汇编
+        if audit is not None:
+            audit.update(status="fallback", error_type=type(exc).__name__)
         logger.warning("日报跨天查重失败，降级为不查重: %s", exc)
         return items
 
@@ -1428,7 +1457,11 @@ async def cross_day_dedup(
         int(i) for i in (data.get("drop") or [])
         if isinstance(i, (int, float)) and 0 <= int(i) < n
     }
+    if audit is not None:
+        audit["status"] = "ok"
     if drops and len(drops) >= n:
+        if audit is not None:
+            audit["status"] = "all_drop_guard"
         logger.warning("日报跨天查重要求丢弃全部 %d 条，疑似误判，忽略 drop", n)
         drops = set()
     # 官方例外:drop 降级为 followup(机械保证,不依赖提示词被遵守)
@@ -2049,10 +2082,20 @@ async def _generate_daily_brief(
 
     set_progress("reducing", "跨天查重与汇编…")
     logger.info("日报[%s]：跨天查重（对照近期日报 %d 天条目）后确定性渲染", report_date, len(recent_items))
-    survivors = await cross_day_dedup(preselected, recent_items, cfg, usage_username=triggered_by)
+    dedup_audit = {}
+    survivors = await cross_day_dedup(
+        preselected, recent_items, cfg, usage_username=triggered_by, audit=dedup_audit,
+    )
     # 保底终裁:补足稿只留到**剩余缺口**(备用稿在合格稿/补足稿被跨天查重剔掉时顶上);
     # 没用上的备用稿退回近线带作附录补位候选,被跨天查重剔掉的(近期已报过)不退回。
     survivor_ids = {it.candidate.id for it in survivors}
+    decisions = []
+    for it in preselected:
+        action = "followup" if it.followup_note else "keep"
+        if it.candidate.id not in survivor_ids:
+            action = "drop"
+        decisions.append({"id": it.candidate.id, "action": action, "note": it.followup_note})
+    dedup_audit["decisions"] = decisions
     crossday_dropped = {it.candidate.id for it in preselected} - survivor_ids
     qualified_survivors = [it for it in survivors if it.candidate.id not in backfill_ids]
     # 预选多带的备用论文终会按名额裁掉,保底计数只算名额内的论文(与 core_count 同口径)
@@ -2167,6 +2210,16 @@ async def _generate_daily_brief(
         if get_setting(session, KEY_SELECTION_REVISION) != selection_revision:
             raise RuntimeError("日报来源范围或游标在生成期间已变更，请重新生成")
         await _persist_brief(storage, content_obj, session=session)
+        audit_run = DailyBriefDedupRunRecord(
+            report_date=report_date, started_at=started_at, trigger=trigger,
+            snapshot_json=json.dumps(dedup_audit, ensure_ascii=False, separators=(",", ":")),
+        )
+        session.add(audit_run)
+        try:
+            session.flush([audit_run])
+        except SQLAlchemyError as exc:
+            logger.error("日报[%s]跨天去重审计写入失败，本批回滚 (%s)", report_date, type(exc).__name__)
+            raise RuntimeError("跨天去重审计写入失败，本批日报已回滚") from None
         chosen_ids = {c.id for c in candidates}
         skipped_ids = set(bootstrap_skipped)
         ledger_rows = [*scanned_rows, *((rid, "", "", None) for rid in bootstrap_skipped)]
