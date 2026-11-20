@@ -1,7 +1,7 @@
 # 设置 · 聚合接口列全令牌可调的接口(issue #315)
 
 > **归档于 2026-11-20(issue #315,开发版 3.70.0-alpha)**:现状以 `docs/architecture/reader-distribution.md`「令牌接口在设置页的清单」与代码为准,文中路径与状态为当时记录。
-> 状态:归档(2026-11-20 立项、出第一轮样页;同日用户「全按推荐」拍板方向 A,同日实现;用户目检待做)。
+> 状态:归档(2026-11-20 立项、出第一轮样页;同日用户「全按推荐」拍板方向 A,同日实现;同日用户在沙箱目检后放行:「可以,开 PR。」)。
 > 样页:[`docs/design/issue-315-feed-endpoints/`](../design/issue-315-feed-endpoints/README.md)。实现方 Claude Code(Fable 5.2);检视方 Codex(见 §8)。
 
 ## 1. 来由
