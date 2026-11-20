@@ -1,6 +1,7 @@
 /**
  * 运维 · 账户页(issue #114,自 AdminOpsTab 用户档迁出,逻辑原样):
  * 账户增长(含窗口 KPI 行)· 游客 · 活跃用户 Top(根)· 账户管理(根)· 操作审计;单用户活动抽屉 + 新建 / 重置密码弹窗。
+ * 令牌交付计量(issue #312)并入现有几处:KPI 第六格、活跃榜「按接口」、账户表「接口」列;账户 → 令牌 → 接口的明细在抽屉里。
  * 非根管理员只见聚合数字(账户分布 + 增长曲线 + 游客 + 审计),名单 / 活跃榜 / 逐用户抽屉不渲染(端点侧 403 兜底)。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +38,7 @@ import { useModalA11y } from '../../../hooks/useModalA11y';
 import { MultiSeriesBars, RankBars, BarList } from '../../charts/DashboardCharts';
 import AdminAuditPanel from '../AdminAuditPanel';
 import AccountGrowth from '../AccountGrowth';
+import AccountDelivery from '../AccountDelivery';
 import GuestZone from '../GuestZone';
 import Pager from '../Pager';
 import { Kpi } from '../Kpi';
@@ -47,6 +49,13 @@ import { opsBlockId } from '../../../utils/opsNav';
 
 // 账户列表分页大小：超过即翻页，避免成百上千账户一次性平铺。
 const ACCOUNTS_PAGE_SIZE = 15;
+
+// 活跃用户 Top 的三个维度:分段上的字 / summary 里的字段 / 图上的指标名 / 窗口内没有数时的空态。
+const TOP_METRICS = {
+  reads: { seg: '按阅读', field: 'top_reads', name: '阅读', empty: '窗口内还没有阅读记录' },
+  logins: { seg: '按登录', field: 'top_logins', name: '登录', empty: '窗口内还没有登录记录' },
+  api: { seg: '按接口', field: 'top_api', name: '接口调用', empty: '窗口内还没有接口调用' },
+};
 
 export default function AccountsPage({ showToast, days, refreshTick = 0, currentUsername = '', rootAdmin = false, onRefreshRuntime = null }) {
   const confirm = useConfirm();
@@ -71,7 +80,7 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
   const [acctOrder, setAcctOrder] = useState('asc');
   const [selectedAccounts, setSelectedAccounts] = useState(() => new Set());
   const [batchBusy, setBatchBusy] = useState(false);
-  // 活跃用户 Top 维度：阅读 | 登录。
+  // 活跃用户 Top 维度：阅读 | 登录 | 接口(用令牌调接口的次数,issue #312)。
   const [topMetric, setTopMetric] = useState('reads');
 
   // ── 单用户活动详情抽屉 ──
@@ -366,6 +375,8 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
     reads: acctSummary?.reads ?? 0,
     aiCalls: acctSummary?.ai_calls ?? 0,
     aiTokens: acctSummary?.ai_tokens ?? 0,
+    apiCalls: acctSummary?.api_calls ?? 0,
+    apiTokens: acctSummary?.api_tokens_active ?? 0,
   }), [acctSummary]);
   // 根身份被转走(true→false):收起根专属层、清逐用户态,并重取已剥掉按用户维度的 AI 用量。
   const wasRoot = useRef(rootAdmin);
@@ -381,9 +392,9 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
     // eslint-disable-next-line react-hooks/exhaustive-deps -- closeDetail 是普通函数,只在 rootAdmin 翻转时调用
   }, [rootAdmin]);
   const perDay = (n) => (days > 0 ? (n / days).toFixed(1) : '0');
-  // 活跃用户 Top：按所选维度（阅读 / 登录）排行,服务端全量聚合。
+  // 活跃用户 Top：按所选维度（阅读 / 登录 / 接口）排行,服务端全量聚合。
   const activeUserRows = useMemo(() => {
-    const rows = topMetric === 'reads' ? acctSummary?.top_reads : acctSummary?.top_logins;
+    const rows = acctSummary?.[TOP_METRICS[topMetric].field];
     return (rows ?? []).map((r) => ({ name: r.username, value: r.value }));
   }, [acctSummary, topMetric]);
 
@@ -465,6 +476,7 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
             <Kpi num={fmtNum(userKpis.logins)} label="登录次数" sub={`日均 ${perDay(userKpis.logins)}`} />
             <Kpi num={fmtNum(userKpis.reads)} label="阅读次数" sub={`日均 ${perDay(userKpis.reads)}`} />
             <Kpi num={fmtNum(userKpis.aiCalls)} label="AI 调用" sub={`tokens ${fmtNum(userKpis.aiTokens)}`} />
+            <Kpi num={fmtNum(userKpis.apiCalls)} label="接口调用" sub={`${userKpis.apiTokens} 枚令牌在用`} />
           </section>
           )}
 
@@ -475,14 +487,14 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
           <GuestZone days={days} showToast={showToast} refreshTick={refreshTick} />
           </section>
 
-          {rootAdmin && (userKpis.reads + userKpis.logins) > 0 && (
+          {rootAdmin && (userKpis.reads + userKpis.logins + userKpis.apiCalls) > 0 && (
             <section id={opsBlockId('accounts', 'top')} className="ops-block" tabIndex={-1} aria-label="活跃用户 Top">
               <div className="zone-head">
                 <span className="zone-title">活跃用户 Top</span>
                 <span className="zone-hint">近 {days} 天</span>
                 <span className="zone-acts mini-seg" role="group" aria-label="排序维度">
-                  {[['reads', '按阅读'], ['logins', '按登录']].map(([k, lbl]) => (
-                    <button key={k} type="button" onClick={() => setTopMetric(k)} className={`mini-seg-btn ${topMetric === k ? 'is-on' : ''}`}>{lbl}</button>
+                  {Object.entries(TOP_METRICS).map(([k, m]) => (
+                    <button key={k} type="button" onClick={() => setTopMetric(k)} className={`mini-seg-btn ${topMetric === k ? 'is-on' : ''}`}>{m.seg}</button>
                   ))}
                 </span>
               </div>
@@ -491,10 +503,10 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
                   rows={activeUserRows}
                   labelKey="name"
                   valueKey="value"
-                  name={topMetric === 'reads' ? '阅读' : '登录'}
+                  name={TOP_METRICS[topMetric].name}
                   height={Math.max(112, activeUserRows.length * 26)}
                   tickFormatter={truncLabel}
-                  emptyHint={topMetric === 'reads' ? '窗口内还没有阅读记录' : '窗口内还没有登录记录'}
+                  emptyHint={TOP_METRICS[topMetric].empty}
                 />
               </section>
             </section>
@@ -554,6 +566,7 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
                         <ThSort label="登录" k="logins" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
                         <ThSort label="阅读" k="reads" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
                         <ThSort label="AI 调用" k="ai_calls" sort={acctSort} order={acctOrder} onSort={handleSort} num width={96} />
+                        <ThSort label="接口" k="api" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
                         <ThSort label="订阅" k="subscriptions" sort={acctSort} order={acctOrder} onSort={handleSort} num width={76} />
                       </tr>
                     </thead>
@@ -598,6 +611,7 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
                           <td className={`acct-n ${(account.logins || 0) ? '' : 'is-zero'}`}>{account.logins || '–'}</td>
                           <td className={`acct-n is-main ${(account.reads || 0) ? '' : 'is-zero'}`}>{account.reads || '–'}</td>
                           <td className={`acct-n ${(account.ai_calls || 0) ? '' : 'is-zero'}`}>{account.ai_calls || '–'}</td>
+                          <td className={`acct-n ${(account.api_calls || 0) ? '' : 'is-zero'}`}>{account.api_calls || '–'}</td>
                           <td className="acct-n">{account.subscription_count ?? 0}</td>
                         </tr>
                       ))}
@@ -817,10 +831,16 @@ export default function AccountsPage({ showToast, days, refreshTick = 0, current
                 </div>
               )}
 
+              {/* 接口调用(issue #312):这个账号的令牌与各令牌调过的接口;没有可列的令牌时整区不出。key 随账号换,开合状态不串。 */}
+              <AccountDelivery key={detailUser} delivery={detailData.delivery} />
+
               {(detailData.usage.totals.calls === 0 && detailData.reads.total === 0 && detailData.favorites_total === 0) ? (
+                // 只用接口、不在阅读器里读的账号(流水线、机器人)上面已经有内容,不再补这句空态。
+                !(detailData.delivery?.tokens?.length) && (
                 <p className="rounded-[var(--r-card)] border border-dashed border-[var(--dorami-border)] p-4 text-center tiny-meta">
                   近 {detailWindow} 天该用户没有阅读 / 收藏 / AI 调用记录。
                 </p>
+                )
               ) : (
                 <>
                   <div>

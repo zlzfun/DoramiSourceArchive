@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 # 内部模块路径:mcp 顶层与 mcp.server.fastmcp 都不导出 TransportSecuritySettings。
@@ -15,6 +16,8 @@ from services.paper_content import delivery_body
 from fetchers.registry import fetcher_registry
 
 
+logger = logging.getLogger(__name__)
+
 # 内容类工具缺/错令牌时的统一报错：明确指引去哪里取令牌，便于 Agent 转告用户。
 _TOKEN_REQUIRED_MSG = (
     "subscription_token is required and must be valid — "
@@ -29,6 +32,11 @@ def _parse_bearer(auth: Optional[str]) -> Optional[str]:
     if auth and auth.lower().startswith("bearer "):
         return auth[7:].strip() or None
     return None
+
+
+def _count_items(rows: list) -> int:
+    """交付计量的条数:列表里真正的条目数(工具把报错也装成一条 ``{"error": …}`` 返回,不算)。"""
+    return sum(1 for row in rows if not (isinstance(row, dict) and "error" in row))
 
 
 def _resolve_scope(resolver, token: Optional[str], *, require_token: bool = True):
@@ -212,7 +220,7 @@ async def _search_articles_impl(
     ]
 
 
-async def _get_rag_context_impl(
+def _rag_context_parts(
     db_sink: DatabaseStorage,
     query: str,
     top_k: int = 8,
@@ -221,8 +229,8 @@ async def _get_rag_context_impl(
     source_id: Optional[str] = None,
     source_ids: Optional[list[str]] = None,
     publish_date_gte: Optional[str] = None,
-    context_separator: str = "\n\n---\n\n",
-) -> str:
+) -> list[str]:
+    """检索并组装上下文片段(一篇一段);拼接交给调用方——工具还要按片段数记交付计量。"""
     records = _fts_hit_records(
         db_sink, query, top_k=top_k, content_type=content_type,
         source_id=source_id, source_ids=source_ids, publish_date_gte=publish_date_gte,
@@ -244,7 +252,24 @@ async def _get_rag_context_impl(
         parts.append(block)
         total_chars += len(block)
 
-    return context_separator.join(parts)
+    return parts
+
+
+async def _get_rag_context_impl(
+    db_sink: DatabaseStorage,
+    query: str,
+    top_k: int = 8,
+    max_chars: int = 4000,
+    content_type: Optional[str] = None,
+    source_id: Optional[str] = None,
+    source_ids: Optional[list[str]] = None,
+    publish_date_gte: Optional[str] = None,
+    context_separator: str = "\n\n---\n\n",
+) -> str:
+    return context_separator.join(_rag_context_parts(
+        db_sink, query, top_k=top_k, max_chars=max_chars, content_type=content_type,
+        source_id=source_id, source_ids=source_ids, publish_date_gte=publish_date_gte,
+    ))
 
 
 # ── FastMCP server factory ────────────────────────────────────────────────────
@@ -252,12 +277,22 @@ async def _get_rag_context_impl(
 def build_mcp_app(
     db_sink: DatabaseStorage,
     subscription_resolver=None,
+    usage_recorder=None,
+    usage_identity=None,
 ) -> FastMCP:
     """构建 FastMCP 实例。
 
     subscription_resolver: 可选的 ``token -> Optional[list[str]]`` 回调。
     当工具收到 ``subscription_token`` 时，用它把检索范围约束到该订阅覆盖的 source_id。
     返回 None 表示令牌无效；返回 [] 表示订阅未限定来源。
+
+    usage_identity / usage_recorder: 交付计量用(issue #312),都可选。
+    - ``usage_identity(token) -> 任意对象``:令牌刚通过校验时调一次,把「这是谁的哪一枚」定下来;
+      返回值原样交还给 ``usage_recorder``(工具执行期间令牌被换掉、账号被删,记的仍是鉴权那一刻的那位)。
+    - ``usage_recorder(token, identity, tool, items, ok) -> None``:带令牌的内容类工具每调一次回调一次——
+      ``ok=True`` 是成功返回、``items`` 是返回了几条;``ok=False`` 是令牌没通过校验(``identity`` 为 None)。
+    两个回调都必须不阻塞在写库上(工具跑在事件循环上;接线方 ``api.delivery_metering`` 只读一次令牌表、
+    再入队),它们抛什么都不影响工具。
     """
     mcp = FastMCP(
         "dorami-archive",
@@ -282,12 +317,28 @@ def build_mcp_app(
         return _parse_bearer(auth)
 
     def _resolve_subscription_scope(subscription_token: Optional[str]):
-        """返回 (ok, source_ids)。内容类工具必须携带有效令牌，否则 ok=False。
+        """返回 (ok, source_ids, token, identity)。内容类工具必须携带有效令牌，否则 ok=False。
 
         令牌来源优先级：显式入参 ``subscription_token`` > 请求头 ``Authorization: Bearer``。
+        ``identity`` 是 ``usage_identity`` 在校验通过这一刻给出的计量身份(没接计量时为 None)。
         """
         token = subscription_token or _token_from_header()
-        return _resolve_scope(subscription_resolver, token, require_token=True)
+        ok, source_ids = _resolve_scope(subscription_resolver, token, require_token=True)
+        identity = None
+        if ok and token and usage_identity is not None:
+            try:
+                identity = usage_identity(token)
+            except Exception:  # noqa: BLE001 - 计量不阻断工具
+                logger.warning("MCP 交付计量解析身份失败(不影响工具)", exc_info=True)
+        return ok, source_ids, token, identity
+
+    def _record_usage(token: Optional[str], identity, tool: str, items: int, ok: bool) -> None:
+        if usage_recorder is None or not token:
+            return
+        try:
+            usage_recorder(token, identity, tool, items, ok)
+        except Exception:  # noqa: BLE001 - 计量不阻断工具
+            logger.warning("MCP 交付计量回调失败(不影响工具):%s", tool, exc_info=True)
 
     @mcp.tool()
     def list_sources() -> list[dict]:
@@ -317,14 +368,17 @@ def build_mcp_app(
             可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
             支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token, identity = _resolve_subscription_scope(subscription_token)
         if not ok:
+            _record_usage(token, identity, "browse_articles", 0, False)
             return [{"error": _TOKEN_REQUIRED_MSG}]
-        return _browse_articles_impl(
+        rows = _browse_articles_impl(
             db_sink, source_id=source_id, source_ids=scope_ids, content_type=content_type,
             publish_date_start=publish_date_start, publish_date_end=publish_date_end,
             has_content=has_content, limit=limit, skip=skip,
         )
+        _record_usage(token, identity, "browse_articles", _count_items(rows), True)
+        return rows
 
     @mcp.tool()
     def get_article(article_id: str, subscription_token: Optional[str] = None) -> dict:
@@ -335,10 +389,13 @@ def build_mcp_app(
         subscription_token: 仅允许读取访问令牌覆盖来源内的文章。可经本参数传入，
             或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token, identity = _resolve_subscription_scope(subscription_token)
         if not ok:
+            _record_usage(token, identity, "get_article", 0, False)
             return {"error": _TOKEN_REQUIRED_MSG}
-        return _get_article_impl(db_sink, article_id, source_ids=scope_ids)
+        article = _get_article_impl(db_sink, article_id, source_ids=scope_ids)
+        _record_usage(token, identity, "get_article", 0 if "error" in article else 1, True)
+        return article
 
     @mcp.tool()
     async def search_articles(
@@ -359,14 +416,17 @@ def build_mcp_app(
             可经本参数传入，或由客户端在请求头 Authorization: Bearer 提供（二者皆缺或无效将被拒绝）；
             支持单订阅令牌（dsub_）或个人订阅令牌（dfeed_，覆盖你的全部订阅）。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token, identity = _resolve_subscription_scope(subscription_token)
         if not ok:
+            _record_usage(token, identity, "search_articles", 0, False)
             return [{"error": _TOKEN_REQUIRED_MSG}]
-        return await _search_articles_impl(
+        hits = await _search_articles_impl(
             db_sink, query=query, top_k=top_k,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
             publish_date_gte=publish_date_gte,
         )
+        _record_usage(token, identity, "search_articles", _count_items(hits), True)
+        return hits
 
     @mcp.tool()
     async def get_rag_context(
@@ -388,13 +448,17 @@ def build_mcp_app(
         subscription_token: 把上下文限定在访问令牌覆盖来源内。可经本参数传入，
             或由客户端在请求头 Authorization: Bearer 提供；二者皆缺或无效将被拒绝。
         """
-        ok, scope_ids = _resolve_subscription_scope(subscription_token)
+        ok, scope_ids, token, identity = _resolve_subscription_scope(subscription_token)
         if not ok:
+            _record_usage(token, identity, "get_rag_context", 0, False)
             return f"ERROR: {_TOKEN_REQUIRED_MSG}"
-        return await _get_rag_context_impl(
+        parts = _rag_context_parts(
             db_sink, query=query, top_k=top_k, max_chars=max_chars,
             content_type=content_type, source_id=source_id, source_ids=scope_ids,
-            publish_date_gte=publish_date_gte, context_separator=context_separator,
+            publish_date_gte=publish_date_gte,
         )
+        # 条数 = 真正拼进上下文的片段数(不从拼好的字符串里数分隔符:正文里也可能有它)。
+        _record_usage(token, identity, "get_rag_context", len(parts), True)
+        return context_separator.join(parts)
 
     return mcp

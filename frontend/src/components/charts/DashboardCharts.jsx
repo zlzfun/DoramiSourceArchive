@@ -70,6 +70,8 @@ export function MultiSeriesBars({
   defaultDim,
   dims = [['purpose', '按用途'], ['user', '按用户']],
   namespace = 'default',
+  colorFor = null,       // 系列名 → 颜色;给了就不走「首见认领槽位」(系列有固定语义色时用,如接口组)
+  alwaysLegend = false,  // 只有一个系列时也出图例(系列名不在标题里、要靠图例说明这根柱子是什么时用)
 }) {
   const [dim, setDim] = useState(defaultDim ?? dims[0][0]);
   // 动效偏好显式传给 recharts(issue #73 codex F1):默认 'auto' 会自己读 OS prefers-reduced-motion,
@@ -79,7 +81,7 @@ export function MultiSeriesBars({
   const dimValid = dims.some(([k]) => k === dim);
   useEffect(() => { if (!dimValid) setDim(dims[0][0]); }, [dimValid, dims]);
   const ds = datasets[dimValid ? dim : dims[0][0]] || { data: [], keys: [] };
-  const colorOf = (k) => colorForEntity(`${namespace}:${dim}`, k);
+  const colorOf = (k) => (colorFor ? colorFor(k) : colorForEntity(`${namespace}:${dim}`, k));
   // 空日标记:全部系列为 0 的那天给一个极小的占位值,由 EmptyDayTick 画成刻度点(浮层里不出现)
   const data = ds.data.map((row) => (
     ds.keys.some((k) => Number(row[k]) > 0) ? row : { ...row, [EMPTY_KEY]: 1e-9 }
@@ -99,7 +101,7 @@ export function MultiSeriesBars({
         )}
       </div>
       {/* 自绘图例(≥2 系列常备;dark 安全,避免 recharts Legend 默认深色文字) */}
-      {ds.keys.length > 1 && (
+      {ds.keys.length > (alwaysLegend ? 0 : 1) && (
         <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1">
           {ds.keys.map((k) => (
             <span key={k} className="inline-flex items-center gap-1 tiny-meta text-slate-500">

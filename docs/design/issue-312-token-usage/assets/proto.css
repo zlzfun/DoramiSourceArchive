@@ -1,0 +1,52 @@
+/* issue #312 样页新增的样式。
+ * 上半是产品里要落地的部分:class 名即进 frontend/src/index.css 的名字,取值只用现有 token。
+ * 下半(.px-*)是样页自己的开关条,不属于产品界面。 */
+
+/* ── 令牌:一枚令牌的身份(类型 + 尾号 + 条件性状态),账户抽屉与令牌台账共用 ── */
+.tok-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tok-kind { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tok-prev { font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ── 账户抽屉「接口调用」区:一枚令牌一张卡,展开是它调过的接口 ── */
+.tok-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.tok-card { background: var(--dorami-soft); border-radius: var(--r-control); }
+.tok-card > summary {
+  list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline; gap: 2px 12px; padding: 10px 12px;
+}
+.tok-card > summary::-webkit-details-marker { display: none; }
+.tok-card.is-flash { box-shadow: inset 0 0 0 1.5px var(--dorami-accent-ink); }
+.tok-n { font-size: 18px; line-height: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--dorami-ink); text-align: right; }
+.tok-n.is-zero { color: var(--dorami-faint); font-weight: 400; }
+.tok-meta, .tok-items { font-size: 12px; line-height: 18px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.tok-items { text-align: right; }
+.tok-chs { padding: 4px 6px 8px; border-top: 1px solid var(--dorami-border-soft); }
+.tok-ch-name { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 令牌台账的「接口」列:调得最多的那个接口 + 各接口占比条 ── */
+.tok-mix { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.tok-mix-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.tok-mix-more { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; }
+.seg-bar { display: flex; gap: 1px; height: 6px; border-radius: var(--r-pill); overflow: hidden; background: var(--dorami-well); }
+.seg-bar > i { display: block; height: 100%; min-width: 2px; }
+
+/* ── 设置 → 聚合接口(B):接口行尾的调用次数、接口分组小标题 ── */
+.endpoint-n { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.endpoint-n.is-zero { color: var(--dorami-faint); }
+.endpoint-group { display: flex; align-items: center; gap: 9px; margin-top: 18px; }
+.endpoint-group + .endpoint { margin-top: 8px; }
+
+/* ══ 以下只属于样页 ══ */
+.px-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 400;
+  display: flex; align-items: center; gap: 14px; padding: 7px 12px; border-radius: 999px;
+  background: #14161c; color: #c9cedb; font: 12px/1 -apple-system, "PingFang SC", sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .32); white-space: nowrap;
+}
+.px-grp { display: inline-flex; align-items: center; gap: 2px; }
+.px-lbl { color: #7d8496; margin-right: 6px; }
+.px-btn { border: 0; background: none; color: inherit; font: inherit; padding: 6px 9px; border-radius: 999px; cursor: pointer; }
+.px-btn:hover { color: #fff; }
+.px-btn.is-on { background: #f2f3f7; color: #14161c; font-weight: 600; }
+.px-sep { width: 1px; height: 16px; background: #343846; }
+[data-proto="drawer"].is-open { z-index: 60; }

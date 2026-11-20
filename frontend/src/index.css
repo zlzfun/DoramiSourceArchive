@@ -4309,6 +4309,33 @@ input[type="radio"] {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;
   }
 
+  /* 接口清单(设置 → 聚合接口,issue #315):按取到的范围分组,组头 = 组名 + 范围签;一行一个接口(.ep 是可点开的
+     端点行,收起时与 .endpoint 同高同底),点开是这条接口的调用示例与它认的参数。▸ 与 .scope-note 同一枚图形字符。 */
+  .ep-group { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+  .ep-group + .ep { margin-top: 8px; }
+  .ep { margin-top: 6px; background: var(--dorami-well); border-radius: var(--r-control); }
+  .ep > summary { list-style: none; cursor: pointer; margin-top: 0; background: none; }
+  .ep > summary::-webkit-details-marker { display: none; }
+  .ep > summary::before {
+    content: "\25B8"; flex: none; width: 8px; height: 18px; display: grid; place-items: center;
+    font-size: 9px; line-height: 1; color: var(--dorami-faint);
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+  .ep[open] > summary::before { transform: rotate(90deg); }
+  .ep > summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-control); }
+  .endpoint-fmt { flex: none; font-size: 12px; color: var(--dorami-faint); }
+  .ep-body { margin: 0 8px 0 12px; padding: 9px 0 11px 16px; border-top: 1px solid var(--dorami-border); }
+  /* 示例:文本自己横向滚动,复制钮在滚动区外——钮比一行文本高,放在滚动容器里上下沿与焦点环会被裁掉。
+     钮的上下负外边距让它不撑高这一块(一行示例仍是一行高)。 */
+  .ep-code { display: flex; align-items: flex-start; gap: 8px; }
+  .ep-code-text {
+    flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    color: var(--dorami-ink-2); white-space: pre; overflow-x: auto;
+  }
+  .ep-code .copybtn { margin: -3px 0; }
+  .ep-params { margin-top: 8px; font-size: 12px; line-height: 1.7; color: var(--dorami-muted); }
+  .ep-params p + p { margin-top: 3px; }
+
   /* copy 小钮(全局焦点环已由 button:focus-visible 覆盖) */
   .copybtn {
     width: 26px; height: 26px; flex: none; display: grid; place-items: center;
@@ -5144,6 +5171,25 @@ input[type="radio"] {
     list-style: none; font-family: var(--mono); font-size: 12px; color: var(--dorami-muted);
     font-variant-numeric: tabular-nums;
   }
+
+  /* ── 用户活动抽屉「接口调用」区(issue #312;刻度 1:1 取自 docs/design/issue-312-token-usage/assets/proto.css)──
+     一枚令牌一张卡:卡头两行(类型 + 尾号 + 条件性的「已作废」 | 调用次数;最近调用 | 返回条数),展开是它调过的接口。 */
+  .tok-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .tok-kind { font-size: 12px; font-weight: 600; color: var(--dorami-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tok-prev { font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tok-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .tok-card { background: var(--dorami-soft); border-radius: var(--r-control); }
+  .tok-card > summary {
+    list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline; gap: 2px 12px; padding: 10px 12px;
+  }
+  .tok-card > summary::-webkit-details-marker { display: none; }
+  .tok-n { font-size: 18px; line-height: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--dorami-ink); text-align: right; }
+  .tok-n.is-zero { color: var(--dorami-faint); font-weight: 400; }
+  .tok-meta, .tok-items { font-size: 12px; line-height: 18px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+  .tok-items { text-align: right; }
+  .tok-chs { padding: 4px 6px 8px; border-top: 1px solid var(--dorami-border-soft); }
+  .tok-ch-name { font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* 榜单列表(收藏文章 TOP) */
   .toplist { display: flex; flex-direction: column; }

@@ -105,8 +105,9 @@ DELETE /api/reader/sources/{source_id}/subscribe
   reconcile every tile's `subscribed` flag from the authoritative union.
 
 The user-facing surface is deliberately minimal: the 阅读器 sidebar handles subscribe /
-unsubscribe (one source per click), and 接入集成's 个人聚合接口 block copies the pull URL
-and rotates/reveals the `dfeed_` token. It does **not** expose a filter/delivery-policy
+unsubscribe (one source per click), and 设置 → 接入集成 → 聚合接口 rotates/reveals the
+`dfeed_` token and lists every HTTP endpoint that token can call, each with a copyable URL,
+an example and its parameters (issue #315). It does **not** expose a filter/delivery-policy
 editor — tuning a subscription's name, delivery limits, content scope, or building a custom
 multi-source subscription is an admin/automation concern handled directly through the
 `POST`/`PUT /api/subscriptions/{id}` lifecycle below, not through the reader UI.
@@ -127,7 +128,7 @@ results; the tokenless endpoint remains the global archive surface for trusted i
 
 **Admin exception (2026-07)**: the `admin` account does not subscribe (subscriptions are a
 reader concept), so its `dfeed_` token is **not** narrowed by subscriptions — the personal
-feed endpoints (`GET /api/public/feed/articles[.md]`) return the whole archive, an explicit
+feed endpoints (`GET /api/public/feed/articles[.md|.xml]`) return the whole archive, an explicit
 `source_ids` filter is honored verbatim (no subscription intersection), and the MCP scope
 resolver returns `[]` ("unrestricted") for an admin feed token. This mirrors the existing
 rule that admin's own session retrieval is never subscription-scoped.
@@ -143,10 +144,16 @@ than juggling one token per source. The personal feed provides exactly that, aut
 by a per-user feed token (independent of any single subscription):
 
 ```http
-GET /api/public/feed/articles
-GET /api/public/feed/articles.md
+GET /api/public/feed/articles        # JSON
+GET /api/public/feed/articles.md     # Markdown
+GET /api/public/feed/articles.xml    # Atom 1.0 (application/atom+xml), for feed readers
 Authorization: Bearer dfeed_...
 ```
+
+The three are the same pull in three formats. Feed readers usually cannot send an
+`Authorization` header, so the Atom variant is typically subscribed to as
+`.../articles.xml?token=dfeed_...` — the one place 设置 → 聚合接口 shows the token in the URL;
+the query-token caveats under *Per-Subscription Consumer Endpoints* apply.
 
 The token is managed by the logged-in reader:
 
@@ -154,6 +161,10 @@ The token is managed by the logged-in reader:
 GET  /api/reader/feed-token          # status + preview (never echoes plaintext)
 POST /api/reader/feed-token/rotate   # create/rotate; returns plaintext once
 ```
+
+The status response also reports how the **current** token has been used (issue #312):
+`last_used_at` (last successful call, any time; `null` if never), `usage_calls` (successful
+calls in the last `usage_window_days` = 30 days). Rotating starts a new token, so both reset.
 
 The feed resolves the union of the caller's active subscribed `source_id`s and returns
 articles across all of them, **ordered by publish date (newest first)**. Supported
@@ -166,8 +177,8 @@ filters:
 | `source_ids` | Comma-separated subset; **intersected** with the user's subscribed sources, so a token can never pull an unsubscribed source. |
 | `search` | Title substring filter. |
 | `has_content` | Defaults to `true`. |
-| `include_content` | Defaults to `true`; `false` for metadata-only pulls (`.json` only). |
-| `skip` / `limit` | Offset pagination. `limit` capped at 500 (JSON) / 200 (Markdown). |
+| `include_content` | Defaults to `true`. JSON: `false` omits the body (metadata-only pull). Atom: `false` replaces each entry's `<content>` with a `<summary>` holding the first 280 characters of the body. The Markdown export does not take it. |
+| `skip` / `limit` | Offset pagination. `limit` capped at 500 (JSON) / 200 (Markdown, Atom). |
 
 **Archive (fetched) time is intentionally not exposed on this user-facing surface** — it
 is an internal ingestion detail. Consumers filter by *publish* time. (The collector-side
@@ -420,6 +431,23 @@ and rotation invalidates the previous token.
 
 Inactive subscriptions return no consumer data, and the feed returns nothing for a user
 with no active subscriptions.
+
+## Call Metering (issue #312)
+
+Every **successful** call made with a `dfeed_` or `dsub_` token is counted, per day, per
+token, per endpoint: the aggregated feed (JSON / Markdown / Atom), the hot events board and
+event detail, the per-subscription pull and search, and the four content MCP tools. What is
+stored is the call count, the number of items returned and the time of the last call — not the
+request parameters, not the returned content, not the caller's IP. Administrators see the
+totals per account and per token; a reader sees the usage of their own current token in
+接入集成 → 聚合接口.
+
+- Requests that fail validation (400) or hit a missing event (404) are not calls.
+- A token that fails authentication is not recorded, with one exception: a token that used to
+  be valid (rotated or belonging to a removed subscription) gets a "rejected after retirement"
+  count under its old record, so an administrator can tell that something is still using it.
+- Metering never changes a response and never fails a request.
+- Counts are per node; they are not carried by Archive Sync.
 
 ## Current Limits
 

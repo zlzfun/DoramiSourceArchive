@@ -215,6 +215,17 @@ class TranslationCallRecord(SQLModel, table=True):
     created_at: float
 
 
+class DailyBriefDedupRunRecord(SQLModel, table=True):
+    """每次成功发布的跨天判断快照。仅保存在生成节点，管理员可查看。"""
+    __tablename__ = "daily_brief_dedup_runs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    report_date: str = Field(index=True)
+    started_at: str
+    trigger: str
+    snapshot_json: str
+
+
 class DailyBriefCandidateRecord(SQLModel, table=True):
     """Node-local consumption ledger. Pending rows survive cursor advancement."""
     __tablename__ = "daily_brief_candidates"
@@ -3138,6 +3149,44 @@ class GuestVisitRecord(SQLModel, table=True):
     last_seen_at: str = Field(description="当天最近一次出现时间")
     converted_username: Optional[str] = Field(default=None, description="在本浏览器登录成的账号")
     converted_at: Optional[str] = Field(default=None, index=True, description="转化(登录)时间")
+
+
+class TokenDeliveryUsageRecord(SQLModel, table=True):
+    """令牌交付计量按天聚合(issue #312):一行 = 某天某账号的某枚令牌调某个接口的累计。
+
+    读取类令牌(``dfeed_`` 个人聚合令牌 / ``dsub_`` 单订阅令牌)带着去取内容的每一次成功调用
+    记一笔:文章 feed、热点事件榜、单订阅接口、MCP 工具。管理面据此把
+    「账户 → 它的令牌 → 接口调用与调用量」连起来。写入见 ``services/token_usage``,
+    计量绝不阻断交付(写入异常由调用方吞掉)。
+
+    ``token_fp`` 是令牌哈希(带站点密钥的 HMAC)的前 16 位:不可逆,只用来区分同一账号
+    先后几枚令牌。一枚令牌是不是「现用」不落库——读的时候拿它与令牌表当前的哈希比对,
+    对不上就是已作废(重新生成过 / 订阅已删)。各节点各记各的,不进 Archive Sync。
+    """
+    __tablename__ = "token_delivery_usage"
+    # 聚合键唯一索引:写侧是 SQLite ON CONFLICT DO UPDATE 原子累加(同 ai_usage / reader_reads)。
+    __table_args__ = (
+        Index(
+            "uq_token_delivery_usage_day_user_token_channel",
+            "day", "username", "token_fp", "channel",
+            unique=True,
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    day: str = Field(index=True, description="YYYY-MM-DD(本地日期)")
+    username: str = Field(index=True, description="令牌归属账号")
+    token_kind: str = Field(default="feed", description="feed(个人聚合令牌)| subscription(单订阅令牌)")
+    token_fp: str = Field(index=True, description="令牌哈希前 16 位")
+    token_preview: str = Field(default="", description="令牌尾号预览(签发时存在令牌表里的那份)")
+    subscription_id: Optional[int] = Field(default=None, description="单订阅令牌所属订阅;聚合令牌为空")
+    subscription_name: str = Field(default="", description="订阅当时的名字(鉴权那一刻的快照;订阅删了、id 被重用了也认得出)")
+    channel: str = Field(description="接口:feed/articles、feed/events、subscriptions/{id}/articles、mcp:<工具名> 等")
+    calls: int = Field(default=0, description="累计成功调用次数")
+    items: int = Field(default=0, description="累计返回条数")
+    rejected: int = Field(default=0, description="这枚令牌作废之后仍被调、被拒的次数")
+    last_at: Optional[str] = Field(default=None, description="最近一次成功调用时间")
+    updated_at: str = Field(description="最近一次累加时间")
 
 
 class AdminAuditRecord(SQLModel, table=True):
