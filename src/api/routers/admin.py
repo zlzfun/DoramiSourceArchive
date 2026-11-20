@@ -51,6 +51,7 @@ from services import reader_ondemand as reader_ondemand_service
 from services import rankings as rankings_service
 from services import social_backfill as social_backfill_service
 from services import source_visibility as source_visibility_service
+from services import token_usage as token_usage_service
 from services import user_sources as user_sources_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -304,7 +305,7 @@ def admin_overview(
 # 账户列表可用的排序键（v3.41 账户管理 V2，审计 M06）：值 = (取值函数所需字段, 默认方向)。
 _ACCOUNT_SORT_KEYS = {
     "username", "created_at", "last_login", "logins", "reads",
-    "ai_calls", "ai_tokens", "subscriptions",
+    "ai_calls", "ai_tokens", "api", "subscriptions",
 }
 
 
@@ -331,7 +332,7 @@ def admin_list_accounts(
     - 过滤：`q` 用户名子串（大小写不敏感）× `role`(admin|user) × `status`(active|disabled)
       × `ai`(on|off)，服务端组合生效；
     - 排序：`sort` ∈ username/created_at/last_login/logins/reads/ai_calls/ai_tokens/
-      subscriptions，`order` ∈ asc/desc（缺省：username 升序，指标类降序）；
+      api/subscriptions，`order` ∈ asc/desc（缺省：username 升序，指标类降序）；
     - 分页：skip/limit 切过滤排序后的结果；`total` 为过滤后总数；
     - 窗口指标由各表 SQL GROUP BY 聚合（usage_by_user/reads_by_user/logins_by_user），
       不再整窗明细进内存；`summary` 与 top 榜恒聚合**全部账户**，不受过滤/分页影响。
@@ -357,6 +358,9 @@ def admin_list_accounts(
     usage_map = ai_usage_service.usage_by_user(session, days=days)
     reads_map = reader_activity_service.reads_by_user(session, days=days)
     logins_map = accounts_service.logins_by_user(session, days=days)
+    # 令牌交付计量(issue #312):各账号窗口内用令牌调接口的次数;汇总只算账户(不含墓碑 / 游客)。
+    api_map = token_usage_service.calls_by_user(session, days=days)
+    api_summary = token_usage_service.window_summary(session, days=days)
     # 最近登录以事件流兜底快照:last_login_at 是缓存,历史疤痕可能缺失
     # (曾出现「窗口登录 241 次但最近登录为空」的矛盾行)。
     last_login_map = accounts_service.last_login_by_user(session)
@@ -378,6 +382,15 @@ def admin_list_accounts(
         "reads": sum(reads_map.values()),
         "ai_calls": sum(u["calls"] for u in usage_map.values()),
         "ai_tokens": sum(u["total_tokens"] for u in usage_map.values()),
+        "api_calls": api_summary["calls"],
+        "api_tokens_active": api_summary["tokens_active"],
+        "top_api": [
+            {"username": name, "value": value}
+            for name, value in sorted(
+                api_map.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+            if value > 0
+        ][:8],
         "top_reads": [
             {"username": name, "value": value}
             for name, value in sorted(
@@ -425,6 +438,8 @@ def admin_list_accounts(
             return usage_map.get(u.username, {}).get("calls", 0)
         if sort == "ai_tokens":
             return usage_map.get(u.username, {}).get("total_tokens", 0)
+        if sort == "api":
+            return api_map.get(u.username, 0)
         return sub_counts.get(u.username, 0)  # subscriptions
 
     filtered.sort(key=lambda u: u.username)  # 稳定次序键：同值按用户名
@@ -442,6 +457,7 @@ def admin_list_accounts(
         payload["ai_tokens"] = usage["total_tokens"]
         payload["reads"] = reads_map.get(record.username, 0)
         payload["logins"] = logins_map.get(record.username, 0)
+        payload["api_calls"] = api_map.get(record.username, 0)
         payload["logged_in_window"] = bool(last_login and last_login >= since)
         result.append(payload)
     return {"items": result, "total": total, "summary": summary}
@@ -451,7 +467,7 @@ def admin_list_accounts(
 def admin_account_activity(
     username: str, days: int = 30, session: Session = Depends(deps.get_session)
 ):
-    """单读者活动详情：近 days 天 AI 用量 + 各源阅读/收藏互动 + 登录活跃 + 账户快照。"""
+    """单读者活动详情：近 days 天 AI 用量 + 各源阅读/收藏互动 + 登录活跃 + 令牌交付(issue #312)+ 账户快照。"""
     registry_meta = _registry_source_meta()
     record = accounts_service.get_user(session, username)
     # 游客保留账号不是账户(issue #213):不出单用户抽屉,游客数据看「游客」区。
@@ -489,6 +505,8 @@ def admin_account_activity(
         "usage": usage,
         "reads": reads,
         "logins": logins,
+        # 这个账号的令牌与各令牌调过的接口(账户 → 令牌 → 接口调用量)。
+        "delivery": token_usage_service.summarize_user(session, username, days=days),
         "source_engagement": engagement,
         "favorites_total": sum(favorites_by_source.values()),
         "account": {
