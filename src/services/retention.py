@@ -7,6 +7,7 @@
 - **明细事件表**（每条操作/登录/抓取各一行，增速快）——窗口较短：
   `fetch_runs`（抓取运行历史）与 `collection_job_runs`（任务级运行，与其
   child fetch_runs 同窗对齐）各 180 天、`login_events`（登录事件）365 天、
+  `token_delivery_usage`（令牌交付计量，按天聚合但按拍板与登录同窗 365 天）、
   `admin_audit_logs`（管理操作审计）365 天。
 - **按天聚合表**（一天一用户一维度才一行，增速慢）——窗口更长：
   `ai_usage`（AI 用量）、`reader_reads`（阅读计量）各 730 天。
@@ -71,6 +72,7 @@ from models.db import (
     PersonalDigestEditionRecord,
     ReaderReadRecord,
     TagRetagJobRecord,
+    TokenDeliveryUsageRecord,
 )
 from models.db import ArticleRecord, ReaderArticleReadStateRecord, ReaderReadCursorRecord
 from services.reader_state import UNCURSORED_UNREAD_MAX_AGE_DAYS, uncursored_unread_cutoff
@@ -93,6 +95,8 @@ _TABLES: List[_TableRetention] = [
     _TableRetention(LoginEventRecord, LoginEventRecord.at, 365, "login_events"),
     # 游客访问按天聚合(issue #213):与登录事件同窗。
     _TableRetention(GuestVisitRecord, GuestVisitRecord.day, 365, "guest_visits"),
+    # 令牌交付计量按天聚合(issue #312):拍板 365 天,与登录 / 游客同窗。
+    _TableRetention(TokenDeliveryUsageRecord, TokenDeliveryUsageRecord.day, 365, "token_delivery_usage"),
     _TableRetention(AdminAuditRecord, AdminAuditRecord.at, 365, "admin_audit_logs"),
     _TableRetention(AiUsageRecord, AiUsageRecord.day, 730, "ai_usage"),
     _TableRetention(ReaderReadRecord, ReaderReadRecord.day, 730, "reader_reads"),

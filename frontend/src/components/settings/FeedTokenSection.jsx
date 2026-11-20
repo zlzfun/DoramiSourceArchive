@@ -68,7 +68,8 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
     onSuccess: (result) => {
       setPlainToken(result.token);
       setRevealed(true);
-      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview }));
+      // 新令牌从零算起:旧令牌的使用情况不带过来(随后的重读以服务器为准)
+      setFeedToken(prev => ({ ...(prev || {}), exists: true, token_preview: result.token_preview, last_used_at: null, usage_calls: 0 }));
       setLoadFailed(false);
       // 签发日期以服务器记的为准(首次签发才记、轮换不改;服务器存的是它的本地时间,前端自己补会差一天),签发后重读一次状态
       fetchFeedToken().then(data => setFeedToken(data)).catch(() => {});
@@ -84,6 +85,15 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
         ? feedToken.token_preview
         : '';
   const issuedAt = feedToken?.created_at ? String(feedToken.created_at).slice(0, 10) : '';
+  // 这枚令牌的使用情况(issue #312):最近一次调用 + 近 N 天调用次数。数据,不是说明;没调过就不出。
+  // 时间按字符取、不做时区换算(同签发日期:服务器存的是它的本地时间)。
+  const lastUsed = feedToken?.last_used_at ? String(feedToken.last_used_at).slice(5, 16).replace('T', ' ') : '';
+  const usedCalls = feedToken?.usage_calls || 0;
+  const tokenMeta = [
+    issuedAt && `签发于 ${issuedAt}`,
+    lastUsed && `最近调用 ${lastUsed}`,
+    lastUsed && usedCalls > 0 && `近 ${feedToken.usage_window_days} 天 ${usedCalls} 次`,
+  ].filter(Boolean).join(' · ');
   // 还没签发:令牌槽的位置只放一枚「签发令牌」。原先是胶囊「未签发」+ 槽里「尚未签发」+ 一句指路,
   // 同一件事写三遍,第一次签发的按钮还叫「重新生成」(issue #291)。
   // 只有成功读到「没有令牌」才算未签发;读取失败是另一种状态(下面的 unknown),给重试。
@@ -144,7 +154,7 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
         </button>
       </div>
       )}
-      {exists && issuedAt && <div className="token-meta">签发于 {issuedAt}</div>}
+      {exists && tokenMeta && <div className="token-meta">{tokenMeta}</div>}
 
       <div className="endpoint">
         <span className="endpoint-method">GET</span>
