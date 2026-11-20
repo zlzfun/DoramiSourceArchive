@@ -4325,11 +4325,14 @@ input[type="radio"] {
   .ep > summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-control); }
   .endpoint-fmt { flex: none; font-size: 12px; color: var(--dorami-faint); }
   .ep-body { margin: 0 8px 0 12px; padding: 9px 0 11px 16px; border-top: 1px solid var(--dorami-border); }
-  .ep-code {
-    position: relative; padding-right: 34px; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  /* 示例:文本自己横向滚动,复制钮在滚动区外——钮比一行文本高,放在滚动容器里上下沿与焦点环会被裁掉。
+     钮的上下负外边距让它不撑高这一块(一行示例仍是一行高)。 */
+  .ep-code { display: flex; align-items: flex-start; gap: 8px; }
+  .ep-code-text {
+    flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; line-height: 1.7;
     color: var(--dorami-ink-2); white-space: pre; overflow-x: auto;
   }
-  .ep-code .copybtn { position: absolute; top: -3px; right: 0; }
+  .ep-code .copybtn { margin: -3px 0; }
   .ep-params { margin-top: 8px; font-size: 12px; line-height: 1.7; color: var(--dorami-muted); }
   .ep-params p + p { margin-top: 3px; }
 

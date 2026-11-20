@@ -4,10 +4,12 @@
 // 交付计量里的接口名(services/token_usage.py)逐项对账,对不上测试就红。
 // 纯数据 + 纯函数,无 React 依赖。单订阅令牌(dsub_)的接口不在这里:那种令牌没有界面(issue #315 拍板 6)。
 
-// 后端的数(对账测试逐个比对):文章 JSON 的条数上限、Markdown / Atom 的条数上限、事件榜窗口(小时)与件数。
+// 后端的数(对账测试逐个比对):文章 JSON 的条数上限、Markdown / Atom 的条数上限、
+// Atom 不下发正文时摘要取正文的前多少字、事件榜窗口(小时)与件数。
 export const FEED_LIMITS = {
   articles: 500,
   articlesExport: 200,
+  atomSummaryChars: 280,
   eventWindowDefault: 168,
   eventWindowMax: 336,
   eventLimit: 10,
@@ -15,19 +17,22 @@ export const FEED_LIMITS = {
 
 const page = (max) => ({ names: ['skip', 'limit'], label: 'skip / limit', desc: `分页偏移与条数，limit 上限 ${max}`, limitMax: max });
 
-// 参数说明:names 是后端真正认的参数名(对账用),label 省略时就显示 names[0];adminDesc 是管理员令牌的说法。
+// 参数说明:names 是后端真正认的参数名(对账用),label 省略时就显示 names[0];adminDesc 是管理员令牌的说法;
+// default 是说明里写出来的布尔默认值(对账用)。
 const P = {
   dates: { names: ['publish_date_start', 'publish_date_end'], label: 'publish_date_start / _end', desc: '发布时间窗口（YYYY-MM-DD），生成日报最常用' },
   types: { names: ['content_types'], desc: '逗号分隔的内容类型，如 rss_article,web_article' },
   sources: { names: ['source_ids'], desc: '逗号分隔的来源；仅取与你已订阅来源的交集', adminDesc: '逗号分隔的来源' },
   search: { names: ['search'], desc: '标题关键词过滤' },
-  content: { names: ['include_content'], desc: '是否下发正文，默认 true；传 false 仅取元数据' },
+  content: { names: ['include_content'], default: true, desc: '是否下发正文，默认 true；传 false 仅取元数据' },
+  // Atom 没有「只取元数据」:不下发正文时,每条仍带一段取自正文开头的摘要
+  contentAtom: { names: ['include_content'], default: true, desc: `是否下发正文，默认 true；传 false 只给正文前 ${FEED_LIMITS.atomSummaryChars} 字的摘要` },
   window: {
     names: ['window_hours'],
     desc: `榜单窗口（小时），默认 ${FEED_LIMITS.eventWindowDefault} 即近 ${FEED_LIMITS.eventWindowDefault / 24} 天，48 即近 2 天；范围 1–${FEED_LIMITS.eventWindowMax}`,
   },
   limit: { names: ['limit'], desc: `返回几件事，1–${FEED_LIMITS.eventLimit}，默认 ${FEED_LIMITS.eventLimit}`, limitMax: FEED_LIMITS.eventLimit },
-  members: { names: ['include_members'], desc: '传 true 时每件事带上它的全部报道，默认 false' },
+  members: { names: ['include_members'], default: false, desc: '传 true 时每件事带上它的全部报道，默认 false' },
 };
 
 // 组 = 取到的范围不同的两类内容:文章按订阅裁剪(管理员不受限),热点事件对谁都是全站。
@@ -54,7 +59,7 @@ export const FEED_ENDPOINT_GROUPS = [
       {
         key: 'articles.xml', method: 'GET', path: '/public/feed/articles.xml', channel: 'feed/articles.xml', format: 'Atom',
         example: { tokenInUrl: true },
-        params: [P.dates, P.types, P.sources, P.search, P.content, page(FEED_LIMITS.articlesExport)],
+        params: [P.dates, P.types, P.sources, P.search, P.contentAtom, page(FEED_LIMITS.articlesExport)],
       },
     ],
   },

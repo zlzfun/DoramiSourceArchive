@@ -199,7 +199,7 @@ export default function FeedTokenSection({ showToast, adminScope = false, onOpen
                 </summary>
                 <div className="ep-body">
                   <div className="ep-code">
-                    {example}
+                    <div className="ep-code-text">{example}</div>
                     <button type="button" className="copybtn" title="复制示例" onClick={() => copy(example, exampleKey, '调用示例')}>
                       {copiedKey === exampleKey ? <Check /> : <Copy />}
                     </button>

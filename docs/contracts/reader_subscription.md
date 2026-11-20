@@ -177,7 +177,7 @@ filters:
 | `source_ids` | Comma-separated subset; **intersected** with the user's subscribed sources, so a token can never pull an unsubscribed source. |
 | `search` | Title substring filter. |
 | `has_content` | Defaults to `true`. |
-| `include_content` | Defaults to `true`; `false` for metadata-only pulls. JSON and Atom only — the Markdown export does not take it. |
+| `include_content` | Defaults to `true`. JSON: `false` omits the body (metadata-only pull). Atom: `false` replaces each entry's `<content>` with a `<summary>` holding the first 280 characters of the body. The Markdown export does not take it. |
 | `skip` / `limit` | Offset pagination. `limit` capped at 500 (JSON) / 200 (Markdown, Atom). |
 
 **Archive (fetched) time is intentionally not exposed on this user-facing surface** — it
