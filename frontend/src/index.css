@@ -4309,6 +4309,30 @@ input[type="radio"] {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;
   }
 
+  /* 接口清单(设置 → 聚合接口,issue #315):按取到的范围分组,组头 = 组名 + 范围签;一行一个接口(.ep 是可点开的
+     端点行,收起时与 .endpoint 同高同底),点开是这条接口的调用示例与它认的参数。▸ 与 .scope-note 同一枚图形字符。 */
+  .ep-group { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+  .ep-group + .ep { margin-top: 8px; }
+  .ep { margin-top: 6px; background: var(--dorami-well); border-radius: var(--r-control); }
+  .ep > summary { list-style: none; cursor: pointer; margin-top: 0; background: none; }
+  .ep > summary::-webkit-details-marker { display: none; }
+  .ep > summary::before {
+    content: "\25B8"; flex: none; width: 8px; height: 18px; display: grid; place-items: center;
+    font-size: 9px; line-height: 1; color: var(--dorami-faint);
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+  .ep[open] > summary::before { transform: rotate(90deg); }
+  .ep > summary:focus-visible { outline: 2px solid var(--dorami-focus); outline-offset: 2px; border-radius: var(--r-control); }
+  .endpoint-fmt { flex: none; font-size: 12px; color: var(--dorami-faint); }
+  .ep-body { margin: 0 8px 0 12px; padding: 9px 0 11px 16px; border-top: 1px solid var(--dorami-border); }
+  .ep-code {
+    position: relative; padding-right: 34px; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    color: var(--dorami-ink-2); white-space: pre; overflow-x: auto;
+  }
+  .ep-code .copybtn { position: absolute; top: -3px; right: 0; }
+  .ep-params { margin-top: 8px; font-size: 12px; line-height: 1.7; color: var(--dorami-muted); }
+  .ep-params p + p { margin-top: 3px; }
+
   /* copy 小钮(全局焦点环已由 button:focus-visible 覆盖) */
   .copybtn {
     width: 26px; height: 26px; flex: none; display: grid; place-items: center;

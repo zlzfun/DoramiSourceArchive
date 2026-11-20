@@ -1,35 +1,33 @@
-import { useEffect, useState } from 'react';
-import { Check, Copy, Eye, EyeOff, KeyRound, Loader2, RotateCw } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Check, ChevronRight, Copy, Eye, EyeOff, KeyRound, Loader2, RotateCw } from 'lucide-react';
 import { API_BASE_URL } from '../../config';
 import { fetchFeedToken, rotateFeedToken } from '../../api';
 import { copyText } from '../../utils/clipboard';
 import { runAction } from '../../utils/runAction';
 import { useConfirm } from '../../hooks/useConfirm';
+import {
+  FEED_ENDPOINT_GROUPS,
+  feedEndpointExample,
+  feedEndpointParams,
+  feedEndpointUrl,
+  feedScopeLabel,
+} from '../../utils/feedEndpoints';
 
 function apiRoot() {
   const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
   return base.replace(/\/$/, '');
 }
 
-function feedEndpoint(suffix = '') {
-  return `${apiRoot()}/public/feed/articles${suffix}`;
-}
-
-const FEED_PARAMS = [
-  ['publish_date_start / _end', '发布时间窗口（YYYY-MM-DD），生成日报最常用'],
-  ['content_types', '逗号分隔的内容类型，如 rss_article,web_article'],
-  ['source_ids', '逗号分隔的来源；仅取与你已订阅来源的交集', '逗号分隔的来源'],   // 第三项 = 管理员令牌的说法(不受订阅限制)
-  ['search', '标题关键词过滤'],
-  ['include_content', '是否下发正文，默认 true；传 false 仅取元数据'],
-  ['skip / limit', '分页偏移与条数，limit 上限 500'],
-];
-
 /**
- * 聚合接口（设置柜·接入集成组）：一个 dfeed_ 令牌拉走当前用户全部已订阅来源，
- * 适合 RSS 工具与脚本。前身是接入集成页签的 FeedAccessSection 卡（并入设置波），
- * 令牌 get/rotate 逻辑原样内聚；MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌。
+ * 聚合接口（设置柜·接入集成组）：一枚 dfeed_ 令牌能调的全部 HTTP 接口，适合 RSS 工具与脚本。
+ * 前身是接入集成页签的 FeedAccessSection 卡（并入设置波），令牌 get/rotate 逻辑原样内聚；
+ * MCP 工具调用与这里的 HTTP 拉取共用同一枚令牌（卡头有一枚通往「MCP 接入」的链接，那边也有一枚通回来）。
+ *
+ * 接口清单不写在这里：照 utils/feedEndpoints.js 渲染（issue #315）。按取到的范围分两组，范围签挂在组上——
+ * 文章按订阅裁剪、热点事件是全站，一枚令牌两种范围，写在卡头就只对得上其中一组。
+ * 一行一个接口；点开一行是它的调用示例和它认的参数，同时只开一行，打开时全收起（五行一屏看全）。
  */
-export default function FeedTokenSection({ showToast, adminScope = false }) {
+export default function FeedTokenSection({ showToast, adminScope = false, onOpenMcp }) {
   const confirm = useConfirm();
   const [feedToken, setFeedToken] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +38,8 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
   const [revealed, setRevealed] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [copiedKey, setCopiedKey] = useState('');
+  const [openKey, setOpenKey] = useState('');   // 点开的那一行(接口 key);'' = 全收起
+  const listRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -121,14 +121,33 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
     copy(plainToken, 'feed-token', '聚合接口令牌');
   };
 
-  const curlExample = `curl -H "Authorization: Bearer $DORAMI_TOKEN" \\\n  "${feedEndpoint('?limit=20')}"`;
+  // 开合以 <details> 自己的状态为准(点行、键盘、浏览器页内查找都会改它),这里只跟着记:开了一行就把别的收起。
+  const handleToggle = (event, key) => {
+    const isOpen = event.currentTarget.open;
+    setOpenKey((prev) => (isOpen ? key : prev === key ? '' : prev));
+  };
+  // 点开靠下的一行时,它的正文可能落在可视区外:等别的行收起、版面定下来之后,把这一行带进来(不做滚动动画)。
+  useEffect(() => {
+    if (openKey) listRef.current?.querySelector('.ep[open]')?.scrollIntoView({ block: 'nearest' });
+  }, [openKey]);
+  // 行尾的复制钮在 <summary> 里:点它只复制,不开合这一行。
+  const copyInRow = (event, text, key, label) => {
+    event.preventDefault();
+    event.stopPropagation();
+    copy(text, key, label);
+  };
+
+  const root = apiRoot();
 
   return (
-    <div>
+    <div ref={listRef}>
       <div className="card-head">
         <span className="sett-lbl">个人聚合令牌</span>
-        {/* 这枚令牌能取到什么(数据,不是说明):管理员的不受订阅限制。按真实账号角色,不按当前在哪个界面 */}
-        <span className="target-chip">{adminScope ? '全站公开内容' : '已订阅来源'}</span>
+        {onOpenMcp && (
+          <button type="button" className="sett-link ml-auto inline-flex items-center gap-0.5 text-xs" onClick={onOpenMcp}>
+            MCP 接入 <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {unissued ? (
@@ -156,34 +175,46 @@ export default function FeedTokenSection({ showToast, adminScope = false }) {
       )}
       {exists && tokenMeta && <div className="token-meta">{tokenMeta}</div>}
 
-      <div className="endpoint">
-        <span className="endpoint-method">GET</span>
-        <span className="endpoint-url" title={feedEndpoint()}>{feedEndpoint()}</span>
-        <button type="button" className="copybtn" title="复制接口地址" onClick={() => copy(feedEndpoint(), 'feed-json', '聚合接口地址')}>
-          {copiedKey === 'feed-json' ? <Check /> : <Copy />}
-        </button>
-      </div>
-      <div className="endpoint">
-        <span className="endpoint-method">GET</span>
-        <span className="endpoint-url" title={feedEndpoint('.md')}>{feedEndpoint('.md')}</span>
-        <button type="button" className="copybtn" title="复制 Markdown 接口地址" onClick={() => copy(feedEndpoint('.md'), 'feed-md', 'Markdown 接口地址')}>
-          {copiedKey === 'feed-md' ? <Check /> : <Copy />}
-        </button>
-      </div>
-
-      <div className="codeblock">
-        {curlExample}
-        <button type="button" className="copybtn" title="复制 curl 示例" onClick={() => copy(curlExample, 'feed-curl', 'curl 示例')}>
-          {copiedKey === 'feed-curl' ? <Check /> : <Copy />}
-        </button>
-      </div>
-
-      <details className="scope-note">
-        <summary>接口参数</summary>
-        {FEED_PARAMS.map(([name, desc, adminDesc]) => (
-          <p key={name}><code className="font-mono">{name}</code>：{adminScope && adminDesc ? adminDesc : desc}</p>
-        ))}
-      </details>
+      {FEED_ENDPOINT_GROUPS.map((group) => (
+        <Fragment key={group.key}>
+          <div className="ep-group">
+            <span className="sett-lbl">{group.label}</span>
+            {/* 这一组取到什么(数据,不是说明):管理员的文章不受订阅限制。按真实账号角色,不按当前在哪个界面 */}
+            <span className="target-chip">{feedScopeLabel(group, adminScope)}</span>
+          </div>
+          {group.endpoints.map((endpoint) => {
+            const url = feedEndpointUrl(root, endpoint);
+            const example = feedEndpointExample(root, endpoint);
+            const urlKey = `url:${endpoint.key}`;
+            const exampleKey = `example:${endpoint.key}`;
+            return (
+              <details key={endpoint.key} className="ep" open={openKey === endpoint.key} onToggle={(event) => handleToggle(event, endpoint.key)}>
+                <summary className="endpoint">
+                  <span className="endpoint-method">{endpoint.method}</span>
+                  <span className="endpoint-url" title={url}>{url}</span>
+                  <span className="endpoint-fmt">{endpoint.format}</span>
+                  <button type="button" className="copybtn" title="复制接口地址" onClick={(event) => copyInRow(event, url, urlKey, '接口地址')}>
+                    {copiedKey === urlKey ? <Check /> : <Copy />}
+                  </button>
+                </summary>
+                <div className="ep-body">
+                  <div className="ep-code">
+                    {example}
+                    <button type="button" className="copybtn" title="复制示例" onClick={() => copy(example, exampleKey, '调用示例')}>
+                      {copiedKey === exampleKey ? <Check /> : <Copy />}
+                    </button>
+                  </div>
+                  <div className="ep-params">
+                    {feedEndpointParams(endpoint, adminScope).map(([name, desc]) => (
+                      <p key={name}><code className="font-mono">{name}</code>：{desc}</p>
+                    ))}
+                  </div>
+                </div>
+              </details>
+            );
+          })}
+        </Fragment>
+      ))}
     </div>
   );
 }

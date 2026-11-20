@@ -80,7 +80,6 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
-- ☐ [plans/issue-315-feed-endpoints.md](./plans/issue-315-feed-endpoints.md) — **设置 · 聚合接口列全令牌可调的接口(issue #315)**:令牌能调 5 个接口、设置页只列 2 个(Atom 与 issue #310 的事件榜两条没列);第一轮样页 A 分组列全 / B 一组一行,六项待拍板;纯前端 + 对账守卫。
 - ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
 
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。

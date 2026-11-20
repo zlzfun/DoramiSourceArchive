@@ -1,6 +1,6 @@
 # issue #315 设置 · 聚合接口列全令牌接口 · 样页(2026-11)
 
-> 状态:进行中。2026-11-20 由 Claude Code(Fable 5.2)做的第一轮样页,**待拍板**。方案见 [`docs/plans/issue-315-feed-endpoints.md`](../../plans/issue-315-feed-endpoints.md),issue [#315](https://github.com/zlzfun/DoramiSourceArchive/issues/315)。
+> 状态:归档。2026-11-20 由 Claude Code(Fable 5.2)做的第一轮样页;同日用户「全按推荐」——方向 A 分组列全、打开时全收起、行尾标返回格式、卡头加「MCP 接入」链接、Atom 示例把令牌写在地址里、单订阅令牌的接口不列,已照此实现。页面里的「待拍板」「推荐」是当时的写法,保留原样。方案见 [`docs/archive/issue-315-feed-endpoints.md`](../../archive/issue-315-feed-endpoints.md),issue [#315](https://github.com/zlzfun/DoramiSourceArchive/issues/315)。
 
 要回答的是一件事:读者在设置 → 聚合接口怎么看全这枚令牌能调的接口。现网 5 个接口只列了 2 个。
 
