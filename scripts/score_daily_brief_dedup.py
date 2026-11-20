@@ -2,6 +2,7 @@
 import argparse
 from collections import Counter
 import json
+from math import sqrt
 from pathlib import Path
 from statistics import median
 
@@ -22,6 +23,16 @@ def indexed(rows):
             raise ValueError(f"empty or duplicate id: {key!r}")
         result[key] = row
     return result
+
+
+def proportion(count, total):
+    """Wilson 95% interval for this labeled stratum in one trial."""
+    p = count / total
+    z = 1.96
+    scale = 1 + z ** 2 / total
+    center = (p + z ** 2 / (2 * total)) / scale
+    radius = z * sqrt(p * (1 - p) / total + z ** 2 / (4 * total ** 2)) / scale
+    return {"count": count, "total": total, "wilson95": [max(0, center - radius), min(1, center + radius)]}
 
 
 def score(labels, trials):
@@ -50,17 +61,18 @@ def score(labels, trials):
                 dropped = action == "drop"
                 kind = gold[key]["stratum"]
                 votes[variant][key] += dropped
-                if kind.startswith("anchor_"):
-                    counts["anchor_dropped"] += dropped
-                    continue
-                counts["duplicate_dropped" if kind in DUPLICATES else "false_drop"] += dropped
-                counts["unrelated_followup"] += kind == "unrelated" and action == "followup"
                 if variant == "new":
                     proposed, rejected = row["proposed_drop"], row["validation_rejected"]
                     if type(proposed) is not bool or type(rejected) is not bool:
                         raise ValueError(f"{key}: expected boolean validation flags")
                     if (rejected and (not proposed or dropped)) or (dropped and not proposed):
                         raise ValueError(f"{key}: inconsistent drop proposal")
+                if kind.startswith("anchor_"):
+                    counts["anchor_dropped"] += dropped
+                    continue
+                counts["duplicate_dropped" if kind in DUPLICATES else "false_drop"] += dropped
+                counts["unrelated_followup"] += kind == "unrelated" and action == "followup"
+                if variant == "new":
                     counts["proposed_drop"] += proposed
                     counts["validation_rejected"] += rejected
                     if action in {"drop", "followup"}:
@@ -92,7 +104,10 @@ def score(labels, trials):
         "anchors": not any(values("new", "anchor_dropped")),
     }
     flips = {v: [k for k, n in counts.items() if n in (1, 2)] for v, counts in votes.items()}
-    return {"passed": all(gates.values()), "gates": gates, "rounds": rounds,
+    rates = [{v: {"false_drop": proportion(c["false_drop"], 65),
+                  "duplicate_dropped": proportion(c["duplicate_dropped"], 45)} for v, c in r.items()}
+             for r in rounds]
+    return {"passed": all(gates.values()), "gates": gates, "rounds": rounds, "primary_rates": rates,
             "regression_ids": regressions, "drop_flip_ids": flips}
 
 

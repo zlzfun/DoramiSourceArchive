@@ -47,6 +47,7 @@ import json
 import logging
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -1407,7 +1408,9 @@ async def cross_day_dedup(
         audit.update(
             algorithm="cross-day-v3.69.0", model=aux.model, temperature=aux.temperature,
             max_tokens=aux.max_tokens, thinking_mode=aux.thinking_mode,
-            today=[it.to_reduce_dict() for it in items], history=recent_items,
+            today=deepcopy([it.to_reduce_dict() for it in items]), history=recent_items,
+            decisions=[{"id": it.candidate.id, "action": "followup" if it.followup_note else "keep",
+                        "note": it.followup_note, "proposed_drop": None, "override": None} for it in items],
         )
     if not items or not recent_items:
         if audit is not None:
@@ -1459,9 +1462,13 @@ async def cross_day_dedup(
     }
     if audit is not None:
         audit["status"] = "ok"
+        for i, decision in enumerate(audit["decisions"]):
+            decision["proposed_drop"] = i in drops
     if drops and len(drops) >= n:
         if audit is not None:
             audit["status"] = "all_drop_guard"
+            for decision in audit["decisions"]:
+                decision["override"] = "all_drop_guard"
         logger.warning("日报跨天查重要求丢弃全部 %d 条，疑似误判，忽略 drop", n)
         drops = set()
     # 官方例外:drop 降级为 followup(机械保证,不依赖提示词被遵守)
@@ -1469,6 +1476,8 @@ async def cross_day_dedup(
     if official_kept:
         drops -= official_kept
         for i in official_kept:
+            if audit is not None:
+                audit["decisions"][i]["override"] = "official_source"
             if not items[i].followup_note:
                 items[i].followup_note = "官方一手确认"
         logger.info("日报跨天查重：%d 条官方条目免删，改标「接前报」", len(official_kept))
@@ -1481,6 +1490,10 @@ async def cross_day_dedup(
             items[int(idx)].followup_note = note[:_FOLLOWUP_NOTE_CHARS]
     if drops:
         logger.info("日报跨天查重：剔除 %d 条与近期日报重复的条目", len(drops))
+    if audit is not None:
+        for i, (decision, item) in enumerate(zip(audit["decisions"], items)):
+            action = "followup" if item.followup_note else "keep"
+            decision.update(action="drop" if i in drops else action, note=item.followup_note)
     return [it for i, it in enumerate(items) if i not in drops]
 
 
@@ -2082,20 +2095,13 @@ async def _generate_daily_brief(
 
     set_progress("reducing", "跨天查重与汇编…")
     logger.info("日报[%s]：跨天查重（对照近期日报 %d 天条目）后确定性渲染", report_date, len(recent_items))
-    dedup_audit = {}
+    dedup_audit = None if dry_run else {}
     survivors = await cross_day_dedup(
         preselected, recent_items, cfg, usage_username=triggered_by, audit=dedup_audit,
     )
     # 保底终裁:补足稿只留到**剩余缺口**(备用稿在合格稿/补足稿被跨天查重剔掉时顶上);
     # 没用上的备用稿退回近线带作附录补位候选,被跨天查重剔掉的(近期已报过)不退回。
     survivor_ids = {it.candidate.id for it in survivors}
-    decisions = []
-    for it in preselected:
-        action = "followup" if it.followup_note else "keep"
-        if it.candidate.id not in survivor_ids:
-            action = "drop"
-        decisions.append({"id": it.candidate.id, "action": action, "note": it.followup_note})
-    dedup_audit["decisions"] = decisions
     crossday_dropped = {it.candidate.id for it in preselected} - survivor_ids
     qualified_survivors = [it for it in survivors if it.candidate.id not in backfill_ids]
     # 预选多带的备用论文终会按名额裁掉,保底计数只算名额内的论文(与 core_count 同口径)

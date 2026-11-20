@@ -16,6 +16,9 @@ def test_score_rejects_all_keep_missing_rows_and_anchor_regression():
     trials = [{"old": rows, "new": deepcopy(rows)} for _ in range(3)]
     assert score(labels, trials)["passed"]
     trials[0]["new"][-1]["action"] = "drop"
+    with pytest.raises(ValueError, match="inconsistent"):
+        score(labels, trials)
+    trials[0]["new"][-1]["proposed_drop"] = True
     assert not score(labels, trials)["gates"]["anchors"]
     for trial in trials:
         for row in trial["new"]:

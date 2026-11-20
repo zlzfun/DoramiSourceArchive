@@ -811,7 +811,12 @@ def test_cross_day_dedup_official_drop_downgraded(monkeypatch):
     official = _role(_scored_full(8, item_id="off"), "official")
     media = _role(_scored_full(9, item_id="med"), "media")
     fresh = _scored_full(7, item_id="fresh")
-    result = asyncio.run(db.cross_day_dedup([official, media, fresh], _recent_days(), CONFIGURED))
+    audit = {}
+    result = asyncio.run(db.cross_day_dedup([official, media, fresh], _recent_days(), CONFIGURED, audit=audit))
+    assert audit["decisions"][0] == {"id": "off", "proposed_drop": True, "override": "official_source",
+                                     "action": "followup", "note": "官方一手确认"}
+    official.extra_sources.append("https://example.org/merged-later")
+    assert official.extra_sources != audit["today"][0]["extra_sources"]
     ids = [it.candidate.id for it in result]
     assert "off" in ids and "med" not in ids and "fresh" in ids
     kept = next(it for it in result if it.candidate.id == "off")
