@@ -169,45 +169,65 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
     return sorted(collected)
 
 
-def _account_generation(session: Session, username: str) -> str:
-    """账号的世代 = 它的建号时间;同名账号删掉重建后不同。账号行不在时回空串(永远对不上)。"""
-    user = session.get(UserRecord, username) if username else None
-    return (user.created_at or "") if user is not None else ""
-
-
-def subscription_token_identity(session: Session, record: ReaderSubscriptionRecord) -> TokenIdentity:
+def subscription_token_identity(session: Session, record: ReaderSubscriptionRecord) -> Optional[TokenIdentity]:
     """一条订阅自带的 ``dsub_`` 令牌是谁的、是哪一枚(交付计量用,issue #312)。
 
-    在鉴权通过的那一刻调:账号世代与订阅名都按此刻的取,之后落账不再回头查。
+    在鉴权通过的那一刻调。订阅行与账号世代(建号时间)用**同一条语句**取——分两次读的话,中间若
+    恰好删号又同名重建,会把旧订阅配上新账号的世代,这次调用就记到新人名下。读回来的令牌哈希
+    与刚校验过的不一致(订阅在这一瞬间被删、被换了令牌)时返回 None:这次不记,不猜。
     """
-    owner = record.owner_username or ""
+    row = session.exec(
+        select(
+            ReaderSubscriptionRecord.owner_username,
+            ReaderSubscriptionRecord.name,
+            ReaderSubscriptionRecord.token_hash,
+            ReaderSubscriptionRecord.token_preview,
+            UserRecord.created_at,
+        )
+        .join(UserRecord, UserRecord.username == ReaderSubscriptionRecord.owner_username, isouter=True)
+        .where(ReaderSubscriptionRecord.id == record.id)
+    ).first()
+    if row is None or row[2] != record.token_hash:
+        return None
+    owner, name, token_hash, preview, account_created_at = row
     return TokenIdentity(
-        username=owner,
+        username=owner or "",
         kind=KIND_SUBSCRIPTION,
-        token_hash=record.token_hash,
-        preview=record.token_preview,
+        token_hash=token_hash,
+        preview=preview,
         subscription_id=record.id,
-        subscription_name=record.name or "",
-        account_created_at=_account_generation(session, owner),
+        subscription_name=name or "",
+        account_created_at=account_created_at or "",   # 账号行不在:空串,永远对不上
     )
 
 
 def resolve_feed_token_identity(session: Session, token: str) -> Optional[TokenIdentity]:
-    """个人聚合令牌 → 它是谁的、是哪一枚；令牌缺失/无效返回 None。"""
+    """个人聚合令牌 → 它是谁的、是哪一枚；令牌缺失/无效返回 None。
+
+    令牌行与账号世代(建号时间)用同一条语句取,理由同 ``subscription_token_identity``。
+    """
     if not token:
         return None
     token_hash = hash_subscription_token(token)
-    record = session.exec(
-        select(ReaderFeedTokenRecord).where(ReaderFeedTokenRecord.token_hash == token_hash)
+    row = session.exec(
+        select(
+            ReaderFeedTokenRecord.owner_username,
+            ReaderFeedTokenRecord.token_hash,
+            ReaderFeedTokenRecord.token_preview,
+            UserRecord.created_at,
+        )
+        .join(UserRecord, UserRecord.username == ReaderFeedTokenRecord.owner_username, isouter=True)
+        .where(ReaderFeedTokenRecord.token_hash == token_hash)
     ).first()
-    if record is None:
+    if row is None:
         return None
+    owner, stored_hash, preview, account_created_at = row
     return TokenIdentity(
-        username=record.owner_username,
+        username=owner,
         kind=KIND_FEED,
-        token_hash=record.token_hash,
-        preview=record.token_preview,
-        account_created_at=_account_generation(session, record.owner_username),
+        token_hash=stored_hash,
+        preview=preview,
+        account_created_at=account_created_at or "",   # 账号行不在:空串,永远对不上
     )
 
 

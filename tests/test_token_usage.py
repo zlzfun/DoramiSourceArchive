@@ -670,6 +670,32 @@ def test_resolved_identities_carry_the_account_generation_and_subscription_name(
     )
     assert resolve_token_identity(feed).kind == "feed" and resolve_token_identity("") is None
 
+    # 令牌行与账号世代必须是同一条查询取回来的:分两次读,中间插进一次删号重建就会把旧令牌配上新世代。
+    from sqlalchemy import event
+
+    from api.feed_service import subscription_token_identity
+
+    statements: list[str] = []
+    listener = lambda conn, cursor, statement, *rest: statements.append(statement)  # noqa: E731
+    engine = app_module.db_sink.engine
+    with Session(engine) as session:
+        record = session.get(ReaderSubscriptionRecord, sub["id"])
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            assert resolve_feed_token_identity(session, feed).account_created_at == generation
+            assert len(statements) == 1 and "JOIN users" in statements[0]
+            statements.clear()
+            assert subscription_token_identity(session, record).subscription_name == "OpenAI feed"
+            assert len(statements) == 1 and "JOIN users" in statements[0]
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+
+        # 订阅在鉴权之后被换了令牌 / 被删:读回来的对不上刚校验的那枚,这次不记(不猜)。
+        stale = ReaderSubscriptionRecord(**{**record.model_dump(), "token_hash": "0" * 64})
+        assert subscription_token_identity(session, stale) is None
+        missing = ReaderSubscriptionRecord(**{**record.model_dump(), "id": 987654})
+        assert subscription_token_identity(session, missing) is None
+
 
 def test_a_live_token_on_the_wrong_endpoint_is_not_a_retired_token(monkeypatch, tmp_path):
     """现用的令牌用错了接口被拒,不算「作废后仍被调」——之后重新生成,旧卡上也不该冒出这个数。"""
