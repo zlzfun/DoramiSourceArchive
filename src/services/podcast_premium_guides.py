@@ -890,6 +890,55 @@ def _rebind_evicted_audio(
     return None
 
 
+async def _synthesize_or_rebind(
+    engine: Engine,
+    store: PodcastArtifactStore,
+    tts_provider: PremiumGuideTtsProvider,
+    *,
+    episode_id: str,
+    text: str,
+    narration_id: str,
+    narration_hash: str,
+) -> PodcastArtifactRecord:
+    """Synthesize one narration and register its audio as a ``ready`` artifact.
+
+    When the narration was synthesized before and its receipts have been
+    evicted, the audio comes from the earlier artifact instead
+    (``_rebind_evicted_audio``). Every synthesis of the guide flow goes through
+    here: a rerun repeats each step, including the shorter second narration.
+    """
+
+    try:
+        synthesized = await tts_provider.synthesize(text)
+    except BailianSpeechError as exc:
+        # 这份口播稿早就合成过,只是回执音频在节目有了成品之后被逐出了:
+        # 用成品补上,而不是让节目卡在「重放不了、又不会重新付费」。
+        if exc.code != EVICTED_AUDIO_CODE:
+            raise
+        rebound = await asyncio.to_thread(
+            _rebind_evicted_audio,
+            engine,
+            store,
+            episode_id=episode_id,
+            narration_id=narration_id,
+            narration_hash=narration_hash,
+        )
+        if rebound is None:
+            raise
+        return rebound
+    return await asyncio.to_thread(
+        store.import_bytes,
+        episode_id=episode_id,
+        kind="digest_audio_zh",
+        data=synthesized.data,
+        declared_mime=synthesized.mime,
+        provenance="premium_guide_tts",
+        authority_id="",
+        narration_artifact_id=narration_id,
+        narration_content_hash=narration_hash,
+    )
+
+
 async def run_premium_guide(
     engine: Engine,
     store: PodcastArtifactStore,
@@ -1109,35 +1158,15 @@ async def run_premium_guide(
         _set_episode_status(
             engine, episode_id, "synthesizing", guide_metadata=guide_metadata
         )
-        try:
-            synthesized = await tts_provider.synthesize(narration_text)
-        except BailianSpeechError as exc:
-            # 这份口播稿早就合成过,只是回执音频在节目有了成品之后被逐出了:
-            # 用成品补上,而不是让节目卡在「重放不了、又不会重新付费」。
-            if exc.code != EVICTED_AUDIO_CODE:
-                raise
-            audio = await asyncio.to_thread(
-                _rebind_evicted_audio,
-                engine,
-                store,
-                episode_id=episode_id,
-                narration_id=narration_id,
-                narration_hash=narration_hash,
-            )
-            if audio is None:
-                raise
-        else:
-            audio = await asyncio.to_thread(
-                store.import_bytes,
-                episode_id=episode_id,
-                kind="digest_audio_zh",
-                data=synthesized.data,
-                declared_mime=synthesized.mime,
-                provenance="premium_guide_tts",
-                authority_id="",
-                narration_artifact_id=narration_id,
-                narration_content_hash=narration_hash,
-            )
+        audio = await _synthesize_or_rebind(
+            engine,
+            store,
+            tts_provider,
+            episode_id=episode_id,
+            text=narration_text,
+            narration_id=narration_id,
+            narration_hash=narration_hash,
+        )
         actual_duration = float(audio.duration_seconds or 0.0)
         tier_limit_seconds = plan.max_audio_minutes * 60
         hard_limit_seconds = min(config.premium_max_audio_minutes, 15) * 60
@@ -1178,17 +1207,14 @@ async def run_premium_guide(
                 retry_text = retry_narration_artifact.inline_text
                 session.commit()
 
-            retry_synthesized = await tts_provider.synthesize(retry_text)
-            audio2 = await asyncio.to_thread(
-                store.import_bytes,
+            audio2 = await _synthesize_or_rebind(
+                engine,
+                store,
+                tts_provider,
                 episode_id=episode_id,
-                kind="digest_audio_zh",
-                data=retry_synthesized.data,
-                declared_mime=retry_synthesized.mime,
-                provenance="premium_guide_tts",
-                authority_id="",
-                narration_artifact_id=retry_id,
-                narration_content_hash=retry_hash,
+                text=retry_text,
+                narration_id=retry_id,
+                narration_hash=retry_hash,
             )
             actual_duration2 = float(audio2.duration_seconds or 0.0)
             if (

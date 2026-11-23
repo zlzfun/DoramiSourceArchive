@@ -6,6 +6,7 @@ import inspect
 from dataclasses import replace
 import io
 import json
+from pathlib import Path
 import subprocess
 import asyncio
 import wave
@@ -574,15 +575,64 @@ def test_evicted_receipts_without_an_intact_audio_of_that_text_surface_the_error
     store.withdraw(current.id)
     store.file_path_for(current).unlink()  # 当前这份稿子的成品文件也没了
 
+    ledger = _ledger_rows(sink)
     with pytest.raises(BailianSpeechError, match="tts_cached_audio_evicted"):
         asyncio.run(run_premium_guide(**current_kwargs))
     guide = _force_guide(sink)
     assert guide["status"] == "failed" and "tts_cached_audio_evicted" in guide["error"]
-    assert state["posts"] == posts  # 不重新付费合成
+    assert state["posts"] == posts and _ledger_rows(sink) == ledger  # 不重新付费合成
     with Session(sink.engine) as session:
         assert not session.exec(select(PodcastArtifactRecord).where(
             PodcastArtifactRecord.status.in_(("ready", "published")),
         )).all()
+
+
+def test_evicted_receipts_fall_back_for_the_shorter_second_narration_too(tmp_path):
+    """长稿超时长 → 改短稿发布 → 两份回执都被逐出 → 换版本后重新生成同样的两份稿。
+
+    重跑把每一步都再走一遍:长稿用成品补上、仍然超时长、再到短稿——短稿的那次合成
+    也得走恢复路径,否则完好的短稿成品在库里,运行却失败,旧发布又已被撤回。
+    """
+
+    sink, store, root, state, kwargs = _evictable_guide(tmp_path, "evicted-shortened.db")
+    long_text, short_text = "长稿长稿长稿长稿长稿长稿", "短稿"
+
+    class Shortening(TextProvider):
+        async def create_narration(self, **options):
+            return short_text if options.get("retry_shorter") else long_text
+
+    # 探测时长跟着音频大小走:长稿两段(约 9.6KB)超过上限,短稿一段(约 4.8KB)不超。
+    def probe(command, **_kwargs):
+        seconds = 5000 if Path(command[-1]).stat().st_size > 6_000 else 1
+        return subprocess.CompletedProcess(
+            [], 0, stderr="",
+            stdout=json.dumps({"streams": [{"codec_type": "audio", "duration": str(seconds)}],
+                               "format": {"duration": str(seconds)}}),
+        )
+
+    store._probe_runner = probe
+    kwargs = {**kwargs, "text_provider": Shortening()}
+    first = asyncio.run(run_premium_guide(**kwargs))
+    published = store.get(first["audio_artifact_id"])
+    with Session(sink.engine) as session:
+        narrations = {
+            row.id: row.inline_text for row in session.exec(select(PodcastTextArtifactRecord).where(
+                PodcastTextArtifactRecord.kind == "narration_script_zh",
+            )).all()
+        }
+    assert narrations[published.narration_artifact_id] == short_text
+    assert sorted(narrations.values()) == sorted([long_text, short_text])
+    posts = state["posts"]
+    ledger = _evict_receipt_audio(sink, root, state)
+
+    bumped = replace(kwargs["config"], text_pipeline_version="next-pipeline")
+    again = asyncio.run(run_premium_guide(**{**kwargs, "config": bumped}))
+
+    restored = store.get(again["audio_artifact_id"])
+    assert restored.status == "published" and restored.content_hash == published.content_hash
+    assert restored.narration_artifact_id != published.narration_artifact_id
+    assert _force_guide(sink)["status"] == "ready"
+    assert state["posts"] == posts and _ledger_rows(sink) == ledger
 
 
 def test_evicted_receipts_use_the_audio_another_worker_just_published(tmp_path):
