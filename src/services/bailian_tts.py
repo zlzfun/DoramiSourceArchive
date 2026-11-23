@@ -39,10 +39,16 @@ from services.podcast_premium_guides import SynthesizedAudio
 logger = logging.getLogger("dorami.bailian_tts")
 
 
-def _reservation_cost_minor(units: int, cfg) -> int:
-    """Budget hold for ``units`` reserved characters at the configured price, rounded up."""
+def _cost_minor(units: int, price_minor: int, price_units: int) -> int:
+    """``units`` characters at ``price_minor`` per ``price_units``, rounded up."""
 
-    return (units * cfg.tts_price_minor + cfg.tts_price_units - 1) // cfg.tts_price_units
+    return (units * price_minor + price_units - 1) // price_units
+
+
+def _reservation_cost_minor(units: int, cfg) -> int:
+    """Budget hold for ``units`` reserved characters at the configured price."""
+
+    return _cost_minor(units, cfg.tts_price_minor, cfg.tts_price_units)
 
 
 def split_narration(text, limit):
@@ -515,6 +521,33 @@ class BailianPremiumGuideTtsProvider:
             session.expunge(row)
             return row
 
+    def _authorize(self, key):
+        """``reserved → authorized``,并核对这条预留的占用此刻仍然有效。
+
+        发出请求这一步不依赖回执目录锁:占用额只在 ``_reserve`` 那个同时检查预算的
+        事务里建立或恢复,这里在同一个写事务里确认它没有被解除过(占用额仍等于按该行
+        自己的价格快照算出的数),不成立就失败关闭、不发请求。返回事务里核验过的那
+        一行——结算必须用它的价格快照,而不是授权之前读到的旧值:别的合成可能在这
+        两步之间按新价格重新占用过同一行。
+        """
+
+        with Session(self.engine) as session:
+            session.exec(sql_text("BEGIN IMMEDIATE"))
+            row = session.get(BailianTtsCallRecord, key)
+            if (
+                not row
+                or row.status != "reserved"
+                or row.cost_minor
+                != _cost_minor(row.reserved_characters, row.price_minor, row.price_units)
+            ):
+                raise BailianSpeechError("tts_receipt_conflict")
+            row.status = "authorized"
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            session.expunge(row)
+            return row
+
     def _update(self, key, expected, **values):
         with Session(self.engine) as session:
             session.exec(sql_text("BEGIN IMMEDIATE"))
@@ -581,13 +614,14 @@ class BailianPremiumGuideTtsProvider:
                 self._ensure_capacity_locked(needs_storage_chars)
             self._reserve(chunks, keys, self.clock())
             parts = []
-            client = self.client_factory(cfg)
+            client = None
             try:
+                client = self.client_factory(cfg)
                 for key, chunk in zip(keys, chunks):
                     row = self._row(key)
                     receipt, audio_path = root / f"{key}.json", root / f"{key}.wav"
                     if row.status == "reserved":
-                        self._update(key, "reserved", status="authorized")
+                        row = self._authorize(key)
                         try:
                             payload = client.synthesize(chunk)
                         except BailianSpeechError as exc:
@@ -612,8 +646,9 @@ class BailianPremiumGuideTtsProvider:
                             "authorized",
                             status="generated",
                             actual_characters=chars,
-                            cost_minor=(chars * row.price_minor + row.price_units - 1)
-                            // row.price_units,
+                            cost_minor=_cost_minor(
+                                chars, row.price_minor, row.price_units
+                            ),
                             request_id=request,
                         )
                         row = self._row(key)
@@ -672,7 +707,8 @@ class BailianPremiumGuideTtsProvider:
                 self._release_unsent(keys)
                 raise
             finally:
-                client.close()
+                if client is not None:
+                    client.close()
 
 
 def make_premium_tts_provider(

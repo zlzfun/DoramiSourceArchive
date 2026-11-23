@@ -29,8 +29,9 @@
 
 ## 精品导读语音报「月度预算已满」(issue #322 沉淀)
 
-- 先分清是真花完了还是被占着:`bailian_tts_calls` 按 `budget_period, status` 汇总 `count(*)`、`sum(cost_minor)`。`succeeded` 是真实花费;`authorized` / `generated` 是结果未知、可能已计费的调用(跨月仍占预算,要对账);`reserved` 是还没发出去的分段——v3.70.2 起它的占用额应为 0,不为 0 说明有合成正在途,或者又有预留被丢下。
-- 预算满的导读是 `retry_wait`(`error_code = tts_monthly_budget_exceeded`),每 6 小时自动重试一次,换月或调高 `tts_monthly_budget_minor` 后自己恢复,不需要逐期手工重试。
+- 先分清是真花完了还是被占着:`bailian_tts_calls` 按 `budget_period, status` 汇总 `count(*)`、`sum(cost_minor)`。`succeeded` 是真实花费;`authorized` 是结果未知、可能已计费的调用(跨月仍占预算,要对账,并拦住同一期节目的后续合成);`generated` 是已计费、音频还没落盘的分段(跨月仍占预算,再跑一次会从回执续做);`reserved` 是还没发出去的分段——v3.70.2 起它的占用额应为 0,不为 0 说明有合成正在途,或者又有预留被丢下。
+- 巡检拉起的导读遇到预算满是 `retry_wait`(`error_code = tts_monthly_budget_exceeded`),每 6 小时自动重试一次,换月或调高 `tts_monthly_budget_minor` 后自己恢复,不需要逐期手工重试。强制、读者点播、手动「运行」遇到预算满仍是 `failed`,可以再发起;其中满足自动条件的单集,巡检会接手。
+- `tts_receipt_conflict` 出现在授权一步:这条预留在发出之前被别的合成解除了。只有两个回执目录共用一个账本才会这样——一个库 + 一个账号只配一个 `tts_receipt_root`。
 - `tts_previously_rejected` 是另一回事:这份口播稿的某一段被供应商明确拒绝过,同一份稿子不会再发。
 
 ## 分析回填(`full_analysis`)

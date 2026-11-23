@@ -209,10 +209,14 @@ CAPACITY_RETRY_DELAY_CAP_SECONDS = 6 * 60 * 60
 CAPACITY_RETRY_MAX_ATTEMPTS = 8
 
 # 月度预算用完不是这一期节目的问题,也不会一直持续:换月、调高上限或别的合成
-# 结算后额度就回来了(issue #322)。所以它等待后重试、没有次数上限——重试时导读
-# 博文与口播稿直接复用,预算仍不够就只是再读几行账本。此前它按终态失败处理,
-# 预算恢复后这些单集也不会再被自动拉起。单次合成预算(``tts_per_run_budget_exceeded``)
-# 取决于这份口播稿本身,重试不会变,仍是终态。
+# 结算后额度就回来了(issue #322)。所以巡检拉起的自动运行遇到它时等待后重试、没有
+# 次数上限——重试时导读博文与口播稿直接复用,预算仍不够就只是再读几行账本。此前
+# 它一律按终态失败处理,预算恢复后这些单集也不会再被自动拉起。
+#
+# 只有巡检自己拉起的运行才等待(``budget_wait=True``):到期的等待只有巡检能重新
+# 拉起,而强制、读者点播、管理端手动运行的单集不一定满足巡检的条件,等下去就永远
+# 停在「生成中」。那些运行仍落为终态——明确的请求得到明确的结果,可以再发起。
+# 单次合成预算(``tts_per_run_budget_exceeded``)取决于口播稿本身,始终是终态。
 BUDGET_WAIT_CODES = {
     "tts_monthly_budget_exceeded": "本月语音合成预算已用完，预算恢复后自动重试",
 }
@@ -531,15 +535,18 @@ def fail_premium_guide(
     error: Exception | str,
     *,
     failed_stage: str = "",
+    budget_wait: bool = False,
 ) -> None:
     """Persist a guide error.
 
-    Capacity shortages wait a bounded number of times, an exhausted monthly TTS
-    budget waits without a cap; every other error is terminal.
+    Capacity shortages wait a bounded number of times. An exhausted monthly TTS
+    budget waits without a cap, but only when ``budget_wait`` says the run was
+    started by the candidate scan (the only thing that can resume a due wait).
+    Every other error is terminal.
     """
 
     code = error.code if isinstance(error, BailianSpeechError) else ""
-    if code in BUDGET_WAIT_CODES:
+    if budget_wait and code in BUDGET_WAIT_CODES:
         with Session(engine) as session:
             episode = session.get(ArticleRecord, episode_id)
             guide = _extensions(episode).get("premium_guide") if episode is not None else {}
@@ -561,7 +568,8 @@ def fail_premium_guide(
             failed_stage=failed_stage or "synthesizing",
             next_retry_at=retry_at,
             error_code=code,
-            retry_attempts=_guide_retry_attempts(guide) + 1,
+            # ``retry_attempts`` 是回执容量等待的计数(上限 8 次只针对它),预算等待
+            # 不碰:否则等了几轮预算之后,第一次遇到容量不足就会被判成用完。
         )
         return
     if code in CAPACITY_RETRY_CODES:
@@ -829,6 +837,7 @@ async def run_premium_guide(
     tts_provider: PremiumGuideTtsProvider | None = None,
     score_threshold: float | None = None,
     selection_override: bool = False,
+    budget_wait: bool = False,
 ) -> dict:
     """Publish a guide using, but never replacing, the authoritative assessment."""
 
@@ -1132,7 +1141,7 @@ async def run_premium_guide(
             "duration_seconds": audio.duration_seconds,
         }
     except Exception as exc:
-        fail_premium_guide(engine, episode_id, exc)
+        fail_premium_guide(engine, episode_id, exc, budget_wait=budget_wait)
         raise
 
 
