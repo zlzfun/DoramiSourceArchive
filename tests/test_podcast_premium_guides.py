@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import inspect
+from dataclasses import replace
 import io
 import json
 import subprocess
@@ -236,8 +237,11 @@ def _pcm_wav() -> bytes:
     return out.getvalue()
 
 
-@pytest.mark.parametrize("code", ["tts_receipt_cache_full", "tts_receipt_disk_full", "http_403"])
-def test_only_capacity_errors_enter_retry_wait(tmp_path, code):
+@pytest.mark.parametrize("code", [
+    "tts_receipt_cache_full", "tts_receipt_disk_full", "tts_monthly_budget_exceeded",
+    "http_403", "tts_per_run_budget_exceeded",
+])
+def test_only_capacity_and_monthly_budget_errors_enter_retry_wait(tmp_path, code):
     from services.bailian_speech_client import BailianSpeechError
 
     sink = DatabaseStorage(f"sqlite:///{tmp_path / f'status-{code}.db'}")
@@ -257,6 +261,7 @@ def test_only_capacity_errors_enter_retry_wait(tmp_path, code):
         asyncio.run(run_premium_guide(
             sink.engine, None, episode_id="episode-force", config=_external_config(),
             text_provider=TextProvider(), tts_provider=Boom(),
+            budget_wait=True,  # 巡检拉起的自动运行
         ))
     with Session(sink.engine) as session:
         guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
@@ -265,7 +270,7 @@ def test_only_capacity_errors_enter_retry_wait(tmp_path, code):
     assert blog is not None and script is not None
     minimum = _external_config().premium_min_duration_seconds
     threshold = _external_config().premium_score_threshold
-    if code == "http_403":
+    if code in {"http_403", "tts_per_run_budget_exceeded"}:
         assert guide["status"] == "failed"
         assert "next_retry_at" not in guide
         assert "episode-force" not in pending_premium_guide_candidates(
@@ -476,6 +481,292 @@ def test_capacity_retry_backs_off_and_stops_after_eight_attempts(tmp_path):
     assert "next_retry_at" not in guide
     assert "回执缓存不足" in guide["error"]
     assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+
+def test_exhausted_monthly_budget_waits_without_an_attempt_cap(tmp_path):
+    """月度预算用完会自己恢复(换月 / 调额 / 别的合成结算):等待后重试,不设次数上限。"""
+
+    from services.bailian_speech_client import BailianSpeechError
+    from services.podcast_premium_guides import (
+        BUDGET_RETRY_DELAY_SECONDS,
+        BUDGET_WAIT_CODES,
+    )
+
+    sink = _eligible_force_sink(tmp_path, "budget-wait.db")
+    config = _external_config()
+    error = BailianSpeechError("tts_monthly_budget_exceeded")
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+
+    _set_episode_status(sink.engine, "episode-force", "synthesizing")
+    fail_premium_guide(sink.engine, "episode-force", error, budget_wait=True)  # run_premium_guide 记一次
+    first_retry_at = _force_guide(sink)["next_retry_at"]
+    fail_premium_guide(sink.engine, "episode-force", error, budget_wait=True)  # 调度器再记一次
+    guide = _force_guide(sink)
+    assert guide["status"] == "retry_wait"
+    assert guide["error_code"] == "tts_monthly_budget_exceeded"
+    assert guide["failed_stage"] == "synthesizing"
+    assert guide["next_retry_at"] == first_retry_at  # 第二次记录没有把计时往后推
+    assert "retry_attempts" not in guide  # 那是回执容量等待的计数,预算等待不碰
+    assert guide["error"] == BUDGET_WAIT_CODES["tts_monthly_budget_exceeded"]
+    remaining = dt.datetime.fromisoformat(guide["next_retry_at"]) - dt.datetime.now(dt.timezone.utc)
+    assert (
+        dt.timedelta(seconds=BUDGET_RETRY_DELAY_SECONDS - 15)
+        <= remaining
+        <= dt.timedelta(seconds=BUDGET_RETRY_DELAY_SECONDS + 5)
+    )
+    assert "episode-force" not in pending_premium_guide_candidates(sink.engine, **scope)
+
+    # 远超回执容量那一类的 8 次上限,仍然只是等待。
+    for _ in range(CAPACITY_RETRY_MAX_ATTEMPTS + 3):
+        _set_episode_status(sink.engine, "episode-force", "synthesizing")
+        fail_premium_guide(sink.engine, "episode-force", error, budget_wait=True)
+        assert _force_guide(sink)["status"] == "retry_wait"
+
+    # 等了这么多轮预算之后第一次遇到回执容量不足:容量的次数仍从 1 算起,不是直接用完。
+    _set_episode_status(sink.engine, "episode-force", "synthesizing")
+    fail_premium_guide(
+        sink.engine, "episode-force", BailianSpeechError("tts_receipt_cache_full"), budget_wait=True
+    )
+    guide = _force_guide(sink)
+    assert (guide["status"], guide["error_code"], guide["retry_attempts"]) == (
+        "retry_wait", "tts_receipt_cache_full", 1,
+    )
+    _set_episode_status(sink.engine, "episode-force", "synthesizing")
+    fail_premium_guide(sink.engine, "episode-force", error, budget_wait=True)
+    guide = _force_guide(sink)
+    assert (guide["error_code"], guide["retry_attempts"]) == ("tts_monthly_budget_exceeded", 1)
+
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"]["next_retry_at"] = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+        ).isoformat()
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    assert pending_premium_guide_candidates(sink.engine, **scope) == ["episode-force"]
+
+
+def _mark_failed(sink: DatabaseStorage, *, error: str, failed_stage: str, error_code: str = "") -> None:
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        extensions = json.loads(episode.extensions_json)
+        guide = {"status": "failed", "error": error, "failed_stage": failed_stage, "mode": "solo_deep"}
+        if error_code:
+            guide["error_code"] = error_code
+        extensions["premium_guide"] = guide
+        extensions["processing_status"] = "failed"
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+
+
+@pytest.mark.parametrize(("error", "failed_stage", "error_code", "restarted"), [
+    # 旧代码把「月度预算已满」记成的终态:再拉起一次。
+    ("Bailian speech: tts_monthly_budget_exceeded", "synthesizing", "", True),
+    # 其余终态原样不动:供应商拒绝、旧的回执存储满、文字阶段的失败、已是终态的容量失败。
+    ("Bailian speech: http_404:InvalidParameter", "synthesizing", "", False),
+    ("Bailian speech: tts_receipt_storage_full", "synthesizing", "", False),
+    ("Bailian speech: tts_per_run_budget_exceeded", "synthesizing", "", False),
+    ("Bailian speech: tts_monthly_budget_exceeded", "summarizing", "", False),
+    ("TTS 回执缓存不足", "synthesizing", "tts_receipt_cache_full", False),
+])
+def test_only_legacy_budget_failures_are_started_once_more(
+    tmp_path, error, failed_stage, error_code, restarted
+):
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = _eligible_force_sink(tmp_path, "legacy.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    _mark_failed(sink, error=error, failed_stage=failed_stage, error_code=error_code)
+    picked = pending_premium_guide_candidates(sink.engine, **scope)
+    assert picked == (["episode-force"] if restarted else [])
+    if not restarted:
+        return
+    # 再拉起的那一次若预算仍不够,落成带错误码的等待——不再匹配「旧终态」,不会被反复拉起。
+    _set_episode_status(sink.engine, "episode-force", "synthesizing")
+    fail_premium_guide(
+        sink.engine, "episode-force", BailianSpeechError("tts_monthly_budget_exceeded"),
+        budget_wait=True,
+    )
+    assert _force_guide(sink)["status"] == "retry_wait"
+    assert pending_premium_guide_candidates(sink.engine, **scope) == []
+
+
+@pytest.mark.parametrize("scenario", ["forced_below_threshold", "manual_run_below_auto_duration"])
+def test_explicit_runs_fail_for_good_on_an_exhausted_budget_instead_of_waiting(tmp_path, scenario):
+    """到期的等待只有巡检能拉起;巡检拉不起来的单集一旦进入等待就永远停在「生成中」。
+
+    两种拉不起来的情形:强制 / 点播一期达不到自动门槛的节目;管理端手动运行一期
+    短于「自动生成时长」的节目。它们遇到预算满仍是终态,可以再发起。
+    """
+
+    from services.bailian_speech_client import BailianSpeechError
+    from services.podcast_premium_guides import evaluate_reader_ondemand_premium_guide
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / f'explicit-{scenario}.db'}")
+    _seed_force_candidate(sink, duration=30 * 60)
+    forced = scenario == "forced_below_threshold"
+    with Session(sink.engine) as session:
+        analysis = session.get(ArticleAnalysisRecord, "episode-force")
+        analysis.quality_score = analysis.podcast_final_score = 7.2 if forced else 9.0
+        session.add(analysis)
+        session.commit()
+    config = replace(
+        _external_config(),
+        premium_min_duration_seconds=20 * 60 if forced else 60 * 60,
+    )
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    assert pending_premium_guide_candidates(sink.engine, **scope) == []  # 巡检本来就不会碰它
+
+    class OutOfBudget(TtsProvider):
+        async def synthesize(self, _text):
+            raise BailianSpeechError("tts_monthly_budget_exceeded")
+
+    with pytest.raises(BailianSpeechError, match="tts_monthly_budget_exceeded"):
+        asyncio.run(run_premium_guide(
+            sink.engine, None, episode_id="episode-force", config=config,
+            text_provider=TextProvider(), tts_provider=OutOfBudget(),
+            selection_override=forced,
+        ))
+    # 外层调度按同一口径再记一次,不能把终态改成等待。
+    fail_premium_guide(
+        sink.engine, "episode-force", BailianSpeechError("tts_monthly_budget_exceeded")
+    )
+    guide = _force_guide(sink)
+    assert guide["status"] == "failed" and "next_retry_at" not in guide
+    assert pending_premium_guide_candidates(sink.engine, **scope) == []
+    try:
+        outcome = evaluate_reader_ondemand_premium_guide(
+            sink.engine, episode_id="episode-force", config=config, actor="reader",
+        )["outcome"]
+    except Exception as exc:  # 评分过低等拒绝也算「没有被当成生成中」
+        outcome = type(exc).__name__
+    assert outcome != "in_progress"
+
+
+def test_manual_run_endpoint_does_not_enter_the_budget_wait():
+    source = inspect.getsource(run_premium_guide_endpoint)
+    assert "schedule_podcast_premium_guide(episode_id, budget_wait=False)" in source
+
+
+def test_budget_wait_retries_tts_without_another_llm_call(tmp_path):
+    """预算不够时文字已经生成并发布;预算回来后的重试只做合成。"""
+
+    from config_bailian import BailianSpeechConfig
+    from models.db import BailianTtsCallRecord
+    from services.bailian_speech_client import BailianSpeechError
+    from services.bailian_tts import BailianPremiumGuideTtsProvider, split_narration
+
+    sink = _eligible_force_sink(tmp_path, "budget-retry.db")
+    narration = "这是内部中文播客导读。"
+    assert len(split_narration(narration, 8)) == 2  # 两段,各预留 1 分
+    root = tmp_path / "receipts"
+
+    def speech_config(monthly_budget: int) -> BailianSpeechConfig:
+        return BailianSpeechConfig(
+            enabled=True, api_key="secret-test", account_scope="test-account",
+            tts_monthly_budget_minor=monthly_budget, tts_per_run_budget_minor=50,
+            tts_chunk_chars=8, tts_receipt_root=str(root), tts_cache_max_bytes=40_000_000,
+            asr_entitlement_ends_at="2027-01-01T00:00:00+00:00",
+        )
+
+    class Supplier:
+        texts: list[str] = []
+
+        def __init__(self, _config):
+            pass
+
+        def close(self):
+            pass
+
+        def synthesize(self, text):
+            Supplier.texts.append(text)
+            return {
+                "request_id": "req-" + str(len(Supplier.texts)),
+                "usage": {"characters": len(text)},
+                "output": {"audio": {"url": "https://result.oss-ap-southeast-1.aliyuncs.com/a.wav"}},
+            }
+
+    async def download(*_args, **_kwargs):
+        return _pcm_wav()
+
+    class CountingText(TextProvider):
+        blogs = 0
+        scripts = 0
+
+        async def create_blog(self, **kwargs):
+            self.blogs += 1
+            return await super().create_blog(**kwargs)
+
+        async def create_narration(self, **_kwargs):
+            self.scripts += 1
+            return narration
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}', stderr="",
+        ),
+    )
+    text = CountingText()
+    config = _external_config()
+
+    def run(monthly_budget: int):
+        tts = BailianPremiumGuideTtsProvider(
+            speech_config(monthly_budget), engine=sink.engine, episode_id="episode-force",
+            voice_profile="narrator_zh", max_audio_bytes=store.max_bytes,
+            client_factory=Supplier, downloader=download,
+        )
+        return asyncio.run(run_premium_guide(
+            engine=sink.engine, store=store, episode_id="episode-force", config=config,
+            text_provider=text, tts_provider=tts, budget_wait=True,
+        ))
+
+    with pytest.raises(BailianSpeechError, match="tts_monthly_budget_exceeded"):
+        run(monthly_budget=1)
+    assert (text.blogs, text.scripts) == (1, 1)
+    assert Supplier.texts == []  # 预算在发出任何请求之前就拦住了
+    guide = _force_guide(sink)
+    assert (guide["status"], guide["error_code"]) == ("retry_wait", "tts_monthly_budget_exceeded")
+    with Session(sink.engine) as session:
+        assert session.exec(select(BailianTtsCallRecord)).all() == []
+        assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is not None
+
+    with Session(sink.engine) as session:
+        episode = session.get(ArticleRecord, "episode-force")
+        extensions = json.loads(episode.extensions_json)
+        extensions["premium_guide"]["next_retry_at"] = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+        ).isoformat()
+        episode.extensions_json = json.dumps(extensions)
+        session.add(episode)
+        session.commit()
+    assert pending_premium_guide_candidates(
+        sink.engine, minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    ) == ["episode-force"]
+
+    result = run(monthly_budget=100)
+    assert result["audio_artifact_id"]
+    assert (text.blogs, text.scripts) == (1, 1)  # 文字没有重新生成
+    assert len(Supplier.texts) == 2
+    guide = _force_guide(sink)
+    assert guide["status"] == "ready"
+    assert not {"retry_attempts", "next_retry_at", "error_code", "error"} & set(guide)
 
 
 def test_force_during_retry_wait_clears_the_timer_and_is_not_auto_scheduled(tmp_path):

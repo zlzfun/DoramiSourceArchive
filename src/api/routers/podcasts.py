@@ -1083,7 +1083,9 @@ async def run_podcast_premium_guide(episode_id: str):
         episode = session.get(ArticleRecord, episode_id)
         if episode is None or episode.content_type != "podcast_episode":
             raise HTTPException(status_code=404, detail="播客单集不存在")
-    started = app.schedule_podcast_premium_guide(episode_id)
+    # 手动运行不进预算等待:到期的等待只有候选巡检能拉起,而这里的单集不一定满足
+    # 巡检的条件(issue #322)。预算不够时照旧落为终态,管理员可以再点一次。
+    started = app.schedule_podcast_premium_guide(episode_id, budget_wait=False)
     return {"episode_id": episode_id, "status": "queued", "started": started}
 
 
