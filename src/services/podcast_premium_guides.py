@@ -208,6 +208,21 @@ CAPACITY_RETRY_DELAYS_SECONDS = (5 * 60, 30 * 60, 2 * 60 * 60)
 CAPACITY_RETRY_DELAY_CAP_SECONDS = 6 * 60 * 60
 CAPACITY_RETRY_MAX_ATTEMPTS = 8
 
+# 月度预算用完不是这一期节目的问题,也不会一直持续:换月、调高上限或别的合成
+# 结算后额度就回来了(issue #322)。所以巡检拉起的自动运行遇到它时等待后重试、没有
+# 次数上限——重试时导读博文与口播稿直接复用,预算仍不够就只是再读几行账本。此前
+# 它一律按终态失败处理,预算恢复后这些单集也不会再被自动拉起。
+#
+# 只有巡检自己拉起的运行才等待(``budget_wait=True``):到期的等待只有巡检能重新
+# 拉起,而强制、读者点播、管理端手动运行的单集不一定满足巡检的条件,等下去就永远
+# 停在「生成中」。那些运行仍落为终态——明确的请求得到明确的结果,可以再发起。
+# 单次合成预算(``tts_per_run_budget_exceeded``)取决于口播稿本身,始终是终态。
+BUDGET_WAIT_CODES = {
+    "tts_monthly_budget_exceeded": "本月语音合成预算已用完，预算恢复后自动重试",
+}
+BUDGET_RETRY_DELAY_SECONDS = 6 * 60 * 60
+_LEGACY_BUDGET_FAILURE_SUFFIX = "tts_monthly_budget_exceeded"
+
 
 def _capacity_retry_delay_seconds(attempt: int) -> int:
     if attempt <= len(CAPACITY_RETRY_DELAYS_SECONDS):
@@ -220,6 +235,22 @@ def _guide_retry_attempts(guide: dict) -> int:
         return max(0, int(guide.get("retry_attempts") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def is_legacy_budget_failure(guide: dict) -> bool:
+    """A guide that the old code failed for good on an exhausted monthly TTS budget.
+
+    Those rows keep the raw provider-code message (a budget wait recorded by the
+    current code carries a readable one instead). The candidate scan starts each
+    of them once more: the retry either succeeds or records a proper budget wait,
+    so the row stops matching either way.
+    """
+
+    return (
+        str(guide.get("status") or "") == "failed"
+        and str(guide.get("failed_stage") or "") == "synthesizing"
+        and str(guide.get("error") or "").strip().endswith(_LEGACY_BUDGET_FAILURE_SUFFIX)
+    )
 
 
 def _capacity_wait_already_recorded(guide: dict, code: str) -> bool:
@@ -504,10 +535,43 @@ def fail_premium_guide(
     error: Exception | str,
     *,
     failed_stage: str = "",
+    budget_wait: bool = False,
 ) -> None:
-    """Persist a guide error. Capacity shortages wait; every other error is terminal."""
+    """Persist a guide error.
+
+    Capacity shortages wait a bounded number of times. An exhausted monthly TTS
+    budget waits without a cap, but only when ``budget_wait`` says the run was
+    started by the candidate scan (the only thing that can resume a due wait).
+    Every other error is terminal.
+    """
 
     code = error.code if isinstance(error, BailianSpeechError) else ""
+    if budget_wait and code in BUDGET_WAIT_CODES:
+        with Session(engine) as session:
+            episode = session.get(ArticleRecord, episode_id)
+            guide = _extensions(episode).get("premium_guide") if episode is not None else {}
+        if not isinstance(guide, dict):
+            guide = {}
+        if _capacity_wait_already_recorded(guide, code):
+            return
+        retry_at = (
+            dt.datetime.now(dt.timezone.utc)
+            + dt.timedelta(seconds=BUDGET_RETRY_DELAY_SECONDS)
+        ).isoformat(timespec="microseconds")
+        _set_episode_status(
+            engine,
+            episode_id,
+            "retry_wait",
+            error=BUDGET_WAIT_CODES[code],
+            # 预算只在合成前的预留处检查;旧状态若已不是进行中(比如调度器重复
+            # 记录),阶段名也不该丢。
+            failed_stage=failed_stage or "synthesizing",
+            next_retry_at=retry_at,
+            error_code=code,
+            # ``retry_attempts`` 是回执容量等待的计数(上限 8 次只针对它),预算等待
+            # 不碰:否则等了几轮预算之后,第一次遇到容量不足就会被判成用完。
+        )
+        return
     if code in CAPACITY_RETRY_CODES:
         with Session(engine) as session:
             episode = session.get(ArticleRecord, episode_id)
@@ -773,6 +837,7 @@ async def run_premium_guide(
     tts_provider: PremiumGuideTtsProvider | None = None,
     score_threshold: float | None = None,
     selection_override: bool = False,
+    budget_wait: bool = False,
 ) -> dict:
     """Publish a guide using, but never replacing, the authoritative assessment."""
 
@@ -1076,7 +1141,7 @@ async def run_premium_guide(
             "duration_seconds": audio.duration_seconds,
         }
     except Exception as exc:
-        fail_premium_guide(engine, episode_id, exc)
+        fail_premium_guide(engine, episode_id, exc, budget_wait=budget_wait)
         raise
 
 
@@ -1768,13 +1833,17 @@ def pending_premium_guide_candidates(
             guide = guide if isinstance(guide, dict) else {}
             status = str(guide.get("status") or extensions.get("processing_status") or "")
             current_mode = str(guide.get("mode") or "")
-            # Due capacity waits re-enter this scan. A future next_retry_at stays
-            # out, and terminal failures stay out. ``queued`` is a force command:
-            # prepare clears next_retry_at and the force endpoint schedules once,
-            # so this scan must not start that episode as well.
+            # Due capacity / budget waits re-enter this scan. A future
+            # next_retry_at stays out, and terminal failures stay out. ``queued``
+            # is a force command: prepare clears next_retry_at and the force
+            # endpoint schedules once, so this scan must not start that episode
+            # as well.
             if status == "retry_wait":
                 if not _premium_guide_retry_due(guide):
                     continue
+            elif is_legacy_budget_failure(guide):
+                # 旧代码把「月度预算已满」记成了终态;这些单集各再拉起一次(issue #322)。
+                pass
             elif status in {"queued", "summarizing", "synthesizing", "failed"}:
                 continue
             if status == "ready" and current_mode == eligibility.mode:

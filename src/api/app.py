@@ -854,8 +854,13 @@ _PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 _ARTICLE_LISTEN_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 
 
-def schedule_podcast_premium_guide(episode_id: str) -> bool:
-    """Start one provider-neutral guide conversion without duplicate local runs."""
+def schedule_podcast_premium_guide(episode_id: str, *, budget_wait: bool = True) -> bool:
+    """Start one provider-neutral guide conversion without duplicate local runs.
+
+    ``budget_wait`` 默认真:这是候选巡检拉起自动运行的入口,月度语音预算用完时等待
+    后由巡检再拉起。管理端手动「运行」要传 ``False``——那样的单集不一定满足巡检的
+    条件,等下去没有人能把它拉起来,所以预算不够时照旧落为终态(issue #322)。
+    """
 
     existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
     if existing is not None and not existing.done():
@@ -919,22 +924,28 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
                 tts_provider=tts_provider,
                 score_threshold=premium_threshold,
+                budget_wait=budget_wait,
             )
         except Exception as exc:  # noqa: BLE001 - status is persisted by service
             podcast_premium_guide_service.fail_premium_guide(
                 db_sink.engine,
                 episode_id,
                 exc,
+                budget_wait=budget_wait,
             )
-            capacity_wait = getattr(exc, "code", "") in {
-                "tts_receipt_cache_full",
-                "tts_receipt_disk_full",
-            }
+            code = str(getattr(exc, "code", "") or "")
+            if budget_wait and code in podcast_premium_guide_service.BUDGET_WAIT_CODES:
+                outcome = "因语音预算等待重试"
+            elif code in podcast_premium_guide_service.CAPACITY_RETRY_CODES:
+                outcome = "因回执容量等待重试"
+            else:
+                outcome = "生成失败"
             _dorami_logger.warning(
-                "Podcast 精品导读%s episode=%s (%s)",
-                "因回执容量等待重试" if capacity_wait else "生成失败",
+                "Podcast 精品导读%s episode=%s (%s%s)",
+                outcome,
                 episode_id,
                 type(exc).__name__,
+                f": {code}" if code else "",
             )
 
     task = asyncio.create_task(_run())
