@@ -13,12 +13,16 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import bindparam, case, func, or_, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 
@@ -1509,6 +1513,145 @@ def list_premium_guide_tasks(
         }
 
 
+@dataclass(frozen=True)
+class _ArtifactTail:
+    """一份文本产物里排在 ``inline_text`` 之后的那几列。"""
+
+    language: str
+    authority_id: str
+    source_artifact_id: str | None
+    source_content_hash: str | None
+    provenance_json: str
+
+
+@dataclass(frozen=True)
+class _TranscriptView:
+    """候选巡检用的转写视图:只有元数据,没有正文。"""
+
+    id: str
+    kind: str
+    content_hash: str
+    authority_id: str
+    language: str
+    provenance_json: str
+
+
+# ``podcast_text_artifacts`` 的行不可变(库里有 BEFORE UPDATE 触发器),而
+# ``language / authority_id / provenance_json`` 等列在行里排在 ``inline_text``
+# 之后——SQLite 要沿溢出页链走完整段逐字稿才读得到它们,哪怕查询并不取正文。
+# 候选巡检每拍都要这些列,所以在进程内记下来:每份产物只为它走一次溢出页链,
+# 而不是每拍把全部逐字稿读一遍(issue #318,实测一拍 340MB)。
+#
+# 「不可变」只管 UPDATE。单集删除时产物随之删除,之后经 Archive Sync 原样导回
+# 会得到同一个 id、不同的 ``authority_id``(接收端写成生产者)。所以缓存键是
+# (id, authority_id),而 ``authority_id`` 每次现取:它在唯一索引
+# ``uq_podcast_text_artifacts_authority_slot`` 里,只读索引就够,不碰正文。
+_ARTIFACT_TAIL_CACHE_LIMIT = 8192
+_ARTIFACT_TAIL_CHUNK = 100
+_artifact_tail_caches: (
+    "weakref.WeakKeyDictionary[Any, OrderedDict[tuple[str, str], _ArtifactTail]]"
+) = weakref.WeakKeyDictionary()
+_artifact_tail_lock = threading.Lock()
+
+
+_AUTHORITY_SLOT_INDEX = "uq_podcast_text_artifacts_authority_slot"
+
+
+def _artifact_authorities(session: Session, artifact_ids: list[str]) -> dict[str, str]:
+    """现取产物的 ``authority_id``,只读索引;库里没有的 id 不在结果里。
+
+    必须点名索引:按 id 查时 SQLite 默认走主键索引再回表,而 ``authority_id`` 在行里
+    排在正文之后,回表就要走完整段逐字稿。``(id, episode_id, kind, authority_id)``
+    这条唯一索引盖得住取的两列。
+    """
+
+    sqlite = session.get_bind().dialect.name == "sqlite"
+
+    def read(chunk: list[str], *, hinted: bool) -> list[tuple[str, str]]:
+        if hinted:
+            # SQLAlchemy 不为 SQLite 渲染表提示,``INDEXED BY`` 只能写成文本。
+            statement = text(
+                "SELECT id, authority_id FROM podcast_text_artifacts "
+                f"INDEXED BY {_AUTHORITY_SLOT_INDEX} WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True))
+            return [tuple(row) for row in session.execute(statement, {"ids": chunk}).all()]
+        return list(session.exec(
+            select(
+                PodcastTextArtifactRecord.id,
+                PodcastTextArtifactRecord.authority_id,
+            ).where(PodcastTextArtifactRecord.id.in_(chunk))
+        ).all())
+
+    authorities: dict[str, str] = {}
+    for offset in range(0, len(artifact_ids), _ARTIFACT_TAIL_CHUNK):
+        chunk = artifact_ids[offset:offset + _ARTIFACT_TAIL_CHUNK]
+        try:
+            rows = read(chunk, hinted=sqlite)
+        except OperationalError:
+            # 索引不在(不该发生:它由模型与迁移保证)。宁可慢,不可错。
+            logger.warning(
+                "索引 %s 不可用,候选巡检退回回表读取 authority_id", _AUTHORITY_SLOT_INDEX
+            )
+            rows = read(chunk, hinted=False)
+        for artifact_id, authority_id in rows:
+            authorities[artifact_id] = authority_id or ""
+    return authorities
+
+
+def _artifact_tails(session: Session, artifact_ids: Iterable[str]) -> dict[str, _ArtifactTail]:
+    """Return the trailing metadata of text artifacts, cached per engine."""
+
+    wanted = list(dict.fromkeys(artifact_id for artifact_id in artifact_ids if artifact_id))
+    if not wanted:
+        return {}
+    authorities = _artifact_authorities(session, wanted)
+    bind = session.get_bind()
+    with _artifact_tail_lock:
+        cache = _artifact_tail_caches.get(bind)
+        if cache is None:
+            cache = OrderedDict()
+            _artifact_tail_caches[bind] = cache
+        found: dict[str, _ArtifactTail] = {}
+        for artifact_id, authority_id in authorities.items():
+            key = (artifact_id, authority_id)
+            tail = cache.get(key)
+            if tail is not None:
+                cache.move_to_end(key)
+                found[artifact_id] = tail
+    missing = [artifact_id for artifact_id in authorities if artifact_id not in found]
+    for offset in range(0, len(missing), _ARTIFACT_TAIL_CHUNK):
+        chunk = missing[offset:offset + _ARTIFACT_TAIL_CHUNK]
+        loaded = {
+            row[0]: _ArtifactTail(
+                language=row[1] or "",
+                authority_id=row[2] or "",
+                source_artifact_id=row[3],
+                source_content_hash=row[4],
+                provenance_json=row[5] or "",
+            )
+            for row in session.exec(
+                select(
+                    PodcastTextArtifactRecord.id,
+                    PodcastTextArtifactRecord.language,
+                    PodcastTextArtifactRecord.authority_id,
+                    PodcastTextArtifactRecord.source_artifact_id,
+                    PodcastTextArtifactRecord.source_content_hash,
+                    PodcastTextArtifactRecord.provenance_json,
+                ).where(PodcastTextArtifactRecord.id.in_(chunk))
+            ).all()
+        }
+        found.update(loaded)
+        with _artifact_tail_lock:
+            # 以这次读到的 authority 为键:即便与上面现取的不一致(两次读之间行被
+            # 换过),也只是存进它自己的键,下一拍现取的 authority 会找到对的那条。
+            cache.update(
+                {(artifact_id, tail.authority_id): tail for artifact_id, tail in loaded.items()}
+            )
+            while len(cache) > _ARTIFACT_TAIL_CACHE_LIMIT:
+                cache.popitem(last=False)
+    return found
+
+
 def pending_premium_guide_candidates(
     engine: Engine,
     *,
@@ -1522,11 +1665,14 @@ def pending_premium_guide_candidates(
     """
 
     with Session(engine) as session:
+        # 转写只取排在 ``inline_text`` 之前的三列;其余元数据走 ``_artifact_tails``。
         rows = session.exec(
             select(
                 ArticleRecord,
                 ArticleAnalysisRecord,
-                PodcastTextArtifactRecord,
+                PodcastTextArtifactRecord.id,
+                PodcastTextArtifactRecord.kind,
+                PodcastTextArtifactRecord.content_hash,
             )
             .join(
                 PodcastTextArtifactRecord,
@@ -1561,18 +1707,22 @@ def pending_premium_guide_candidates(
                     ArticleAnalysisRecord.podcast_final_score,
                     raiseload=True,
                 ),
-                load_only(
-                    PodcastTextArtifactRecord.id, PodcastTextArtifactRecord.kind,
-                    PodcastTextArtifactRecord.content_hash,
-                    PodcastTextArtifactRecord.authority_id,
-                    PodcastTextArtifactRecord.language,
-                    PodcastTextArtifactRecord.provenance_json,
-                    raiseload=True,
-                ),
             )
         ).all()
+        tails = _artifact_tails(session, (row[2] for row in rows))
         candidates: list[str] = []
-        for episode, analysis, transcript in rows:
+        for episode, analysis, transcript_id, transcript_kind, transcript_hash in rows:
+            tail = tails.get(transcript_id)
+            if tail is None:  # 行在两次查询之间消失:本拍不处理,下一拍再看
+                continue
+            transcript = _TranscriptView(
+                id=transcript_id,
+                kind=transcript_kind,
+                content_hash=transcript_hash,
+                authority_id=tail.authority_id,
+                language=tail.language,
+                provenance_json=tail.provenance_json,
+            )
             if not has_authoritative_analysis(analysis):
                 continue
             transcript_publication = session.get(
@@ -1632,14 +1782,8 @@ def pending_premium_guide_candidates(
                     PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
                 )
                 blog = (
-                    session.get(
-                        PodcastTextArtifactRecord, publication.artifact_id,
-                        options=[load_only(
-                            PodcastTextArtifactRecord.source_artifact_id,
-                            PodcastTextArtifactRecord.source_content_hash,
-                            PodcastTextArtifactRecord.provenance_json,
-                            raiseload=True,
-                        )],
+                    _artifact_tails(session, [publication.artifact_id]).get(
+                        publication.artifact_id
                     )
                     if publication is not None and publication.status == "published"
                     else None

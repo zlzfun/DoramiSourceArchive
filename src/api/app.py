@@ -18,7 +18,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from sqlmodel import Session, select
 from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1866,7 +1866,8 @@ def reload_storage_schedule():
     enabled = any(store.enabled and store.config.cache_enabled for store in _object_stores())
     if enabled or settings.backup.enabled:
         scheduler.add_job(execute_storage_maintenance_job, "interval", seconds=60,
-                          id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
+                          id="storage_maintenance", replace_existing=True, max_instances=1,
+                          **interval_job_options(seconds=60))
     elif scheduler.get_job("storage_maintenance"):
         scheduler.remove_job("storage_maintenance")
 
@@ -2912,10 +2913,28 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool
     return True
 
 
+_INTERVAL_UNITS = ("weeks", "days", "hours", "minutes", "seconds")
+
+
+def interval_job_options(**interval) -> dict[str, Any]:
+    """interval 类任务的迟到宽限:晚到不超过一个周期就照跑,积压的多拍合并成一拍。
+
+    APScheduler 默认宽限只有 1 秒——事件循环被拖住几秒,这一拍就被整个丢弃
+    (日志里的 ``was missed by``),要等下一个周期。cron 类任务已由
+    ``add_cron_job`` 统一给 300 秒;interval 类在这里统一(issue #318)。
+    """
+
+    period = datetime.timedelta(
+        **{unit: interval[unit] for unit in _INTERVAL_UNITS if unit in interval}
+    ).total_seconds()
+    return {"misfire_grace_time": max(1, int(period)), "coalesce": True}
+
+
 def _ensure_interval_job(job_id: str, callback, **kwargs) -> None:
     """固定 interval worker 只在缺席时注册;已在的原样保留(replace 会把 next_run_time 重置为现在起算)。"""
     if scheduler.get_job(job_id) is None:
-        scheduler.add_job(callback, "interval", id=job_id, **kwargs)
+        options = {**interval_job_options(**kwargs), **kwargs}
+        scheduler.add_job(callback, "interval", id=job_id, **options)
 
 
 COLLECTION_JOB_ID_PREFIX = "collection_job_"
@@ -3249,6 +3268,31 @@ def _configured_podcast_full_analysis_worker():
     return podcast_processing_providers.worker_for("analyze")
 
 
+# 精品导读候选巡检要把全部「有逐字稿分析」的单集过一遍。它不必跟着 10 秒一拍的
+# worker 跑:候选只在一次分析落定、发布变化或重试到点时才会变,晚一分钟发现没有
+# 区别(issue #318)。本拍 worker 确实推进了工作时不等,立即巡检。
+PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS = 60.0
+_podcast_premium_scan_at: float | None = None
+
+
+def _podcast_premium_scan_due(
+    actions: tuple[str, ...], *, clock: Callable[[], float] = time.monotonic
+) -> bool:
+    """Whether this worker tick should also look for premium-guide candidates."""
+
+    global _podcast_premium_scan_at
+    current = clock()
+    progressed = any(action != "idle" for action in actions)
+    if (
+        not progressed
+        and _podcast_premium_scan_at is not None
+        and current - _podcast_premium_scan_at < PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS
+    ):
+        return False
+    _podcast_premium_scan_at = current
+    return True
+
+
 async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
     """Advance bounded ASR and full-analysis work from the durable queue."""
 
@@ -3344,6 +3388,9 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
+        if not _podcast_premium_scan_due(actions):
+            return actions
+
         def _read_threshold():
             with Session(db_sink.engine) as threshold_session:
                 return podcast_premium_service.get_threshold(threshold_session)
@@ -3368,6 +3415,10 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 def reload_podcast_asr_worker_schedule() -> None:
     """Register one delayed ASR tick, or remove it when readiness disappears."""
 
+    # (重新)注册 worker 之后的第一拍总要巡检一次精品导读候选:重启前已经落定、
+    # 还没来得及排上的候选靠它接续。
+    global _podcast_premium_scan_at
+    _podcast_premium_scan_at = None
     if (
         _configured_podcast_asr_worker() is None
         and _configured_podcast_full_analysis_worker() is None
@@ -3387,7 +3438,7 @@ def reload_podcast_asr_worker_schedule() -> None:
         id=PODCAST_ASR_WORKER_JOB_ID,
         replace_existing=True,
         max_instances=1,
-        coalesce=True,
+        **interval_job_options(seconds=interval_seconds),
     )
 
 
@@ -3568,6 +3619,7 @@ def reload_user_rss_schedule():
         scheduler.add_job(
             execute_user_rss_refresh_job, "interval", minutes=minutes,
             id="user_rss_refresh", replace_existing=True, max_instances=1,
+            **interval_job_options(minutes=minutes),
         )
     elif scheduler.get_job("user_rss_refresh"):
         scheduler.remove_job("user_rss_refresh")

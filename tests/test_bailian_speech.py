@@ -771,6 +771,56 @@ def test_completed_article_listen_receipt_can_be_archived(tts_env):
     assert (root / f'{key}.wav.zlib').exists()
 
 
+def test_receipt_reclaim_only_reads_articles_that_have_receipts(tts_env):
+    """回收只看「有成功回执」的文章的扩展字段,不整表加载文章(issue #318)。"""
+
+    from sqlalchemy import event
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    asyncio.run(provider(engine, cfg).synthesize('hello'))
+    ready = json.dumps({'listen_guide': {
+        'status': 'ready', 'content_hash': 'c' * 64, 'mime': 'audio/wav', 'size_bytes': 1,
+    }})
+    with Session(engine) as session:
+        key = session.exec(select(BailianTtsCallRecord)).one().id
+        for index in range(40):
+            session.add(ArticleRecord(
+                id=f'bystander-{index}', title='article', content_type='article',
+                source_id='test', source_url='https://example.test/x',
+                publish_date=NOW.isoformat(), fetched_date=NOW.isoformat(),
+                content='正文' * 2000, extensions_json=ready,
+            ))
+        session.add(ArticleRecord(
+            id='episode-test', title='article', content_type='article', source_id='test',
+            source_url='https://example.test/article', publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content='正文' * 2000, extensions_json=ready,
+        ))
+        session.commit()
+
+    statements: list[tuple[str, object]] = []
+
+    def capture(_conn, _cursor, statement, params, _context, _many):
+        statements.append((' '.join(statement.split()), params))
+
+    event.listen(engine, 'before_cursor_execute', capture)
+    try:
+        result = reclaim_completed_receipts(cfg, engine, now=NOW + dt.timedelta(days=10))
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture)
+
+    assert result['compressed_wavs'] == 1
+    assert (Path(cfg.tts_receipt_root) / f'{key}.wav.zlib').exists()
+    on_articles = [(s, p) for s, p in statements if ' FROM articles' in s]
+    assert len(on_articles) == 1
+    statement, params = on_articles[0]
+    select_list = statement[: statement.index(' FROM ')]
+    assert 'articles.content' not in select_list and 'articles.title' not in select_list
+    assert 'articles.id IN' in statement
+    # 只点名了有回执的那一篇,40 篇旁观文章不在查询范围里。
+    assert list(params) == ['episode-test']
+
+
 def test_tts_concurrent_duplicate_calls_share_one_receipt(tts_env):
     engine, cfg = tts_env
     FakeTtsClient.calls = []

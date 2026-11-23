@@ -16,6 +16,15 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 简介初评 ≥ 5.0 的播客集由 `execute_podcast_landing_job`(独立 APScheduler interval 1 min,`max_instances=1`,并发上限 3)自动送入全文处理,**不再**由 `execute_article_analysis_job` 每分钟全表重放。纯逻辑在 `services/podcast_landing.py`,三层防线:① **复合 keyset 游标** `podcast_landing:cursor`(`(updated_at, article_id)` JSON,旧纯时间戳游标自动收养)只扫新更新的 succeeded 播客分析行 + **轮转 sweep 游标** `podcast_landing:sweep_cursor` 每轮再看 40 行全量(只做 DB 读),兜住不改分析行但改变输入 revision 的变更(RSS transcript locator / publisher transcript 发布 / source-media snapshot / archive sync 收养);② **失败记忆** `podcast_landing:attempts` 按 episode 记 revision/次数/类别/`retry_at`——瞬时失败 5 min 起指数退避封顶 6 h、8 次后长停;确定性失败(媒体不合规/过长/not_found)24 h 后重核或 revision 变化即放行;**守门类**(`podcast_provider_unavailable`/`StorageFull`/`PodcastLandingGated`)是配置或容量问题,10 min 回访;**入队成功记 `enqueued` + 重算后的最终 revision**(同 revision 永不再入队,豁免 30 天 prune,对账为 settled 才清除);每个 id 都解析为 eligible/settled/failed,到期但已不合格的条目当轮清除;每条结果**立即 checkpoint**,游标只在轮末推进;③ **轮级守门** `podcast_landing_gate`:运行时未就绪整轮跳过不动状态;需要下载源音频的集在 ASR **新提交 admission**(`stage_admission_ready`,比轮询就绪严格:app_key + 计费配置)未就绪、或产物库可预留余量(`reservable_bytes` = 配额余量 ∧ 磁盘 minimum-free 线之上余量)不足本集 `download_limit` 时记 `gated`。自动入队的幂等键由 `request_processing` **在锁内**按实际选中输入派生(`full-analysis:auto:<episode>:<content_hash[:16]>`,`idempotency_key_prefix` 形态),重启重算同输入即 replay 同一记录,不撞 conflict;手动 API 仍传显式 key。`enqueue_podcast_processing_with_input`(手动 API 同路)publisher transcript 只试一次,失败后进源音频回退前**再次**检查 admission + 本集容量,不满足抛 `PodcastLandingGated`(503);同步 DB/入队/ffprobe 全部经 `asyncio.to_thread`。cron 类任务(`add_cron_job`)统一 `misfire_grace_time=300`+`coalesce`——2026-09-14 生产实录:默认 1 s 宽限撞上一次事件循环阻塞,日报与四个采集任务整天缺席。
 
 
+## 精品导读候选巡检的读路径(issue #318)
+
+`pending_premium_guide_candidates` 把全部「有逐字稿分析」的单集过一遍,由播客 worker 在一拍结束后调用。两条约束:
+
+- **不取排在正文之后的列。** `podcast_text_artifacts` 里只有 `id / episode_id / kind / version / content_hash` 排在 `inline_text` 之前;`language / authority_id / source_artifact_id / source_content_hash / provenance_json` 都在其后,SQLite 要沿溢出页链走完整段逐字稿才读得到——`load_only` 省的是内存,不是读盘(v3.70.0 实测一拍请求读取 340MB)。主查询只取前三列;尾部列经 `_artifact_tails` 在进程内缓存(按引擎分开、上限 8192 条),每份产物只走一次溢出页链。缓存键是 (id, `authority_id`):行不可变只管 UPDATE,单集删除后经同步原样导回会得到同 id、不同所属方的产物;`authority_id` 每拍用 `INDEXED BY uq_podcast_text_artifacts_authority_slot` 从覆盖索引现取(不点名的话 SQLite 走主键索引再回表,回表就要走完正文)。
+- **不跟着 10 秒一拍跑。** `_podcast_premium_scan_due`:60 秒一次;本拍 worker 有非 `idle` 动作时立即巡检。
+
+`articles` 同理:`extensions_json`、`analysis_authority_id` 等排在 `content` 之后。新增高频查询前先看 `PRAGMA table_info` 的列顺序。
+
 ## 原稿进入问答（issue #248）
 
 站内问答消费当前已发布的发布方原稿和 ASR 原稿，按阅读投影懒建本地片段索引，
