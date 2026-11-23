@@ -1627,20 +1627,13 @@ def test_reimported_artifact_with_the_same_id_is_not_served_from_the_cache(tmp_p
     assert pending_premium_guide_candidates(sink.engine, **scope) == ["episode-force"]
 
 
-def test_authority_probe_survives_a_missing_index(tmp_path, monkeypatch, caplog):
-    import logging
-
+def test_authority_probe_survives_a_missing_index(tmp_path, monkeypatch, captured_log):
     from services import podcast_premium_guides as guides
 
     sink = _eligible_force_sink(tmp_path, "no-index.db")
     monkeypatch.setattr(guides, "_AUTHORITY_SLOT_INDEX", "no_such_index")
-    # ``dorami.*`` 日志不向根记录器传播,把捕获器直接挂到这个记录器上。
-    guides.logger.addHandler(caplog.handler)
-    try:
-        with caplog.at_level(logging.WARNING, logger=guides.logger.name):
-            with Session(sink.engine) as session:
-                tails = guides._artifact_tails(session, ["transcript-force"])
-    finally:
-        guides.logger.removeHandler(caplog.handler)
+    with captured_log(guides.logger) as logged:
+        with Session(sink.engine) as session:
+            tails = guides._artifact_tails(session, ["transcript-force"])
     assert tails["transcript-force"].authority_id == "test-authority"
-    assert any("no_such_index" in record.getMessage() for record in caplog.records)
+    assert any("no_such_index" in record.getMessage() for record in logged)
