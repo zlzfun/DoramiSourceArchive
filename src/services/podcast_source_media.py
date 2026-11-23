@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 import datetime as dt
@@ -17,7 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from config import PodcastArtifactStorageConfig, PodcastConfig
-from models.db import ArticleRecord, PodcastSourceMediaSnapshotRecord
+from models.db import AppSettingRecord, ArticleRecord, PodcastSourceMediaSnapshotRecord
 from services import http_safety
 from services.podcast_artifacts import (
     PodcastArtifactError,
@@ -28,6 +29,26 @@ from services.podcast_artifacts import (
     PodcastArtifactStore,
 )
 from services.podcast_stage_policy import PodcastStagePolicy
+
+logger = logging.getLogger("dorami.podcast_source_media")
+
+# 「这段音频过大 / 过长」是关于音频本身的事实:量过一次,同一个地址、上限又没有放宽
+# 到能容下它,再下载一遍也是同一个结论——而「过长」要把整个文件下载下来才量得出
+# (issue #323:生产上 21 期节目每天被完整下载一遍再拒绝一次)。所以把量到的值记在
+# 这里,校验时先比一比。记的是事实,不是「这一期不要再试」的决定:入队那一层照常按
+# 自己的节奏复查,官方逐字稿照常重取,只是走到音频校验这一步时不再重复下载。
+REJECTION_MEMORY_KEY = "podcast_source_media:rejections"
+# 量过的拒绝保留 30 天:到期重新量一次,覆盖「发布方在同一地址下换了文件」。
+REJECTION_RETENTION_SECONDS = 30 * 24 * 60 * 60
+# 校验通过也留一个时间水位(不带拒绝),防止另一次更早开始、更晚结束的校验把过时的
+# 拒绝写回来。它只需要活过一次校验的最长耗时。
+VALIDATED_WATERMARK_SECONDS = 24 * 60 * 60
+_TOO_LARGE_MESSAGE = "Podcast enclosure 超过配置的音频大小上限"
+_TOO_LONG_MESSAGE = "Podcast enclosure 超过 ASR 单任务音频时长上限"
+
+
+def _utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
 
 
 class SourceMediaError(ValueError):
@@ -56,6 +77,144 @@ class SourceMediaTimeout(SourceMediaError):
 
 class SourceMediaFetchFailed(SourceMediaError):
     pass
+
+
+def _valid_seconds_limit(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _evidence_time(entry: object) -> dt.datetime | None:
+    raw = entry.get("fetched_at") if isinstance(entry, dict) else None
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def _load_rejection_memory(session: Session, *, for_update: bool = False) -> dict[str, dict]:
+    statement = select(AppSettingRecord).where(AppSettingRecord.key == REJECTION_MEMORY_KEY)
+    if for_update:
+        statement = statement.with_for_update()
+    record = session.exec(statement).first()
+    try:
+        value = json.loads(record.value) if record is not None and record.value else {}
+    except (TypeError, ValueError):
+        value = {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): entry for key, entry in value.items() if isinstance(entry, dict)
+    }
+
+
+def remembered_rejection(
+    engine: Engine,
+    *,
+    episode_id: str,
+    enclosure: EnclosureSnapshot,
+    max_bytes: int,
+    max_audio_seconds: object,
+) -> SourceMediaError | None:
+    """The rejection a fresh download of this enclosure would end in, if we measured it before.
+
+    Holds only while the audio address is the same, the measurement is younger
+    than the retention window (a hit never renews it) and the current limits
+    still exclude the measured value. ``bytes`` is a lower bound of the real
+    size — the response's own ``Content-Length`` or "one more than the cap the
+    stream outgrew" — so only ``bytes > max_bytes`` rejects.
+    """
+
+    with Session(engine) as session:
+        entry = _load_rejection_memory(session).get(episode_id)
+    if not entry or entry.get("locator_hash") != enclosure.locator_hash:
+        return None
+    measured_at = _evidence_time(entry)
+    if (
+        measured_at is None
+        or (_utc_now() - measured_at).total_seconds() > REJECTION_RETENTION_SECONDS
+    ):
+        return None
+    kind = entry.get("kind")
+    if kind == "too_long":
+        seconds = entry.get("seconds")
+        if (
+            isinstance(seconds, (int, float))
+            and not isinstance(seconds, bool)
+            and _valid_seconds_limit(max_audio_seconds)
+            and float(seconds) > max_audio_seconds
+        ):
+            return SourceMediaTooLong(_TOO_LONG_MESSAGE)
+    elif kind == "too_large":
+        size = entry.get("bytes")
+        if isinstance(size, int) and not isinstance(size, bool) and size > max_bytes:
+            return SourceMediaTooLarge(_TOO_LARGE_MESSAGE)
+    return None
+
+
+def _record_evidence(
+    engine: Engine,
+    *,
+    episode_id: str,
+    enclosure: EnclosureSnapshot,
+    fetched_at: dt.datetime,
+    kind: str = "",
+    seconds: float | None = None,
+    size: int | None = None,
+) -> None:
+    """Remember what one download round established; ``kind=""`` means it validated.
+
+    Evidence is ordered by when its download began: a round that started earlier
+    never overwrites what a later round established, whichever finishes first.
+    Best effort — a failed write only means the next validation downloads again.
+    """
+
+    try:
+        with Session(engine) as session:
+            if engine.dialect.name == "sqlite":
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            state = _load_rejection_memory(
+                session, for_update=engine.dialect.name == "postgresql"
+            )
+            held_at = _evidence_time(state.get(episode_id))
+            if held_at is not None and held_at > fetched_at:
+                session.rollback()
+                return
+            entry: dict[str, Any] = {
+                "locator_hash": enclosure.locator_hash,
+                "kind": kind,
+                "fetched_at": fetched_at.isoformat(timespec="microseconds"),
+            }
+            if seconds is not None:
+                entry["seconds"] = float(seconds)
+            if size is not None:
+                entry["bytes"] = int(size)
+            state[episode_id] = entry
+            now = _utc_now()
+            for key, other in list(state.items()):
+                seen_at = _evidence_time(other)
+                keep_for = (
+                    REJECTION_RETENTION_SECONDS
+                    if other.get("kind")
+                    else VALIDATED_WATERMARK_SECONDS
+                )
+                if seen_at is None or (now - seen_at).total_seconds() > keep_for:
+                    state.pop(key, None)
+            value = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            record = session.get(AppSettingRecord, REJECTION_MEMORY_KEY)
+            if record is None:
+                session.add(AppSettingRecord(key=REJECTION_MEMORY_KEY, value=value))
+            else:
+                record.value = value
+                session.add(record)
+            session.commit()
+    except Exception as exc:  # noqa: BLE001 - the verdict itself must still surface
+        logger.warning(
+            "Podcast 源音频校验结论没能记下 episode=%s:%s: %s",
+            episode_id, type(exc).__name__, exc,
+        )
 
 
 class _DeclaredSizeExceeded(Exception):
@@ -243,8 +402,14 @@ async def validate_source_media(
     storage_config: PodcastArtifactStorageConfig,
     max_audio_seconds_per_file: int,
     client_factory: http_safety.AsyncClientFactory,
+    use_rejection_memory: bool = True,
 ) -> dict[str, Any]:
-    """Download to unique staging, persist metadata, and always erase bytes."""
+    """Download to unique staging, persist metadata, and always erase bytes.
+
+    ``use_rejection_memory=False`` is for an operator who explicitly asks for a
+    fresh validation: the remembered measurement is not consulted, the new
+    outcome is still recorded.
+    """
 
     policy = PodcastStagePolicy(podcast_config)
     if podcast_config.installation != "external":
@@ -255,16 +420,37 @@ async def validate_source_media(
     with Session(engine) as session:
         _episode, enclosure = _episode_and_enclosure(session, episode_id)
     if enclosure.declared_bytes is not None and enclosure.declared_bytes > store.max_bytes:
-        raise SourceMediaTooLarge("Podcast enclosure 超过配置的音频大小上限")
+        raise SourceMediaTooLarge(_TOO_LARGE_MESSAGE)
 
     policy.require_stage("fetch", boundary="provider_submit")
+    if use_rejection_memory:
+        remembered = remembered_rejection(
+            engine,
+            episode_id=episode_id,
+            enclosure=enclosure,
+            max_bytes=store.max_bytes,
+            max_audio_seconds=max_audio_seconds_per_file,
+        )
+        if remembered is not None:
+            raise remembered
+
+    def remember(kind: str, **measured: Any) -> None:
+        _record_evidence(
+            engine, episode_id=episode_id, enclosure=enclosure,
+            fetched_at=fetched_at, kind=kind, **measured,
+        )
+
     # 订阅源声明的 ``length`` 只是预留的参考,不是上限(issue #323):它经常不准——
     # 实测有的源真实文件是声明值的 1.5 倍——此前流一超过声明值就被判成「超过配置的
     # 音频大小上限」,而真正的上限是 ``store.max_bytes``。先按声明值预留;文件比它
-    # 大而仍在上限之内时,换一个够用的预留额重新下载。每一轮的预留额严格变大,到
-    # ``store.max_bytes`` 为止,所以最多三轮(声明值 → 响应自报的长度 → 配置上限)。
+    # 大而仍在上限之内时,换一个够用的预留额重新下载:响应自报了长度就按它,但只
+    # 采信一次(发布方可以每次多报一个字节);再不够就直接按配置上限。所以最多三轮:
+    # 声明值 → 响应自报的长度 → 配置上限。
     download_limit = enclosure.declared_bytes or store.max_bytes
+    trusted_response_length = False
+    validated: dict[str, Any]
     while True:
+        fetched_at = _utc_now()
         try:
             with store.reserve_validation_download(download_limit):
                 fd, path = store.create_upload_temp()
@@ -283,9 +469,16 @@ async def validate_source_media(
                             raise SourceMediaTimeout("Podcast enclosure 下载超时") from None
                         except http_safety.PublicDownloadTooLarge as exc:
                             if download_limit >= store.max_bytes:
-                                raise SourceMediaTooLarge(
-                                    "Podcast enclosure 超过配置的音频大小上限"
-                                ) from None
+                                # 已知大小的下界:响应自报的长度,或「流到上限仍没完」。
+                                remember(
+                                    "too_large",
+                                    size=(
+                                        exc.declared_length
+                                        if exc.declared_length is not None
+                                        else store.max_bytes + 1
+                                    ),
+                                )
+                                raise SourceMediaTooLarge(_TOO_LARGE_MESSAGE) from None
                             raise _DeclaredSizeExceeded(exc.declared_length) from None
                         except http_safety.PublicDownloadError:
                             raise SourceMediaFetchFailed("Podcast enclosure 下载失败") from None
@@ -308,9 +501,8 @@ async def validate_source_media(
                     ):
                         raise SourceMediaConflict("ASR 单集音频时长上限配置无效")
                     if float(duration) > max_audio_seconds_per_file:
-                        raise SourceMediaTooLong(
-                            "Podcast enclosure 超过 ASR 单任务音频时长上限"
-                        )
+                        remember("too_long", seconds=float(duration), size=result.size)
+                        raise SourceMediaTooLong(_TOO_LONG_MESSAGE)
 
                     policy.require_stage("fetch", boundary="commit")
                     stamp = dt.datetime.now(dt.timezone.utc).isoformat(
@@ -371,15 +563,15 @@ async def validate_source_media(
                                         PodcastSourceMediaSnapshotRecord.content_hash == result.sha256,
                                     )
                                 ).one()
-                                payload = serialize_snapshot(existing)
+                                validated = serialize_snapshot(existing)
                                 session.rollback()
-                                return payload
+                                break
                             session.refresh(existing)
-                            payload = serialize_snapshot(existing)
+                            validated = serialize_snapshot(existing)
                         else:
-                            payload = serialize_snapshot(existing)
+                            validated = serialize_snapshot(existing)
                             session.rollback()
-                        return payload
+                        break
                 except PodcastArtifactTooLarge as exc:
                     raise SourceMediaTooLarge(str(exc)) from None
                 except (
@@ -396,10 +588,17 @@ async def validate_source_media(
         except _DeclaredSizeExceeded as grown:
             actual = grown.actual_bytes
             if actual is not None and actual > store.max_bytes:
-                raise SourceMediaTooLarge(
-                    "Podcast enclosure 超过配置的音频大小上限"
-                ) from None
-            download_limit = (
-                actual if actual is not None and actual > download_limit
-                else store.max_bytes
-            )
+                remember("too_large", size=actual)
+                raise SourceMediaTooLarge(_TOO_LARGE_MESSAGE) from None
+            if (
+                actual is not None
+                and actual > download_limit
+                and not trusted_response_length
+            ):
+                trusted_response_length = True
+                download_limit = actual
+            else:
+                download_limit = store.max_bytes
+    # 通过了:留下这次取证的时间水位,并顺带清掉这一期此前的拒绝。
+    remember("")
+    return validated

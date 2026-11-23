@@ -596,6 +596,8 @@ async def validate_episode_source_media(episode_id: str, request: Request):
             storage_config=app.settings.podcast_artifacts,
             max_audio_seconds_per_file=max_audio_seconds_per_file,
             client_factory=httpx.AsyncClient,
+            # 管理员显式要求校验:不看此前量过的结论,重新执行一遍(结果照样记下)。
+            use_rejection_memory=False,
         )
     except SourceMediaNotFound as exc:
         return _podcast_error(404, "podcast_not_found", exc)

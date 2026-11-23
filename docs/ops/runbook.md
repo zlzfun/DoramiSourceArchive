@@ -29,8 +29,8 @@
 
 ## 播客单集进不了全文处理(issue #323 沉淀)
 
-- 先看 landing 的记忆:KV `podcast_landing:attempts` 是「单集 → 最近一次结论」的 JSON,按 `kind / code` 计数就知道卡在哪一类。`gated` 是闸门(产物库容量、ASR 未就绪),10 分钟回访;`transient` 退避重试;`deterministic` / `exhausted` 24 小时复查;带 `limits` 的是「过大 / 过长」,上限或音频地址变了才再试。
-- 「过大」先核对是不是真的大:订阅源声明的大小不可靠,判定以真实文件和 `max_audio_mb` 为准。「过长」对的是单集转写时长上限(生产配置),不是订阅源里写的时长。
+- 先看 landing 的记忆:KV `podcast_landing:attempts` 是「单集 → 最近一次结论」的 JSON,按 `kind / code` 计数就知道卡在哪一类。`gated` 是闸门(产物库容量、ASR 未就绪),10 分钟回访;`transient` 退避重试;`deterministic` / `exhausted` 24 小时复查。
+- 「过大」先核对是不是真的大:订阅源声明的大小不可靠,判定以真实文件和 `max_audio_mb` 为准。「过长」对的是单集转写时长上限(生产配置),不是订阅源里写的时长。量到的值在 KV `podcast_source_media:rejections`(`seconds` / `bytes`、音频地址的 hash、取证时间):同一地址、30 天内、现在的上限仍容不下时,每天的复查不再下载。想立刻重新量,用管理端的显式校验接口(它不看这份记忆)。
 - `artifact_store_capacity` 成片出现说明同时有几路下载占着配额;看 `podcast_artifacts` 的已发布音频占了多少、`total_quota_mb` 还剩多少。
 
 ## 分析回填(`full_analysis`)

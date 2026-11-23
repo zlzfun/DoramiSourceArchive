@@ -1592,22 +1592,9 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                 sweep_ids, next_sweep = podcast_landing_service.scan_sweep_page(
                     session, sweep_after
                 )
-                # 「过大 / 过长」判定所依赖的两个上限,本轮取一次(issue #323)。取不到
-                # 就留空:这类判定退回原来的按天复查,不会被永久记住。
-                try:
-                    media_limits = podcast_landing_service.media_limits_fingerprint(
-                        podcast_artifact_store.max_bytes,
-                        podcast_speech_config_service.resolve_config(
-                            session
-                        ).asr_max_audio_seconds_per_file,
-                    )
-                except Exception:  # noqa: BLE001 - a config hiccup must not stall the round
-                    media_limits = ""
-            return state, new_ids, next_cursor, sweep_ids, next_sweep, media_limits
+            return state, new_ids, next_cursor, sweep_ids, next_sweep
 
-        (
-            state, new_ids, next_cursor, sweep_ids, next_sweep, media_limits,
-        ) = await asyncio.to_thread(_load)
+        state, new_ids, next_cursor, sweep_ids, next_sweep = await asyncio.to_thread(_load)
         stats["scanned"] = len(new_ids)
         stats["swept"] = len(sweep_ids)
         due_ids = podcast_landing_service.due_retries(state, now)
@@ -1650,8 +1637,7 @@ async def execute_podcast_landing_job() -> dict[str, int]:
         runnable: list[PodcastLandingCandidate] = []
         for candidate in resolution.candidates:
             if not podcast_landing_service.is_allowed(
-                state, candidate.episode_id, candidate.revision, now,
-                media_limits=media_limits,
+                state, candidate.episode_id, candidate.revision, now
             ):
                 stats["skipped"] += 1
                 continue
@@ -1695,8 +1681,7 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                 except Exception as exc:  # noqa: BLE001 - remembered, retried with backoff
                     failure = podcast_landing_service.classify_failure(exc)
                     entry = podcast_landing_service.record_failure(
-                        state, candidate.episode_id, candidate.revision, failure, now,
-                        media_limits=media_limits,
+                        state, candidate.episode_id, candidate.revision, failure, now
                     )
                     stats["failed"] += 1
                     _dorami_logger.warning(
