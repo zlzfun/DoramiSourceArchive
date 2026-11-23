@@ -20,7 +20,7 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 `pending_premium_guide_candidates` 把全部「有逐字稿分析」的单集过一遍,由播客 worker 在一拍结束后调用。两条约束:
 
-- **不取排在正文之后的列。** `podcast_text_artifacts` 里只有 `id / episode_id / kind / version / content_hash` 排在 `inline_text` 之前;`language / authority_id / source_artifact_id / source_content_hash / provenance_json` 都在其后,SQLite 要沿溢出页链走完整段逐字稿才读得到——`load_only` 省的是内存,不是读盘(v3.70.0 实测一拍请求读取 340MB)。主查询只取前三列;尾部列经 `_artifact_tails` 按产物 id 在进程内缓存(行不可变,库里有 BEFORE UPDATE 触发器;按引擎分开、上限 8192 条),每份产物只走一次溢出页链。
+- **不取排在正文之后的列。** `podcast_text_artifacts` 里只有 `id / episode_id / kind / version / content_hash` 排在 `inline_text` 之前;`language / authority_id / source_artifact_id / source_content_hash / provenance_json` 都在其后,SQLite 要沿溢出页链走完整段逐字稿才读得到——`load_only` 省的是内存,不是读盘(v3.70.0 实测一拍请求读取 340MB)。主查询只取前三列;尾部列经 `_artifact_tails` 在进程内缓存(按引擎分开、上限 8192 条),每份产物只走一次溢出页链。缓存键是 (id, `authority_id`):行不可变只管 UPDATE,单集删除后经同步原样导回会得到同 id、不同所属方的产物;`authority_id` 每拍用 `INDEXED BY uq_podcast_text_artifacts_authority_slot` 从覆盖索引现取(不点名的话 SQLite 走主键索引再回表,回表就要走完正文)。
 - **不跟着 10 秒一拍跑。** `_podcast_premium_scan_due`:60 秒一次;本拍 worker 有非 `idle` 动作时立即巡检。
 
 `articles` 同理:`extensions_json`、`analysis_authority_id` 等排在 `content` 之后。新增高频查询前先看 `PRAGMA table_info` 的列顺序。
