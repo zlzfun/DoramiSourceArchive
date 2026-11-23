@@ -9,12 +9,24 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.70.0` / main `afba463a41a38f50d787ce969064fcc4c15d427c`(2026-11-20 正式发布,自动同步合入,见下) |
-| 本清单最近核对 | 2026-11-20(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
+| `UPSTREAM_BASE` | `v3.70.1` / main `461dbc433060a222f502c8accbc4430b6a499a97`(2026-11-23 正式发布,自动同步合入,见下) |
+| 本清单最近核对 | 2026-11-23(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-23 正式版 `v3.70.1` 已自动无冲突合入(`56c97b06`)。本版只有一件事:播客处理的内存与读盘根治(issue #318,PR #319 / #320,取证与方案见 `docs/archive/issue-318-podcast-memory-io.md`)。
+读路径:标签热度查询只取聚合要用的小列并在 SQL 侧按日期粗筛、精品导读候选巡检不再每拍读全部转写(每 60 秒一次,worker 有进展时立即)、语音回执回收不再整表加载文章、interval 类周期任务加迟到宽限(一个周期,积压合并成一拍)。
+租约路径:全文分析认领后立刻建 attempt、重活期间照常续租、失租立即取消分段调用;连续失租有界退避,到上限转终态(错误码 `lease_expired_retry_exhausted`);自动入队不为在途处理单自己产出的转写再建一单。
+后端只动 `src/api/app.py` 与 `src/services/` 下六个文件(`article_analysis` / `bailian_tts` / `podcast_full_analysis` / `podcast_premium_guides` / `podcast_processing` / `podcast_processing_admin`),不涉 §2.1 的 8 个适配文件,没有新增 httpx client;
+**本版无新迁移**,Archive Sync 的流、字段、枚举、导出范围与接收端进度都没动,部署脚本未动;相对上一版,内网源码差异(8 个适配文件 + `scripts/repair_intranet_briefs.py`)逐行对拍一致。
+内网接手注意:① 无迁移,要回上一版不需要恢复库;
+② 这次的问题(后端进程涨到几个 GB、磁盘长期读满)出在跑播客转写 / 全文分析的节点上;内网只在本机做播客简介初评或全文分析时才走热度查询那一处,否则这部分行为不变。对内网最直接的变化是 interval 类周期任务的迟到宽限从默认 1 秒放到一个周期——事件循环被拖住几秒时,`was missed` 告警会少很多;
+③ `tests/test_scheduler_reload.py` 新增一条读 `src/api/app.py` 源码的守卫:文件里每处 `add_job(…, "interval", …)` 都要带 `**interval_job_options(...)`。内网托管仓若在 `app.py` 里自加过 interval 任务,这条测试会红,接上统一选项即可;
+④ `tests/conftest.py` 新增 `captured_log` 夹具和一个自动复位巡检节流状态的夹具;断言日志一律用 `captured_log`(原因见 `docs/dev/testing.md`:迁移的日志配置会关掉已存在的记录器,`dorami.*` 记录器也不向上传播)。内网托管仓若改过 `conftest.py`,合并时保留两边;
+⑤ 新增两个日志记录器 `dorami.podcast_full_analysis` / `dorami.podcast_processing`(失租与各失败出口的日志),此前这两条路径不打日志;
+⑥ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-20 正式版 `v3.70.0` 已自动无冲突合入(`cfec07ce`)。本版三块:令牌交付计量(issue #312:带 `dfeed_` / `dsub_` 令牌取内容的每次成功调用按「日 × 账号 × 令牌 × 接口」记进新表 `token_delivery_usage`,
 运维 → 账户加「接口」列与抽屉里的「接口调用」区)、设置 → 聚合接口列全令牌能调的五个接口(issue #315,纯前端 + 一条读后端源码的对账测试)、公共日报逐批记录跨天去重判定(issue #313 / PR #314,新表 `daily_brief_dedup_runs`,只在生成日报的节点落数)。
