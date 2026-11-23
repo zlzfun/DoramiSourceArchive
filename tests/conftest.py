@@ -118,6 +118,44 @@ def idle_automatic_title_worker(monkeypatch):
 TEST_PBKDF2_ITERATIONS = 1_000
 
 
+@pytest.fixture
+def captured_log():
+    """直接挂在指定记录器上抓日志:``with captured_log(logger) as records``。
+
+    不用 ``caplog``:它挂在根记录器上,而 ``dorami.*`` 不向根传播;更隐蔽的是,
+    alembic 的 ``fileConfig`` 会把当时已存在的记录器一律置为 ``disabled``,于是
+    同一进程里只要前面有用例跑过迁移,后面的日志断言就看不到任何记录——结果取决于
+    用例顺序与分片。这里在捕获期间把目标记录器重新启用,结束后原样恢复。
+    """
+
+    import contextlib
+    import logging
+
+    @contextlib.contextmanager
+    def capture(logger, level=logging.WARNING):
+        target = logging.getLogger(logger) if isinstance(logger, str) else logger
+        records: list[logging.LogRecord] = []
+
+        class _Collector(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Collector(level=level)
+        was_disabled, previous_level = target.disabled, target.level
+        target.disabled = False
+        if target.getEffectiveLevel() > level:
+            target.setLevel(level)
+        target.addHandler(handler)
+        try:
+            yield records
+        finally:
+            target.removeHandler(handler)
+            target.disabled = was_disabled
+            target.setLevel(previous_level)
+
+    return capture
+
+
 @pytest.fixture(autouse=True)
 def fresh_premium_scan_throttle():
     """精品导读候选巡检的降频状态是进程级的(issue #318):每个用例从「刚启动」开始。

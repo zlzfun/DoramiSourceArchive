@@ -48,7 +48,7 @@ ACTIVE_ATTEMPT_STATES = frozenset(
     {"prepared", "submitted", "request_unknown", "reconciling"}
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("dorami.podcast_processing")
 
 # 本地 attempt 连续租约到期后的重领节奏(issue #318)。第 1 次立即重领——进程重启
 # 是常态,不该多等;之后逐级退避;用完转终态,由管理员重试。此前每次都立即重领:

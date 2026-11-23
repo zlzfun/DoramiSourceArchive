@@ -59,7 +59,7 @@ INITIAL_PROCESSING_THRESHOLD = podcast_premium.INITIAL_PROCESSING_THRESHOLD
 FINAL_PREMIUM_THRESHOLD = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD
 FULL_ANALYSIS_PROMPT_VERSION = "podcast-full-map-reduce-v2"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("dorami.podcast_full_analysis")
 _T = TypeVar("_T")
 DEFAULT_CHUNK_CHARS = 12_000
 REDUCE_EVIDENCE_MAX_CHARS = 16_000

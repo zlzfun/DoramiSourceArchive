@@ -1625,10 +1625,8 @@ class _StallingProvider(_Provider):
 
 
 def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim(
-    engine, monkeypatch, caplog
+    engine, monkeypatch, captured_log
 ):
-    import logging
-
     from services import podcast_full_analysis
 
     process = _request(engine, "episode-50", override=False, key="lease-lost")
@@ -1647,7 +1645,7 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
     monkeypatch.setattr(
         podcast_full_analysis, "heartbeat_processing", fenced_once_models_run
     )
-    with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
+    with captured_log("dorami.podcast_full_analysis") as logged:
         with Session(engine) as session:
             step = asyncio.run(
                 run_full_analysis_worker_step(
@@ -1662,7 +1660,7 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
     assert step.action == "lease_lost"
     assert provider.started > 0 and provider.cancelled == provider.started
     assert provider.reduced is False
-    assert any("失去租约" in record.getMessage() for record in caplog.records)
+    assert any("失去租约" in record.getMessage() for record in logged)
     # 失租的执行者不回写:attempt 留给重领路径。
     [attempt] = _attempts(engine, process.id)
     assert attempt.submission_state == "prepared"
@@ -1683,10 +1681,8 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
 
 
 def test_a_transient_renewal_failure_does_not_abort_the_analysis(
-    engine, monkeypatch, caplog
+    engine, monkeypatch, captured_log
 ):
-    import logging
-
     from services import podcast_full_analysis
 
     _request(engine, "episode-50", override=False, key="renew-hiccup")
@@ -1711,7 +1707,7 @@ def test_a_transient_renewal_failure_does_not_abort_the_analysis(
                 await asyncio.sleep(0.01)
             return await super().reduce(**kwargs)
 
-    with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
+    with captured_log("dorami.podcast_full_analysis") as logged:
         with Session(engine) as session:
             step = asyncio.run(
                 run_full_analysis_worker_step(
@@ -1723,14 +1719,12 @@ def test_a_transient_renewal_failure_does_not_abort_the_analysis(
                 )
             )
     assert len(calls) >= 2 and step.action == "completed"
-    assert any("续租暂时失败" in record.getMessage() for record in caplog.records)
+    assert any("续租暂时失败" in record.getMessage() for record in logged)
 
 
-def test_failures_are_logged_instead_of_silently_retried(engine, caplog):
-    import logging
-
+def test_failures_are_logged_instead_of_silently_retried(engine, captured_log):
     _request(engine, "episode-50", override=False, key="logged-failure")
-    with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
+    with captured_log("dorami.podcast_full_analysis") as logged:
         with Session(engine) as session:
             step = asyncio.run(
                 run_full_analysis_worker_step(
@@ -1742,7 +1736,7 @@ def test_failures_are_logged_instead_of_silently_retried(engine, caplog):
                 )
             )
     assert step.action == "retry_wait"
-    assert any("Podcast 全文分析失败" in record.getMessage() for record in caplog.records)
+    assert any("Podcast 全文分析失败" in record.getMessage() for record in logged)
 
 
 def _begin_local_attempt(session, claim, *, now, tag: str):
@@ -1772,9 +1766,7 @@ def _begin_local_attempt(session, claim, *, now, tag: str):
     )
 
 
-def test_repeated_local_lease_expiry_backs_off_and_then_stops(engine, caplog):
-    import logging
-
+def test_repeated_local_lease_expiry_backs_off_and_then_stops(engine, captured_log):
     from services.podcast_processing import (
         LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS,
         LOCAL_LEASE_EXPIRY_EXHAUSTED_CODE,
@@ -1806,7 +1798,7 @@ def test_repeated_local_lease_expiry_backs_off_and_then_stops(engine, caplog):
 
     assert LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS[0] == 0
     assert claim_at(clock) is not None
-    with caplog.at_level(logging.WARNING, logger="services.podcast_processing"):
+    with captured_log("dorami.podcast_processing") as logged:
         for streak, delay in enumerate(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS, start=1):
             clock += dt.timedelta(seconds=2)  # 租约 1 秒,已过期
             if delay == 0:
@@ -1833,7 +1825,7 @@ def test_repeated_local_lease_expiry_backs_off_and_then_stops(engine, caplog):
     assert attempts[-1].submission_state == "failed_terminal"
     assert [a.submission_state for a in attempts[:-1]] == ["failed_retryable"] * (len(attempts) - 1)
     assert claim_at(clock + dt.timedelta(days=1)) is None  # 终态不会自己再起来
-    messages = [record.getMessage() for record in caplog.records]
+    messages = [record.getMessage() for record in logged]
     assert sum("租约到期" in message for message in messages) == len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS)
     assert any("已达上限" in message for message in messages)
 
