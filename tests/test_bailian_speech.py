@@ -1333,3 +1333,276 @@ def test_asr_failure_diagnostics_remain_safe_without_changing_accounting(stage, 
         assert result.failure.code == expected_code
     finally:
         client.close()
+
+
+# ── issue #322:从未发出的预留不占预算 ─────────────────────────────────────────
+
+FOUR_CHUNKS = "一二三四五六七八九十" * 3  # chunk_chars=8 → 4 段,每段预留 1 分
+
+
+def _tts(engine, cfg, episode_id, **kw):
+    return BailianPremiumGuideTtsProvider(
+        cfg,
+        engine=engine,
+        episode_id=episode_id,
+        voice_profile="narrator_zh",
+        max_audio_bytes=200000,
+        client_factory=kw.pop("client_factory", FakeTtsClient),
+        downloader=kw.pop("downloader", fake_audio),
+        clock=kw.pop("clock", lambda: NOW),
+        **kw,
+    )
+
+
+def _failing_at(call_index, error):
+    """供应商在第 ``call_index`` 次调用(从 0 数)抛出 ``error``,其余照常。"""
+
+    class Client(FakeTtsClient):
+        def synthesize(self, text):
+            if len(FakeTtsClient.calls) == call_index:
+                FakeTtsClient.calls.append(text)
+                raise error
+            return super().synthesize(text)
+
+    return Client
+
+
+def _ledger(engine, episode_id=None):
+    with Session(engine) as session:
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+        return sorted(
+            (row.status, row.cost_minor, row.budget_period)
+            for row in rows
+            if episode_id is None or row.episode_id == episode_id
+        )
+
+
+def _stale_row(key, *, episode, status, cost, period, scope="test-account"):
+    return BailianTtsCallRecord(
+        id=key, episode_id=episode, account_scope=scope, budget_period=period,
+        created_at=NOW.isoformat(), status=status, reserved_characters=24,
+        cost_minor=cost, price_minor=733924, price_units=100000000,
+        pricing_revision="test",
+    )
+
+
+def test_rejected_chunk_releases_the_unsent_rest_of_the_run(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    rejecting = _failing_at(1, BailianSpeechError("http_404"))
+    with pytest.raises(BailianSpeechError, match="http_404"):
+        asyncio.run(_tts(engine, cfg, "ep-a", client_factory=rejecting).synthesize(FOUR_CHUNKS))
+    # 第 1 段成功、第 2 段被拒(费用 0)、后两段从未发出:行都在,但不再占预算。
+    assert _ledger(engine) == [
+        ("rejected", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("succeeded", 1, "2026-09"),
+    ]
+    assert len(FakeTtsClient.calls) == 2
+
+
+def test_a_failed_run_does_not_eat_the_budget_of_the_next_episode(tts_env):
+    engine, cfg = tts_env
+    cfg = replace(cfg, tts_monthly_budget_minor=4, tts_per_run_budget_minor=4)
+    FakeTtsClient.calls = []
+    rejecting = _failing_at(0, BailianSpeechError("http_403"))
+    with pytest.raises(BailianSpeechError, match="http_403"):
+        asyncio.run(_tts(engine, cfg, "ep-a", client_factory=rejecting).synthesize(FOUR_CHUNKS))
+    # 月度预算正好够一次 4 段的合成;上一期没发出去的 3 段若还占着,这一期就过不了。
+    FakeTtsClient.calls = []
+    asyncio.run(_tts(engine, cfg, "ep-b").synthesize(FOUR_CHUNKS))
+    assert len(FakeTtsClient.calls) == 4
+    assert _ledger(engine, "ep-b") == [("succeeded", 1, "2026-09")] * 4
+
+
+def test_abandoned_reservations_are_swept_but_unknown_calls_keep_their_hold(tts_env):
+    engine, cfg = tts_env
+    with Session(engine) as session:
+        session.add_all([
+            _stale_row("a" * 64, episode="old-a", status="reserved", cost=30, period="2026-08"),
+            _stale_row("b" * 64, episode="old-b", status="reserved", cost=30, period="2026-09"),
+            _stale_row("c" * 64, episode="old-c", status="authorized", cost=30, period="2026-08"),
+            _stale_row("d" * 64, episode="old-a", status="rejected", cost=0, period="2026-08"),
+            _stale_row("e" * 64, episode="old-e", status="reserved", cost=30, period="2026-09",
+                       scope="another-account"),
+        ])
+        session.commit()
+
+    # 结果未知的那一条(可能已计费)仍占 30 分:30 + 本次 4 > 33,发不出去。
+    FakeTtsClient.calls = []
+    tight = replace(cfg, tts_monthly_budget_minor=33)
+    with pytest.raises(BailianSpeechError, match="tts_monthly_budget_exceeded"):
+        asyncio.run(_tts(engine, tight, "ep-new").synthesize(FOUR_CHUNKS))
+    assert FakeTtsClient.calls == []
+
+    # 两条被丢下的预留(60 分)不再占预算:30 + 4 <= 40。此前合计 94 分。
+    roomy = replace(cfg, tts_monthly_budget_minor=40)
+    asyncio.run(_tts(engine, roomy, "ep-new").synthesize(FOUR_CHUNKS))
+    with Session(engine) as session:
+        rows = {row.id[0]: row for row in session.exec(select(BailianTtsCallRecord)).all()
+                if row.episode_id != "ep-new"}
+    # 行一条没少,状态没动;只有本账号下从未发出的两条被解除占用。
+    assert {key: (row.status, row.cost_minor) for key, row in rows.items()} == {
+        "a": ("reserved", 0),
+        "b": ("reserved", 0),
+        "c": ("authorized", 30),
+        "d": ("rejected", 0),
+        "e": ("reserved", 30),
+    }
+    assert _ledger(engine, "ep-new") == [("succeeded", 1, "2026-09")] * 4
+
+
+def test_unknown_outcome_keeps_its_hold_and_frees_only_the_unsent_chunks(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    timing_out = _failing_at(0, BailianSpeechError("transport_error", unknown=True))
+    with pytest.raises(BailianSpeechError, match="transport_error"):
+        asyncio.run(_tts(engine, cfg, "ep-a", client_factory=timing_out).synthesize(FOUR_CHUNKS))
+    assert _ledger(engine) == [
+        ("authorized", 1, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+    ]
+    # 同一期节目换稿再来仍要先对账——未知调用的保护没有被这次改动放松。
+    FakeTtsClient.calls = []
+    with pytest.raises(BailianSpeechError, match="reconciliation"):
+        asyncio.run(_tts(engine, cfg, "ep-a").synthesize("changed script"))
+    assert FakeTtsClient.calls == []
+
+
+@pytest.mark.parametrize("cleanup_ran", [True, False])
+def test_a_retry_of_the_same_narration_prices_its_old_reservations_again(
+    tts_env, monkeypatch, cleanup_ran
+):
+    """第一次在下载第 1 段时失败;一个月后同一份口播稿重试。
+
+    ``cleanup_ran=False`` 模拟进程在清理之前被杀:后三段带着旧占用额停在上个月。
+    两种情况重试都要按「现在」的账期与价格重新占用,不能按 0 或旧账期混过去。
+    """
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+
+    async def broken(*_args, **_kwargs):
+        raise BailianSpeechError("download_failed")
+
+    if not cleanup_ran:
+        monkeypatch.setattr(
+            BailianPremiumGuideTtsProvider, "_release_unsent", lambda self, keys: None
+        )
+    with pytest.raises(BailianSpeechError, match="download_failed"):
+        asyncio.run(_tts(engine, cfg, "ep-a", downloader=broken).synthesize(FOUR_CHUNKS))
+    monkeypatch.undo()
+    held = 0 if cleanup_ran else 1
+    assert _ledger(engine) == [
+        ("generated", 1, "2026-09"),
+        ("reserved", held, "2026-09"),
+        ("reserved", held, "2026-09"),
+        ("reserved", held, "2026-09"),
+    ]
+
+    next_month = lambda: NOW + dt.timedelta(days=31)  # noqa: E731
+    doubled = replace(cfg, tts_price_minor=cfg.tts_price_minor * 10, pricing_revision="later")
+    # 重新计价后本次合成共 1 + 3×2 = 7 分,单次预算 6 分放不下——在发出任何请求之前就拦住。
+    with pytest.raises(BailianSpeechError, match="tts_per_run_budget_exceeded"):
+        asyncio.run(
+            _tts(engine, replace(doubled, tts_per_run_budget_minor=6), "ep-a", clock=next_month)
+            .synthesize(FOUR_CHUNKS)
+        )
+    assert len(FakeTtsClient.calls) == 1
+
+    asyncio.run(_tts(engine, doubled, "ep-a", clock=next_month).synthesize(FOUR_CHUNKS))
+    assert len(FakeTtsClient.calls) == 4  # 已付费的第 1 段没有再发
+    with Session(engine) as session:
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+    assert sorted((row.status, row.budget_period, row.pricing_revision) for row in rows) == [
+        ("succeeded", "2026-09", "aliyun-sg-2026-09-15"),  # 上个月就已经付过费的那一段
+        ("succeeded", "2026-10", "later"),
+        ("succeeded", "2026-10", "later"),
+        ("succeeded", "2026-10", "later"),
+    ]
+
+
+def test_another_receipt_root_cannot_push_spending_past_the_budget(tts_env, tmp_path):
+    """回执目录锁只管一个目录;另一个目录共用同一账本时,清理会碰到在途合成的预留。
+
+    发出请求这一步因此不靠锁:被解除过的预留授权不了。A 发出第 1 段时,B(另一个
+    目录)完成了自己的 4 段——预算正好用满;A 的后 3 段不能再发。
+    """
+
+    engine, cfg = tts_env
+    cfg = replace(cfg, tts_monthly_budget_minor=5, tts_per_run_budget_minor=5)
+    other_root = replace(cfg, tts_receipt_root=str(tmp_path / "another-root"))
+    FakeTtsClient.calls = []
+    interleaved = {"done": False}
+
+    class Interleaving(FakeTtsClient):
+        def synthesize(self, text):
+            if not interleaved["done"]:
+                interleaved["done"] = True
+                # A 的第 1 段已授权、请求在途;此刻 B 在另一个目录跑完整个合成。
+                _tts(engine, other_root, "ep-b")._synthesize(FOUR_CHUNKS)
+            return super().synthesize(text)
+
+    with pytest.raises(BailianSpeechError, match="tts_receipt_conflict"):
+        asyncio.run(_tts(engine, cfg, "ep-a", client_factory=Interleaving).synthesize(FOUR_CHUNKS))
+
+    assert len(FakeTtsClient.calls) == 5  # B 的 4 段 + A 的第 1 段,A 的后 3 段没有发出
+    assert _ledger(engine, "ep-b") == [("succeeded", 1, "2026-09")] * 4
+    assert _ledger(engine, "ep-a") == [
+        ("reserved", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("reserved", 0, "2026-09"),
+        ("succeeded", 1, "2026-09"),
+    ]
+    with Session(engine) as session:
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+    assert sum(row.cost_minor for row in rows) <= cfg.tts_monthly_budget_minor
+
+
+def test_settlement_uses_the_price_snapshot_verified_at_authorization(tts_env, tmp_path):
+    """读到这一行与授权之间,别的合成按新价格重新占用了它:结算必须跟着新价格。
+
+    预算检查计入的是新价格下的占用额;若仍按授权前读到的旧价格结算,账面与
+    检查过的数就对不上了。
+    """
+
+    engine, cfg = tts_env
+    pricier = replace(
+        cfg, tts_price_minor=cfg.tts_price_minor * 1000, pricing_revision="pricier",
+        tts_receipt_root=str(tmp_path / "another-root"),
+    )
+    FakeTtsClient.calls = []
+    first = _tts(engine, cfg, "ep-a")
+    read_row = first._row
+    raced = {"done": False}
+
+    def row_then_race(key):
+        row = read_row(key)
+        if not raced["done"]:
+            raced["done"] = True
+            _tts(engine, pricier, "ep-a")._reserve(["hello"], [key], NOW)
+        return row
+
+    first._row = row_then_race
+    asyncio.run(first.synthesize("hello"))
+
+    with Session(engine) as session:
+        row = session.exec(select(BailianTtsCallRecord)).one()
+    # 5 个字符:旧价格向上取整是 1 分,新价格是 37 分。
+    assert (row.status, row.pricing_revision, row.price_minor) == (
+        "succeeded", "pricier", pricier.tts_price_minor,
+    )
+    assert row.cost_minor == 37
+
+
+def test_a_failed_release_is_logged_and_never_masks_the_synthesis_error(tts_env, captured_log):
+    engine, cfg = tts_env
+    provider_ = _tts(engine, cfg, "ep-a")
+    provider_.engine = create_engine("sqlite:////nonexistent-dir-322/ledger.db")
+    with captured_log("dorami.bailian_tts") as records:
+        provider_._release_unsent(["k" * 64])  # 不抛
+    messages = [record.getMessage() for record in records]
+    assert any("未发出的预留没能解除" in line and "ep-a" in line for line in messages)

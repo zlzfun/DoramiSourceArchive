@@ -2939,6 +2939,11 @@ class BailianTtsCallRecord(SQLModel, table=True):
 
     No credential, script, URL or audio is stored in this accounting table.
     Ambiguous calls keep their budget reservation until operator reconciliation.
+
+    ``reserved`` is written before ``authorized`` and ``authorized`` before the
+    POST, so a ``reserved`` row was never sent. When its synthesis ends without
+    sending it, the row stays but ``cost_minor`` drops to 0: it holds no budget,
+    and is priced again if the same narration is synthesized later (issue #322).
     """
 
     __tablename__ = "bailian_tts_calls"

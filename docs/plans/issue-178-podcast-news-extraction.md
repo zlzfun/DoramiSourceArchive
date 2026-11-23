@@ -142,7 +142,7 @@
 
 11 月 12 日现网 API 已确认语音模型为 `fun-asr` / `qwen3-tts-flash`，来源 INI；Cisco 目标期仍返回 `tts_monthly_budget_exceeded`。管理 API 当前只有 ASR 配额及 TTS 回执容量，没有 TTS 预算/占用字段。该错误表示“账本占用 + 本次新增预估超过月限额”，不证明已实际花完 ¥20。
 
-代码依据：`bailian_tts.py::_reserve` 按新加坡自然月计算，计入本月账本及跨月仍为 reserved/authorized/generated 的占用；实际返回后按供应商 characters 结算。历史预留不会简单因跨月自动释放。配置优先级为 runtime KV → 环境变量 → INI → 默认；需要负责人核对的有效键是 `tts_monthly_budget_minor`、`tts_per_run_budget_minor`，最近记录对应 `2000`、`200`。
+代码依据：`bailian_tts.py::_reserve` 按新加坡自然月计算，计入本月账本及跨月仍为 reserved/authorized/generated 的占用；实际返回后按供应商 characters 结算。历史预留不会简单因跨月自动释放(2026-11-23 起由 [issue #322](../archive/issue-322-tts-reservations.md) 改写:从未发出的 `reserved` 不再占预算,结果未知的 `authorized` / `generated` 仍按此处所述)。配置优先级为 runtime KV → 环境变量 → INI → 默认；需要负责人核对的有效键是 `tts_monthly_budget_minor`、`tts_per_run_budget_minor`，最近记录对应 `2000`、`200`。
 
 `config/production.ini` 被 `.gitignore` 排除，Docker 挂载服务器上的此文件。因此 PR 修改 example.ini 不会自动改变现网金额。建议后续管理面单独补只读 TTS 预算投影：有效限额及来源、已结算、未结算预留、跨月占用、剩余额度、统计时间；调整上限和历史预留对账分别处理。初稿阶段未改预算；后续用户授权本地及现网月上限调至 ¥30，执行状态见 §11。历史预留不清账，已暂停批次不自动恢复。
 
