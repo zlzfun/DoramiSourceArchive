@@ -25,6 +25,18 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 `articles` 同理:`extensions_json`、`analysis_authority_id` 等排在 `content` 之后。新增高频查询前先看 `PRAGMA table_info` 的列顺序。
 
+## 全文分析的租约路径(issue #318)
+
+`run_full_analysis_worker_step` 的顺序与三条约束:
+
+1. **认领后立刻建 attempt,用当下的时间校验租约。** 此后的一切耗时都记在这次 attempt 名下。到这一步已失租 → 记日志、返回 `lease_lost`,不发模型调用。
+2. **重活在续租保护之内。** 准备输入(召回标签、话题热度)放进工作线程、用自己的 `Session`,与分段 / 汇总调用一起包在 `run_under_lease` 里。续租得到 `PodcastLeaseLost` → 立刻取消在途工作,失租的执行者不做任何回写;别的续租异常(写锁)只记日志、下一拍再续。
+3. **连续失租有界。** 重领路径按「此前连续多少个本地 attempt 以租约到期收场」退避:第 1 次立即重领,之后 60 秒 / 5 分钟 / 15 分钟 / 60 分钟(`LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS`),第 6 次处理单转 `failed`(`lease_expired_retry_exhausted`)等管理员重试。记账的是持有新租约的重领方。
+
+自动入队(`_resolve_podcast_landing_candidate`)不为在途处理单自己的 ASR 产出的转写再建一单(`transcript_is_owned_by_live_processing`):那一单会自己接着分析。
+
+排查入口:`podcast_stage_attempts` 按 `error_code` 计数(`lease_expired_local_attempt` 是单次租约到期,偶发属正常——进程重启就会有);日志里 `Podcast 全文分析失去租约` / `连续 N 次租约到期` 带耗时与处理单 id。
+
 ## 原稿进入问答（issue #248）
 
 站内问答消费当前已发布的发布方原稿和 ASR 原稿，按阅读投影懒建本地片段索引，

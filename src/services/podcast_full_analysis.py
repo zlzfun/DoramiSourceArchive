@@ -13,8 +13,9 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, replace
-from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, TypeVar
 
 from sqlmodel import Session, select
 
@@ -34,6 +35,7 @@ from models.db import (
 from services import article_analysis
 from services import podcast_premium
 from services.podcast_processing import (
+    PodcastLeaseLost,
     PodcastProcessingClaim,
     begin_stage_attempt,
     claim_next_processing,
@@ -54,6 +56,9 @@ from services.podcast_publisher_transcripts import (
 INITIAL_PROCESSING_THRESHOLD = podcast_premium.INITIAL_PROCESSING_THRESHOLD
 FINAL_PREMIUM_THRESHOLD = podcast_premium.DEFAULT_PREMIUM_SCORE_THRESHOLD
 FULL_ANALYSIS_PROMPT_VERSION = "podcast-full-map-reduce-v2"
+
+logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 DEFAULT_CHUNK_CHARS = 12_000
 REDUCE_EVIDENCE_MAX_CHARS = 16_000
 REDUCE_GROUP_MAX_CHARS = 10_000
@@ -711,6 +716,52 @@ def _finalize_result(
     session.commit()
 
 
+async def run_under_lease(
+    work: Awaitable[_T],
+    *,
+    renew: Callable[[], Awaitable[None]],
+    heartbeat_seconds: int,
+) -> _T:
+    """在续租保护下跑完一段工作;租约确实失效时立刻取消它(issue #318)。
+
+    ``renew`` 抛 :class:`PodcastLeaseLost` = 租约已经不是我们的:继续跑只会白花模型
+    调用,结果也提交不了,所以取消工作并把这个异常抛给调用方。其它异常(典型是
+    SQLite 写锁一时拿不到)只记日志、下一拍再续——真要拖到租约过期,下一次续租
+    自然会得到 ``PodcastLeaseLost``。
+    """
+
+    work_task = asyncio.ensure_future(work)
+
+    async def keep_lease() -> None:
+        while True:
+            await asyncio.sleep(max(1, heartbeat_seconds))
+            try:
+                await renew()
+            except PodcastLeaseLost:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 续租写库的偶发失败不该废掉整次分析
+                logger.warning(
+                    "Podcast 全文分析续租暂时失败,下一拍重试 (%s)", type(exc).__name__
+                )
+
+    keeper = asyncio.create_task(keep_lease())
+    try:
+        await asyncio.wait({work_task, keeper}, return_when=asyncio.FIRST_COMPLETED)
+        if not work_task.done():
+            # keeper 只会以异常收场。
+            work_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await work_task
+            keeper.result()
+        return work_task.result()
+    finally:
+        for task in (keeper, work_task):
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+
 async def analyze_transcript(
     *,
     title: str,
@@ -741,30 +792,20 @@ async def analyze_transcript(
             mapped["_chunk_index"] = chunk.index
             return mapped
 
-    heartbeat_task: asyncio.Task[None] | None = None
-
-    async def keep_lease() -> None:
-        while True:
-            await asyncio.sleep(max(1, heartbeat_seconds))
-            assert heartbeat is not None
-            await heartbeat()
-
-    if heartbeat is not None:
-        heartbeat_task = asyncio.create_task(keep_lease())
-    try:
-        mapped = tuple(await asyncio.gather(*(run(chunk) for chunk in chunks)))
-        if heartbeat is not None:
-            await heartbeat()
-        reduced = await provider.reduce(
+    async def map_and_reduce() -> tuple[tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+        evidence = tuple(await asyncio.gather(*(run(chunk) for chunk in chunks)))
+        return evidence, await provider.reduce(
             article=article_input,
             active_tags=active_tags,
-            mapped_evidence=mapped,
+            mapped_evidence=evidence,
         )
-    finally:
-        if heartbeat_task is not None:
-            heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat_task
+
+    if heartbeat is None:
+        mapped, reduced = await map_and_reduce()
+    else:
+        mapped, reduced = await run_under_lease(
+            map_and_reduce(), renew=heartbeat, heartbeat_seconds=heartbeat_seconds
+        )
     return (
         article_analysis.validate_analysis_payload(reduced, active_tags=active_tags),
         chunks,
@@ -872,30 +913,8 @@ async def run_full_analysis_worker_step(
         return FullAnalysisWorkerStep("failed", claim.processing_id)
     transcript = _transcript_text(artifact, podcast_config)
     episode = session.get(ArticleRecord, claim.episode_id)
-    source = (
-        session.get(SourceConfigRecord, episode.source_id)
-        if episode is not None
-        else None
-    )
     if episode is None:
         raise ValueError("Podcast episode is missing")
-    tags = article_analysis.load_relevant_active_tags(session, episode)
-    article_input = article_analysis.analysis_input_from_article(
-        episode,
-        source,
-        active_tags=tags,
-        session=session,
-        now=current,
-    )
-    article_input = replace(
-        article_input,
-        analysis_basis=(
-            "publisher_transcript"
-            if artifact.kind == "publisher_transcript"
-            else "asr_transcript"
-        ),
-        transcript_artifact_id=artifact.id,
-    )
     previous = session.exec(
         select(PodcastStageAttemptRecord)
         .where(
@@ -912,6 +931,12 @@ async def run_full_analysis_worker_step(
     budget_period = str(process.budget_period)
     budget_limit_minor = int(process.budget_limit_minor or 0)
     episode_title = episode.title
+    analysis_basis = (
+        "publisher_transcript"
+        if artifact.kind == "publisher_transcript"
+        else "asr_transcript"
+    )
+    engine = session.get_bind()
     session.expunge(artifact)
     session.expunge(episode)
     session.rollback()
@@ -927,50 +952,106 @@ async def run_full_analysis_worker_step(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    attempt = begin_stage_attempt(
-        session,
-        claim,
-        input_hash=stage_input_hash,
-        settings_fingerprint=settings_hash,
-        provider_name="dorami",
-        model_name=config.llm_config.for_aux().model,
-        provider_revision=FULL_ANALYSIS_PROMPT_VERSION,
-        provider_request_key=f"full-analysis:{claim.processing_id}:{claim.fencing_token}",
-        execution_kind="local",
-        estimated_cost_minor=0,
-        budget_scope=budget_scope,
-        budget_period=budget_period,
-        budget_limit_minor=budget_limit_minor,
-        reservation_idempotency_key=(
-            f"full-analysis-reservation:{claim.processing_id}:{claim.fencing_token}"
-        ),
-        policy=analyze_policy,
-        now=current,
-    )
-    attempt_id = attempt.id
-
-    async def renew() -> None:
-        nonlocal claim
-        claim = heartbeat_processing(
+    # 认领之后立刻建 attempt,并用当下的时间而不是步骤开始时的时间去校验租约
+    # (issue #318):此后的一切耗时——准备输入、分段调用——都记在这次 attempt 名下,
+    # 并且都在续租保护之内。此前「准备输入」排在认领与建 attempt 之间、第一次续租
+    # 之前,一旦它跑过了租约,旧时间仍让 attempt 建得起来、模型调用照发,结果却
+    # 提交不了,下一拍立刻重来。
+    try:
+        attempt = begin_stage_attempt(
             session,
             claim,
-            lease_seconds=config.lease_seconds,
+            input_hash=stage_input_hash,
+            settings_fingerprint=settings_hash,
+            provider_name="dorami",
+            model_name=config.llm_config.for_aux().model,
+            provider_revision=FULL_ANALYSIS_PROMPT_VERSION,
+            provider_request_key=f"full-analysis:{claim.processing_id}:{claim.fencing_token}",
+            execution_kind="local",
+            estimated_cost_minor=0,
+            budget_scope=budget_scope,
+            budget_period=budget_period,
+            budget_limit_minor=budget_limit_minor,
+            reservation_idempotency_key=(
+                f"full-analysis-reservation:{claim.processing_id}:{claim.fencing_token}"
+            ),
             policy=analyze_policy,
             now=operation_now(),
         )
+    except PodcastLeaseLost:
+        session.rollback()
+        logger.warning(
+            "Podcast 全文分析在建 attempt 之前就失去了租约 processing=%s(认领后 %.0f 秒)",
+            claim.processing_id,
+            asyncio.get_running_loop().time() - monotonic_started,
+        )
+        return FullAnalysisWorkerStep("lease_lost", claim.processing_id)
+    attempt_id = attempt.id
+    heartbeat_seconds = max(1, min(30, config.lease_seconds // 3))
 
-    try:
-        effective_provider = provider or OpenAiFullAnalysisProvider(config.llm_config)
-        validated, chunks, mapped = await analyze_transcript(
+    async def renew() -> None:
+        nonlocal claim
+        try:
+            claim = heartbeat_processing(
+                session,
+                claim,
+                lease_seconds=config.lease_seconds,
+                policy=analyze_policy,
+                now=operation_now(),
+            )
+        except PodcastLeaseLost:
+            raise
+        except Exception:
+            session.rollback()
+            raise
+
+    def prepare_input() -> tuple[
+        article_analysis.AnalysisInput, list[TaxonomyTagDTO]
+    ]:
+        # 在工作线程里用自己的 Session 做:召回标签、算话题热度都是同步查询,
+        # 留在事件循环里会把续租也一起堵住。
+        with Session(engine) as own:
+            current_episode = own.get(ArticleRecord, claim.episode_id)
+            if current_episode is None:
+                raise ValueError("Podcast episode is missing")
+            source = own.get(SourceConfigRecord, current_episode.source_id)
+            active_tags = article_analysis.load_relevant_active_tags(
+                own, current_episode
+            )
+            prepared = article_analysis.analysis_input_from_article(
+                current_episode,
+                source,
+                active_tags=active_tags,
+                session=own,
+                now=current,
+            )
+        return (
+            replace(
+                prepared,
+                analysis_basis=analysis_basis,
+                transcript_artifact_id=artifact.id,
+            ),
+            active_tags,
+        )
+
+    effective_provider = provider or OpenAiFullAnalysisProvider(config.llm_config)
+
+    async def analyze():
+        prepared_input, active_tags = await asyncio.to_thread(prepare_input)
+        validated_result, split, evidence = await analyze_transcript(
             title=episode_title,
             transcript=transcript,
-            article_input=article_input,
-            active_tags=tags,
+            article_input=prepared_input,
+            active_tags=active_tags,
             provider=effective_provider,
             chunk_chars=config.chunk_chars,
             map_concurrency=config.map_concurrency,
-            heartbeat=renew,
-            heartbeat_seconds=max(1, min(30, config.lease_seconds // 3)),
+        )
+        return prepared_input, active_tags, validated_result, split, evidence
+
+    try:
+        article_input, tags, validated, chunks, mapped = await run_under_lease(
+            analyze(), renew=renew, heartbeat_seconds=heartbeat_seconds
         )
         analysis_hash = _input_hash(
             artifact,
@@ -1015,6 +1096,27 @@ async def run_full_analysis_worker_step(
         )
         return FullAnalysisWorkerStep("completed", claim.processing_id, attempt_id)
     except Exception as exc:
+        elapsed = asyncio.get_running_loop().time() - monotonic_started
+        if isinstance(exc, PodcastLeaseLost):
+            # 租约已经不是我们的:任何回写都会被 fence 拒绝。留给重领路径去记账
+            # (把这次 attempt 标成租约到期,并按连续次数退避)。
+            session.rollback()
+            logger.warning(
+                "Podcast 全文分析失去租约,已中止 processing=%s attempt=%s"
+                "(认领后 %.0f 秒,租约 %d 秒)",
+                claim.processing_id,
+                attempt_id,
+                elapsed,
+                config.lease_seconds,
+            )
+            return FullAnalysisWorkerStep("lease_lost", claim.processing_id, attempt_id)
+        logger.warning(
+            "Podcast 全文分析失败 processing=%s attempt=%s(认领后 %.0f 秒):%s",
+            claim.processing_id,
+            attempt_id,
+            elapsed,
+            article_analysis.sanitize_error(exc),
+        )
         try:
             session.rollback()
             failure_now = operation_now()
@@ -1029,8 +1131,15 @@ async def run_full_analysis_worker_step(
                 policy=analyze_policy,
                 now=failure_now,
             )
-        except Exception:
+        except Exception as write_error:  # noqa: BLE001 - 回写不了也不能让这一拍抛出去
             session.rollback()
+            logger.warning(
+                "Podcast 全文分析的失败没能回写 processing=%s attempt=%s (%s);"
+                "租约到期后由重领路径处理",
+                claim.processing_id,
+                attempt_id,
+                type(write_error).__name__,
+            )
             return FullAnalysisWorkerStep("failed", claim.processing_id, attempt_id)
         return FullAnalysisWorkerStep(
             failed.processing_status, claim.processing_id, attempt_id

@@ -1459,6 +1459,12 @@ def _resolve_podcast_landing_candidate(
             and selected.artifact_id == analysis.transcript_artifact_id
         ):
             return None
+        if podcast_processing_admin_service.transcript_is_owned_by_live_processing(
+            session, episode_id=article_id, artifact_id=selected.artifact_id
+        ):
+            # 在途的那一单会自己分析这份转写;等它落定后上面那条判断自然成立。
+            # 它若最终失败,下一轮巡检再把这份转写当作候选。
+            return None
         revision = (locator_revision or selected.content_hash)[:16]
     return PodcastLandingCandidate(
         article_id,

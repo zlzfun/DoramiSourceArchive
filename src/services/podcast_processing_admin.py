@@ -587,6 +587,38 @@ def _select_external_input(
     raise PodcastAdminError("podcast_artifact_not_ready", status_code=409)
 
 
+# 仍会自己往下走的处理单状态。停给人工的(待对账 / 待审)不算:它们不会自己推进。
+_LIVE_PROCESSING_STATUSES = ("queued", "running", "retry_wait")
+
+
+def transcript_is_owned_by_live_processing(
+    session: Session, *, episode_id: str, artifact_id: str, target: str = "full_analysis"
+) -> bool:
+    """这份转写是否出自一个仍在途的处理单自己的 ASR(issue #318)。
+
+    从源音频起步的处理单,ASR 成功后会自己接着分析这份转写。自动入队若把它当成
+    「新出现的输入」再建一单,第二单排在第一单后面,把同一份转写再分析一遍
+    (输入指纹含产物种类,所以两单的幂等键不同,去重拦不住)。
+    """
+
+    return session.exec(
+        select(PodcastProcessingRecord.id)
+        .join(
+            PodcastStageAttemptRecord,
+            PodcastStageAttemptRecord.processing_id == PodcastProcessingRecord.id,
+        )
+        .where(
+            PodcastProcessingRecord.episode_id == episode_id,
+            PodcastProcessingRecord.requested_target == target,
+            PodcastProcessingRecord.processing_status.in_(_LIVE_PROCESSING_STATUSES),
+            PodcastStageAttemptRecord.stage == "asr",
+            PodcastStageAttemptRecord.submission_state == "succeeded",
+            PodcastStageAttemptRecord.output_artifact_id == artifact_id,
+        )
+        .limit(1)
+    ).first() is not None
+
+
 def select_full_analysis_input(
     engine: Engine,
     *,
