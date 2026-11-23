@@ -199,6 +199,29 @@ def test_runtime_receipt_root_override_and_busy_spool(service, tmp_path):
         assert f"receipts/{receipt.name}" in archive.getnames()
 
 
+def test_deliberately_evicted_paid_audio_needs_its_marker(service, tmp_path):
+    # issue #326:回执缓存满时,已有成品的节目的回执音频会被逐出,留下空的 `<id>.evicted`。
+    # 备份认这个标记并把它收进归档;没有音频也没有标记仍然是「付费音频缺失」。
+    call_id = "c" * 64
+    with sqlite3.connect(service._database()) as connection:
+        connection.execute("INSERT INTO bailian_tts_calls VALUES (?,?,?)", (call_id, "succeeded", "e" * 64))
+    service.receipt_root.mkdir()
+    (service.receipt_root / f"{call_id}.json").write_text('{"paid":"receipt"}')
+    state = service.run()
+    assert state["status"] == "failed" and state["error"] == "backup_paid_audio_missing_or_corrupt"
+    (service.receipt_root / f"{call_id}.evicted").write_bytes(b"")
+    state = service.run()
+    assert state["status"] == "succeeded", state
+    restored = tmp_path / "restored"
+    restore_backup(service.directory / state["archive"], restored, expected_sha256=state["sha256"], offline=True)
+    assert (restored / "receipts" / f"{call_id}.evicted").read_bytes() == b""
+    assert (restored / "receipts" / f"{call_id}.json").exists()
+    # 标记不能顶替供应商回执:回执缺失照旧失败。
+    (service.receipt_root / f"{call_id}.json").unlink()
+    state = service.run()
+    assert state["status"] == "failed" and state["error"] == "backup_paid_receipt_missing"
+
+
 def test_incomplete_local_or_paid_data_never_reports_success(service):
     image, _ = add_local(service, "media", b"missing later", ".png")
     image.unlink()

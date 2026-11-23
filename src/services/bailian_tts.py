@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import struct
 import wave
 import zlib
@@ -37,6 +38,9 @@ from services.bailian_speech_client import (
 from services.podcast_premium_guides import SynthesizedAudio
 
 logger = logging.getLogger("dorami.bailian_tts")
+
+# 已成功的分段本地没有音频、供应商的临时地址也取不回,而它是被有意逐出的。
+EVICTED_AUDIO_CODE = "tts_cached_audio_evicted"
 
 
 def _cost_minor(units: int, price_minor: int, price_units: int) -> int:
@@ -139,20 +143,60 @@ def _atomic_write(path, data):
         os.close(fd)
 
 
-def receipt_cache_overview(config: BailianSpeechConfig, *, max_audio_bytes: int) -> dict:
+def receipt_cache_overview(config: BailianSpeechConfig, engine, *, max_audio_bytes: int) -> dict:
+    """Receipt cache usage for the admin page.
+
+    The two shortfalls are what is still missing after the capacity path has
+    evicted everything it may (``evictable_bytes``). A cache that sits near its
+    limit but is full of evictable audio therefore reports no shortfall: the
+    next synthesis makes its own room.
+    """
     root = Path(config.tts_receipt_root)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    used = sum(path.stat().st_size for path in root.iterdir() if path.is_file())
+    used = _cache_used_bytes(root)
     free = shutil.disk_usage(root).free
     reservation = min(max_audio_bytes, config.tts_max_chars * 12_000 + 44)
+    with Session(engine) as session:
+        rows, settled = _reclaim_scope(session, config)
+        evictable_bytes = sum(size for *_rest, size in _evictable_files(root, rows, settled))
     return {
         "used_bytes": used, "limit_bytes": config.tts_cache_max_bytes,
         "estimated_max_narration_reservation_bytes": reservation,
-        "cache_shortfall_bytes": max(0, used + reservation - config.tts_cache_max_bytes),
+        "evictable_bytes": evictable_bytes,
+        "cache_shortfall_bytes": max(
+            0, used - evictable_bytes + reservation - config.tts_cache_max_bytes),
         "disk_free_bytes": free, "disk_minimum_free_bytes": 1024**3,
-        "disk_shortfall_bytes": max(0, reservation + 1024**3 - free),
+        "disk_shortfall_bytes": max(0, reservation + 1024**3 - free - evictable_bytes),
         "max_audio_bytes": max_audio_bytes,
     }
+
+
+def _cache_used_bytes(root: Path) -> int:
+    """Bytes of the regular files in ``root``.
+
+    One ``stat`` per file, and a file that disappears meanwhile is skipped: the
+    admin overview reads the directory without the receipt lock while a reclaim
+    may be compressing or evicting.
+    """
+    total = 0
+    for path in root.iterdir():
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            total += info.st_size
+    return total
+
+
+def _room_shortfall(root: Path, config: BailianSpeechConfig, nbytes: int) -> int:
+    """Bytes that must leave ``root`` before ``nbytes`` more fit the cache and the disk."""
+    free = shutil.disk_usage(root).free
+    return max(
+        0,
+        _cache_used_bytes(root) + nbytes - config.tts_cache_max_bytes,
+        nbytes + 1024**3 - free,
+    )
 
 
 def _file_sha256(path: Path) -> str:
@@ -166,22 +210,148 @@ def _file_sha256(path: Path) -> str:
 _RECLAIM_ARTICLE_CHUNK = 200
 
 
+def _in_flight(row: BailianTtsCallRecord) -> bool:
+    """Whether this call may still cost money or still has audio to fetch.
+
+    ``authorized`` (sent, outcome unknown) and ``generated`` (paid, audio not
+    downloaded yet) always count. ``reserved`` counts only while it holds
+    budget. A released reservation keeps the status with ``cost_minor`` 0
+    (issue #322); prices are validated positive, so one that still holds budget
+    never costs 0.
+
+    A zero-cost ``reserved`` row does not prove that no synthesis is running:
+    ``_reserve`` on another receipt directory that shares this ledger releases
+    reservations it does not own. That is fine here. The files this reclaim can
+    reach are in its own directory, whose lock the caller holds, so the only
+    synthesis that can be running on them is the caller itself, and that one
+    passes its own chunks in ``protect`` (before reserving) or has a
+    ``generated`` row (while storing). Sending is guarded separately by
+    ``_authorize``.
+    """
+    return row.status in {"authorized", "generated"} or (
+        row.status == "reserved" and row.cost_minor > 0
+    )
+
+
+def _created_at(row: BailianTtsCallRecord) -> dt.datetime | None:
+    try:
+        created = dt.datetime.fromisoformat(row.created_at)
+    except (TypeError, ValueError):
+        return None
+    return created if created.tzinfo is not None else None
+
+
+def _reclaim_scope(session: Session, config: BailianSpeechConfig):
+    """Ledger rows of this account and the episodes whose cached audio is spare.
+
+    Returns ``(rows, settled)``. An episode is settled when its audio is
+    published and none of its calls is in flight:
+
+    - a podcast guide has a published ``digest_audio_zh``. The database only
+      lets that status stand for the episode's *current* narration: moving the
+      narration pointer withdraws the audio (``podcast_script_audio_invalidate_*``
+      triggers). The guide flow reuses a published audio of the current
+      narration instead of synthesizing
+      (``podcast_premium_guides._reusable_published_audio``), so these receipts
+      are not read again. An episode whose new narration is synthesized but not
+      published yet is not settled: its retry replays from this cache;
+    - an article listen guide is ready. It writes a new narration on every run.
+    """
+    published = set(session.exec(select(PodcastArtifactRecord.episode_id).where(
+        PodcastArtifactRecord.kind == "digest_audio_zh",
+        PodcastArtifactRecord.status == "published",
+    )).all())
+    rows = session.exec(select(BailianTtsCallRecord).where(
+        BailianTtsCallRecord.account_scope == config.account_scope,
+    )).all()
+    # 只有「本账号有成功回执、且还没被成品音频判为已发布」的文章才需要看
+    # ``listen_guide``。此前这里整表加载全部文章(连正文),只为读这一个字段
+    # (issue #318)。
+    undecided = sorted({
+        row.episode_id for row in rows
+        if row.status == "succeeded" and row.episode_id not in published
+    })
+    for offset in range(0, len(undecided), _RECLAIM_ARTICLE_CHUNK):
+        chunk = undecided[offset:offset + _RECLAIM_ARTICLE_CHUNK]
+        for article_id, raw_extensions in session.exec(
+            select(ArticleRecord.id, ArticleRecord.extensions_json)
+            .where(ArticleRecord.id.in_(chunk))
+        ).all():
+            try:
+                extensions = json.loads(raw_extensions or "{}")
+            except (TypeError, ValueError):
+                continue
+            guide = extensions.get("listen_guide") if isinstance(extensions, dict) else None
+            if not isinstance(guide, dict) or guide.get("status") != "ready":
+                continue
+            content_hash = str(guide.get("content_hash") or "").strip().lower()
+            mime = str(guide.get("mime") or "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{64}", content_hash) and mime:
+                published.add(article_id)
+    return rows, published - {row.episode_id for row in rows if _in_flight(row)}
+
+
+def _drop_audio(root: Path, row_id: str, path: Path) -> None:
+    """Delete cached audio on purpose and leave ``<row id>.evicted`` behind.
+
+    The daily backup requires verified audio for every ``succeeded`` row and
+    fails without it (``storage_backup``: the receipt directory holds paid
+    audio that may not exist anywhere else). The marker tells it this audio was
+    dropped deliberately, after its episode was published. It is written
+    durably before the audio goes: a crash in between leaves both, which is
+    harmless. The backup holds the same receipt lock, so it never sees a row
+    with neither.
+    """
+    _atomic_write(root / f"{row_id}.evicted", b"")
+    path.unlink()
+
+
+def _evictable_files(root: Path, rows, settled, protect=frozenset()):
+    """Cached audio of settled episodes as ``(created, row id, path, size)``."""
+    found = []
+    for row in rows:
+        if row.status != "succeeded" or row.id in protect or row.episode_id not in settled:
+            continue
+        created = _created_at(row)
+        if created is None:
+            continue
+        for suffix in (".wav.zlib", ".wav"):
+            path = root / f"{row.id}{suffix}"
+            try:
+                found.append((created, row.id, path, path.stat().st_size))
+            except OSError:  # 不存在,或在无锁的概览读取中途被回收删掉
+                continue
+    return found
+
+
 def _reclaim_completed_receipts_unlocked(
     config: BailianSpeechConfig, engine, *, retention_days: int | None = 7,
     now: dt.datetime | None = None, drop_incompressible: bool = False,
+    make_room_bytes: int | None = None, protect: frozenset = frozenset(),
 ) -> dict:
     """Free verified published WAVs. Caller must already hold the receipt ``.lock``.
 
     JSON provider receipts and database billing rows stay. The row remains
     ``succeeded``, so a later synthesize of the same narration does not POST
-    again. In-flight episodes and episodes without a published replacement
-    stay untouched.
+    again. Audio that is deleted rather than archived leaves an ``.evicted``
+    marker (``_drop_audio``). In-flight episodes and episodes without a
+    published replacement stay untouched, and so does every row in ``protect``
+    (the chunks of the synthesis that is asking for room).
 
     The daily job keeps ``retention_days`` and only replaces a WAV with a
     smaller zlib archive. A capacity shortfall passes ``retention_days=None``
     and ``drop_incompressible=True``: age is ignored, and a hash-verified WAV
     is deleted even when zlib does not shrink and even when the file is larger
     than the cache limit (that file is what filled the cache).
+
+    The capacity path also passes ``make_room_bytes``. Archives are never
+    removed by compression, so without this the cache only grows until every
+    synthesis fails the capacity check (issue #326). When that many bytes still
+    do not fit after compressing, cached audio of settled episodes is deleted
+    oldest first, and only as much as the shortfall needs. The published audio
+    is the durable copy (see ``_reclaim_scope``). If evicting all of it would
+    still not be enough, nothing is evicted: the request fails either way, and
+    the cache keeps its replays.
     """
     root = Path(config.tts_receipt_root)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -189,48 +359,15 @@ def _reclaim_completed_receipts_unlocked(
     cutoff = None if retention_days is None else current - dt.timedelta(days=retention_days)
     compressed = 0
     removed = 0
+    evicted = 0
     saved = 0
     with Session(engine) as session:
-        published = set(session.exec(select(PodcastArtifactRecord.episode_id).where(
-            PodcastArtifactRecord.kind == "digest_audio_zh",
-            PodcastArtifactRecord.status == "published",
-        )).all())
-        rows = session.exec(select(BailianTtsCallRecord).where(
-            BailianTtsCallRecord.account_scope == config.account_scope,
-        )).all()
-        # 只有「本账号有成功回执、且还没被成品音频判为已发布」的文章才需要看
-        # ``listen_guide``。此前这里整表加载全部文章(连正文),只为读这一个字段
-        # (issue #318)。
-        undecided = sorted({
-            row.episode_id for row in rows
-            if row.status == "succeeded" and row.episode_id not in published
-        })
-        for offset in range(0, len(undecided), _RECLAIM_ARTICLE_CHUNK):
-            chunk = undecided[offset:offset + _RECLAIM_ARTICLE_CHUNK]
-            for article_id, raw_extensions in session.exec(
-                select(ArticleRecord.id, ArticleRecord.extensions_json)
-                .where(ArticleRecord.id.in_(chunk))
-            ).all():
-                try:
-                    extensions = json.loads(raw_extensions or "{}")
-                except (TypeError, ValueError):
-                    continue
-                guide = extensions.get("listen_guide") if isinstance(extensions, dict) else None
-                if not isinstance(guide, dict) or guide.get("status") != "ready":
-                    continue
-                content_hash = str(guide.get("content_hash") or "").strip().lower()
-                mime = str(guide.get("mime") or "").strip().lower()
-                if re.fullmatch(r"[0-9a-f]{64}", content_hash) and mime:
-                    published.add(article_id)
-        in_flight = {row.episode_id for row in rows if row.status in {"reserved", "authorized", "generated"}}
+        rows, settled = _reclaim_scope(session, config)
         for row in rows:
-            if row.status != "succeeded" or row.episode_id not in published or row.episode_id in in_flight:
+            if row.status != "succeeded" or row.id in protect or row.episode_id not in settled:
                 continue
-            try:
-                created = dt.datetime.fromisoformat(row.created_at)
-                if created.tzinfo is None or (cutoff is not None and created > cutoff):
-                    continue
-            except (TypeError, ValueError):
+            created = _created_at(row)
+            if created is None or (cutoff is not None and created > cutoff):
                 continue
             source = root / f"{row.id}.wav"
             receipt = root / f"{row.id}.json"
@@ -243,7 +380,7 @@ def _reclaim_completed_receipts_unlocked(
             if size > config.tts_cache_max_bytes:
                 if not drop_incompressible or _file_sha256(source) != row.audio_hash:
                     continue
-                source.unlink()
+                _drop_audio(root, row.id, source)
                 removed += 1
                 saved += size
                 continue
@@ -257,10 +394,29 @@ def _reclaim_completed_receipts_unlocked(
                 compressed += 1
                 saved += len(data) - len(packed)
             elif drop_incompressible:
-                source.unlink()
+                _drop_audio(root, row.id, source)
                 removed += 1
                 saved += len(data)
-    return {"compressed_wavs": compressed, "removed_wavs": removed, "saved_bytes": saved}
+        shortfall = 0 if make_room_bytes is None else _room_shortfall(root, config, make_room_bytes)
+        if shortfall:
+            candidates = _evictable_files(root, rows, settled, protect)
+            if sum(size for *_rest, size in candidates) >= shortfall:
+                for _created, row_id, path, size in sorted(candidates, key=lambda c: c[:2]):
+                    _drop_audio(root, row_id, path)
+                    evicted += 1
+                    saved += size
+                    shortfall -= size
+                    if shortfall <= 0:
+                        break
+    if evicted:
+        logger.info(
+            "语音回执缓存不足,已逐出 %d 个已有成品的回执音频文件(连同压缩共腾出 %d 字节)",
+            evicted, saved,
+        )
+    return {
+        "compressed_wavs": compressed, "removed_wavs": removed,
+        "evicted_files": evicted, "saved_bytes": saved,
+    }
 
 
 def reclaim_completed_receipts(
@@ -288,7 +444,8 @@ def reclaim_completed_receipts(
             flock(lock, LOCK_EX if blocking else LOCK_EX | LOCK_NB)
         except BlockingIOError:
             return {
-                "compressed_wavs": 0, "removed_wavs": 0, "saved_bytes": 0, "skipped": True,
+                "compressed_wavs": 0, "removed_wavs": 0, "evicted_files": 0,
+                "saved_bytes": 0, "skipped": True,
             }
         return _reclaim_completed_receipts_unlocked(
             config, engine,
@@ -333,7 +490,7 @@ class BailianPremiumGuideTtsProvider:
         # 24 kHz mono PCM is 48 KB/s; 12 KB/character allows 4 seconds per
         # character, above ordinary Chinese narration, without reserving 512 MiB.
         estimate = min(self.max_audio_bytes, max(1, characters) * 12_000 + 44)
-        used = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
+        used = _cache_used_bytes(root)
         free = shutil.disk_usage(root).free
         return {
             "used_bytes": used, "limit_bytes": self.config.tts_cache_max_bytes,
@@ -356,26 +513,33 @@ class BailianPremiumGuideTtsProvider:
             flock(lock, LOCK_EX)
             return self._ensure_capacity_locked(characters)
 
-    def _ensure_capacity_locked(self, characters: int) -> dict:
-        snapshot = self._capacity_after_one_reclaim(characters)
+    def _ensure_capacity_locked(self, characters: int, protect: frozenset = frozenset()) -> dict:
+        snapshot = self._capacity_after_one_reclaim(characters, protect)
         if snapshot["cache_shortfall_bytes"]:
             raise BailianSpeechError("tts_receipt_cache_full")
         if snapshot["disk_shortfall_bytes"]:
             raise BailianSpeechError("tts_receipt_disk_full")
         return snapshot
 
-    def _capacity_after_one_reclaim(self, characters: int) -> dict:
+    def _capacity_after_one_reclaim(
+        self, characters: int, protect: frozenset = frozenset(),
+    ) -> dict:
         snapshot = self.capacity_snapshot(characters)
         if snapshot["cache_shortfall_bytes"] or snapshot["disk_shortfall_bytes"]:
             _reclaim_completed_receipts_unlocked(
                 self.config, self.engine, now=self.clock(),
                 retention_days=None, drop_incompressible=True,
+                make_room_bytes=snapshot["reservation_bytes"], protect=protect,
             )
             snapshot = self.capacity_snapshot(characters)
         return snapshot
 
     def _require_bytes_locked(self, nbytes: int) -> None:
-        """Post-download guard. One reclaim, then the same cache/disk checks."""
+        """Post-download guard. One reclaim, then the same cache/disk checks.
+
+        The chunk being stored is ``generated`` at this point, so its episode is
+        in flight and the reclaim cannot touch this run's earlier chunks.
+        """
 
         def room() -> tuple[bool, bool]:
             snapshot = self.capacity_snapshot(0)
@@ -389,6 +553,7 @@ class BailianPremiumGuideTtsProvider:
             _reclaim_completed_receipts_unlocked(
                 self.config, self.engine, now=self.clock(),
                 retention_days=None, drop_incompressible=True,
+                make_room_bytes=nbytes,
             )
             cache_ok, disk_ok = room()
         if not cache_ok:
@@ -611,7 +776,9 @@ class BailianPremiumGuideTtsProvider:
                 needs_storage_chars = sum(len(chunk) for chunk, key in zip(chunks, keys)
                     if (row := session.get(BailianTtsCallRecord, key)) is None or row.status != "succeeded")
             if needs_storage_chars:
-                self._ensure_capacity_locked(needs_storage_chars)
+                # 此刻还没重新预留:上一次没走完的同一份口播稿,名下可能只剩「已成功」
+                # 和「占用已解除」的行,账本上看不出在途。自己已有的分段明确排除在外。
+                self._ensure_capacity_locked(needs_storage_chars, frozenset(keys))
             self._reserve(chunks, keys, self.clock())
             parts = []
             client = None
@@ -684,15 +851,23 @@ class BailianPremiumGuideTtsProvider:
                         if len(data) > self.max_audio_bytes or not decoder.eof or decoder.unused_data:
                             raise BailianSpeechError("tts_cached_audio_corrupt")
                     else:
-                        # Urgent reclaim deletes a WAV that zlib cannot shrink.
+                        # Urgent reclaim deletes a WAV that zlib cannot shrink
+                        # and evicts old audio when the cache is still short.
                         # The published artifact is the durable copy. Replay
                         # fetches the receipt URL once, checks audio_hash, and
                         # does not POST or rewrite the WAV (rewriting would
                         # refill the cache just freed). An expired signed URL
                         # fails closed with no second charge.
-                        data = self._audio_from_receipt_url(
-                            receipt, cfg, self.max_audio_bytes - sum(map(len, parts)),
-                        )
+                        try:
+                            data = self._audio_from_receipt_url(
+                                receipt, cfg, self.max_audio_bytes - sum(map(len, parts)),
+                            )
+                        except BailianSpeechError as exc:
+                            # 这一段是被有意逐出的(issue #326):音频在已发布的成品里,
+                            # 导读流程据此改用成品。没有标记的缺失是别的问题,原样上报。
+                            if (root / f"{key}.evicted").is_file():
+                                raise BailianSpeechError(EVICTED_AUDIO_CODE) from exc
+                            raise
                     if hashlib.sha256(data).hexdigest() != row.audio_hash:
                         raise BailianSpeechError("tts_cached_audio_corrupt")
                     parts.append(data)
