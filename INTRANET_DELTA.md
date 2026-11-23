@@ -9,12 +9,24 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.70.1` / main `461dbc433060a222f502c8accbc4430b6a499a97`(2026-11-23 正式发布,自动同步合入,见下) |
+| `UPSTREAM_BASE` | `v3.70.2` / main `23a4590c2bd17b72b66f0462f33f8c93202cd710`(2026-11-23 正式发布,自动同步合入,见下) |
 | 本清单最近核对 | 2026-11-23(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-23 正式版 `v3.70.2` 已自动无冲突合入(`454d2807`)。本版两件事,都在播客的付费处理路径上:
+精品导读语音的预算记账(issue #322,PR #324,方案 `docs/archive/issue-322-tts-reservations.md`)——一次合成里没发出去的分段不再占着月度预算(账本行保留、占用额记 0,再合成同一份口播稿时重新计价),授权一步自己失败关闭,月度预算满时由候选巡检拉起的运行等待后重试;
+源音频校验(issue #323,PR #325,方案 `docs/archive/issue-323-source-media-cap.md`)——下载上限用配置的 `max_audio_mb`,订阅源声明的大小只作预留参考;量过的「过大 / 过长」记在校验这一步,同一地址、上限仍容不下时不再重复下载。
+后端动 `src/api/app.py`、`src/api/routers/podcasts.py`、`src/models/db.py`(只改了一段说明文字,表结构未变)与 `src/services/` 下四个文件(`bailian_tts` / `http_safety` / `podcast_premium_guides` / `podcast_source_media`),不涉 §2.1 的 8 个适配文件,没有新增 httpx client;
+**本版无新迁移**,Archive Sync 的流、字段、枚举、导出范围与接收端进度都没动,部署脚本未动;相对上一版,内网源码差异(8 个适配文件 + `scripts/repair_intranet_briefs.py`)逐行对拍一致。
+内网接手注意:① 无迁移,要回上一版不需要恢复库;
+② 两处修复只在跑语音合成 / 付费转写的节点上生效,内网不跑这两条,行为不变。新增的 KV 键 `podcast_source_media:rejections` 是节点本地的,不同步,也只在音频校验运行时才会写;
+③ 导读状态随文章同步(`extensions_json.premium_guide`):外网上因语音预算等待的导读是 `status = retry_wait`、`error_code = tts_monthly_budget_exceeded`,`error` 是一句中文说明。`retry_wait` 与 `error_code` 都是既有取值,内网读者面会把它显示为「生成中」(与回执容量等待一致)。外网上线后会有一批此前「合成失败」的导读陆续变为就绪;
+④ `services/http_safety.py` 新增错误类型 `PublicDownloadTooLarge`(`PublicDownloadError` 的子类,文案仍是「下载响应超过大小上限」)。内网托管仓若有代码按这句文案判断超限,仍然有效;新代码按类型判断;
+⑤ 几个函数多了仅限关键字的参数:`app.schedule_podcast_premium_guide(..., budget_wait=True)`、`fail_premium_guide` / `run_premium_guide(..., budget_wait=False)`、`validate_source_media(..., use_rejection_memory=True)`。内网托管仓若调用或在测试里打桩这几个函数,签名要跟上;
+⑥ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-23 正式版 `v3.70.1` 已自动无冲突合入(`56c97b06`)。本版只有一件事:播客处理的内存与读盘根治(issue #318,PR #319 / #320,取证与方案见 `docs/archive/issue-318-podcast-memory-io.md`)。
 读路径:标签热度查询只取聚合要用的小列并在 SQL 侧按日期粗筛、精品导读候选巡检不再每拍读全部转写(每 60 秒一次,worker 有进展时立即)、语音回执回收不再整表加载文章、interval 类周期任务加迟到宽限(一个周期,积压合并成一拍)。
