@@ -874,6 +874,7 @@ def request_processing(
     reason: str,
     actor: str,
     idempotency_key_prefix: str | None = None,
+    reused_owner: list[str] | None = None,
 ) -> PodcastProcessingRecord:
     """Durably enqueue one processing request.
 
@@ -883,6 +884,11 @@ def request_processing(
     request actually selects (``prefix:content_hash[:16]``), so a restart that
     re-resolves the same input replays the same record instead of colliding
     with it, and a changed input naturally yields a new key.
+
+    An automatic request whose selected transcript belongs to a live run of
+    its own returns that run instead of creating another one; its id is then
+    appended to ``reused_owner`` so the caller can tell "nothing new was
+    enqueued for this input" from a real enqueue.
     """
 
     if target not in {"transcript", "full_analysis", "digest_blog"}:
@@ -949,6 +955,8 @@ def request_processing(
                     target=target,
                 )
                 if owner is not None:
+                    if reused_owner is not None:
+                        reused_owner.append(owner.id)
                     session.expunge(owner)
                     session.commit()
                     return owner

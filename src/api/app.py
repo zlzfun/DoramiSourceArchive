@@ -1199,6 +1199,7 @@ async def enqueue_podcast_processing_with_input(
     reason: str,
     actor: str,
     idempotency_key_prefix: str | None = None,
+    reused_owner: list[str] | None = None,
 ):
     """Prepare a full-analysis input, then issue the durable admin command.
 
@@ -1237,6 +1238,7 @@ async def enqueue_podcast_processing_with_input(
             idempotency_key_prefix=idempotency_key_prefix,
             reason=reason,
             actor=actor,
+            reused_owner=reused_owner,
         )
 
     publisher_failure: BaseException | None = None
@@ -1660,6 +1662,8 @@ async def execute_podcast_landing_job() -> dict[str, int]:
 
         async def _run(candidate: PodcastLandingCandidate) -> None:
             async with semaphore:
+                # 正式入队若只是复用了拥有这份转写的在途处理单,它的 id 会记在这里。
+                reused_owner: list[str] = []
                 try:
                     await enqueue_podcast_processing_with_input(
                         episode_id=candidate.episode_id,
@@ -1672,6 +1676,7 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                         idempotency_key_prefix=f"full-analysis:auto:{candidate.episode_id}",
                         reason="简介初评达到全文处理线",
                         actor="system",
+                        reused_owner=reused_owner,
                     )
                 except Exception as exc:  # noqa: BLE001 - remembered, retried with backoff
                     failure = podcast_landing_service.classify_failure(exc)
@@ -1694,7 +1699,13 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                     final = await asyncio.to_thread(
                         collect_podcast_landing_candidates, [candidate.episode_id]
                     )
-                    if final.candidates:
+                    if reused_owner:
+                        # 没有为这份输入新建处理单。重解析若仍给出候选,说明那一单
+                        # 此刻已不在途(刚失败),这个候选还没人接:不能记成「已入队」
+                        # ——那条记忆会让同一 revision 永远被跳过。什么都不记,下一轮
+                        # 再看(那一单还在途时巡检侧会直接放过,不会反复入队)。
+                        pass
+                    elif final.candidates:
                         podcast_landing_service.record_enqueued(
                             state, candidate.episode_id, final.candidates[0].revision, now
                         )

@@ -1635,10 +1635,18 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
     _fast_heartbeat(monkeypatch)
     provider = _StallingProvider()
 
-    def fenced(*_args, **_kwargs):
+    real_renew = podcast_full_analysis.heartbeat_processing
+
+    def fenced_once_models_run(*args, **kwargs):
+        # 模型调用开始之前照常续租;开始之后的第一次续租才发现失租。不按「第几拍」
+        # 注入:准备输入慢一点,固定在第一拍失租就会在模型调用开始前把工作取消掉。
+        if provider.started == 0:
+            return real_renew(*args, **kwargs)
         raise PodcastLeaseLost("processing lease is expired or fenced")
 
-    monkeypatch.setattr(podcast_full_analysis, "heartbeat_processing", fenced)
+    monkeypatch.setattr(
+        podcast_full_analysis, "heartbeat_processing", fenced_once_models_run
+    )
     with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
         with Session(engine) as session:
             step = asyncio.run(
@@ -1650,7 +1658,7 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
                     provider=provider,
                 )
             )
-    # 第一次续租发现失租就中止:在途的分段调用被取消,而不是等它们跑完。
+    # 发现失租就中止:在途的分段调用被取消,而不是等它们跑完。
     assert step.action == "lease_lost"
     assert provider.started > 0 and provider.cancelled == provider.started
     assert provider.reduced is False
@@ -2218,8 +2226,12 @@ def test_auto_enqueue_reuses_the_live_run_that_owns_the_selected_transcript(engi
             reason="简介初评达到全文处理线", actor="system", **keys,
         )
 
-    reused = enqueue(idempotency_key_prefix="full-analysis:auto:episode-asr")
+    told: list[str] = []
+    reused = enqueue(
+        idempotency_key_prefix="full-analysis:auto:episode-asr", reused_owner=told
+    )
     assert reused.id == owner.id
+    assert told == [owner.id]  # 调用方据此知道「没有为这份输入新建处理单」
     with Session(engine) as session:
         rows = session.exec(
             select(PodcastProcessingRecord).where(
@@ -2234,8 +2246,12 @@ def test_auto_enqueue_reuses_the_live_run_that_owns_the_selected_transcript(engi
         row.finished_at = NOW.isoformat()
         session.add(row)
         session.commit()
-    fresh = enqueue(idempotency_key_prefix="full-analysis:auto:episode-asr")
+    told.clear()
+    fresh = enqueue(
+        idempotency_key_prefix="full-analysis:auto:episode-asr", reused_owner=told
+    )
     assert fresh.id != owner.id and fresh.input_artifact_id == "complete-asr"
+    assert told == []
 
 
 def test_a_rejected_retry_does_not_reset_the_lease_expiry_streak(engine):
