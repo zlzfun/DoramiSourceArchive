@@ -13,9 +13,12 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
 
 from sqlalchemy import case, func, or_
 from sqlalchemy.engine import Engine
@@ -1509,6 +1512,90 @@ def list_premium_guide_tasks(
         }
 
 
+@dataclass(frozen=True)
+class _ArtifactTail:
+    """一份文本产物里排在 ``inline_text`` 之后的那几列。"""
+
+    language: str
+    authority_id: str
+    source_artifact_id: str | None
+    source_content_hash: str | None
+    provenance_json: str
+
+
+@dataclass(frozen=True)
+class _TranscriptView:
+    """候选巡检用的转写视图:只有元数据,没有正文。"""
+
+    id: str
+    kind: str
+    content_hash: str
+    authority_id: str
+    language: str
+    provenance_json: str
+
+
+# ``podcast_text_artifacts`` 的行不可变(库里有 BEFORE UPDATE 触发器),而
+# ``language / authority_id / provenance_json`` 等列在行里排在 ``inline_text``
+# 之后——SQLite 要沿溢出页链走完整段逐字稿才读得到它们,哪怕查询并不取正文。
+# 候选巡检每拍都要这些列,所以按产物 id 在进程内记下来:每份产物只为它走一次
+# 溢出页链,而不是每拍把全部逐字稿读一遍(issue #318,实测一拍 340MB)。
+_ARTIFACT_TAIL_CACHE_LIMIT = 8192
+_ARTIFACT_TAIL_CHUNK = 100
+_artifact_tail_caches: "weakref.WeakKeyDictionary[Any, OrderedDict[str, _ArtifactTail]]" = (
+    weakref.WeakKeyDictionary()
+)
+_artifact_tail_lock = threading.Lock()
+
+
+def _artifact_tails(session: Session, artifact_ids: Iterable[str]) -> dict[str, _ArtifactTail]:
+    """Return the trailing metadata of immutable text artifacts, cached per engine."""
+
+    wanted = list(dict.fromkeys(artifact_id for artifact_id in artifact_ids if artifact_id))
+    if not wanted:
+        return {}
+    bind = session.get_bind()
+    with _artifact_tail_lock:
+        cache = _artifact_tail_caches.get(bind)
+        if cache is None:
+            cache = OrderedDict()
+            _artifact_tail_caches[bind] = cache
+        found: dict[str, _ArtifactTail] = {}
+        for artifact_id in wanted:
+            tail = cache.get(artifact_id)
+            if tail is not None:
+                cache.move_to_end(artifact_id)
+                found[artifact_id] = tail
+    missing = [artifact_id for artifact_id in wanted if artifact_id not in found]
+    for offset in range(0, len(missing), _ARTIFACT_TAIL_CHUNK):
+        chunk = missing[offset:offset + _ARTIFACT_TAIL_CHUNK]
+        loaded = {
+            row[0]: _ArtifactTail(
+                language=row[1] or "",
+                authority_id=row[2] or "",
+                source_artifact_id=row[3],
+                source_content_hash=row[4],
+                provenance_json=row[5] or "",
+            )
+            for row in session.exec(
+                select(
+                    PodcastTextArtifactRecord.id,
+                    PodcastTextArtifactRecord.language,
+                    PodcastTextArtifactRecord.authority_id,
+                    PodcastTextArtifactRecord.source_artifact_id,
+                    PodcastTextArtifactRecord.source_content_hash,
+                    PodcastTextArtifactRecord.provenance_json,
+                ).where(PodcastTextArtifactRecord.id.in_(chunk))
+            ).all()
+        }
+        found.update(loaded)
+        with _artifact_tail_lock:
+            cache.update(loaded)
+            while len(cache) > _ARTIFACT_TAIL_CACHE_LIMIT:
+                cache.popitem(last=False)
+    return found
+
+
 def pending_premium_guide_candidates(
     engine: Engine,
     *,
@@ -1522,11 +1609,14 @@ def pending_premium_guide_candidates(
     """
 
     with Session(engine) as session:
+        # 转写只取排在 ``inline_text`` 之前的三列;其余元数据走 ``_artifact_tails``。
         rows = session.exec(
             select(
                 ArticleRecord,
                 ArticleAnalysisRecord,
-                PodcastTextArtifactRecord,
+                PodcastTextArtifactRecord.id,
+                PodcastTextArtifactRecord.kind,
+                PodcastTextArtifactRecord.content_hash,
             )
             .join(
                 PodcastTextArtifactRecord,
@@ -1561,18 +1651,22 @@ def pending_premium_guide_candidates(
                     ArticleAnalysisRecord.podcast_final_score,
                     raiseload=True,
                 ),
-                load_only(
-                    PodcastTextArtifactRecord.id, PodcastTextArtifactRecord.kind,
-                    PodcastTextArtifactRecord.content_hash,
-                    PodcastTextArtifactRecord.authority_id,
-                    PodcastTextArtifactRecord.language,
-                    PodcastTextArtifactRecord.provenance_json,
-                    raiseload=True,
-                ),
             )
         ).all()
+        tails = _artifact_tails(session, (row[2] for row in rows))
         candidates: list[str] = []
-        for episode, analysis, transcript in rows:
+        for episode, analysis, transcript_id, transcript_kind, transcript_hash in rows:
+            tail = tails.get(transcript_id)
+            if tail is None:  # 行在两次查询之间消失:本拍不处理,下一拍再看
+                continue
+            transcript = _TranscriptView(
+                id=transcript_id,
+                kind=transcript_kind,
+                content_hash=transcript_hash,
+                authority_id=tail.authority_id,
+                language=tail.language,
+                provenance_json=tail.provenance_json,
+            )
             if not has_authoritative_analysis(analysis):
                 continue
             transcript_publication = session.get(
@@ -1632,14 +1726,8 @@ def pending_premium_guide_candidates(
                     PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
                 )
                 blog = (
-                    session.get(
-                        PodcastTextArtifactRecord, publication.artifact_id,
-                        options=[load_only(
-                            PodcastTextArtifactRecord.source_artifact_id,
-                            PodcastTextArtifactRecord.source_content_hash,
-                            PodcastTextArtifactRecord.provenance_json,
-                            raiseload=True,
-                        )],
+                    _artifact_tails(session, [publication.artifact_id]).get(
+                        publication.artifact_id
                     )
                     if publication is not None and publication.status == "published"
                     else None

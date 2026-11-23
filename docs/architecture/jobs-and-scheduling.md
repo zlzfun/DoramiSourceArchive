@@ -10,3 +10,13 @@ A `CollectionJobRecord` is a savable, schedulable collection job that bundles mu
 ## Persistent background jobs (阶段3)
 
 Long admin tasks (采集任务运行、全量媒体回填、远程内容同步等) submit-and-return a `job_id`; the frontend polls `GET /api/jobs/{job_id}`. `src/services/jobs.py` is the **DB-backed** state machine (`JobRecord` table, statuses `queued/running/succeeded/failed/cancelled`) that replaced the process-in-memory `background_jobs` — so job state/progress/result survive a restart and are cross-process queryable (foundation for the scheduler↔worker split). `launch(engine, type, work, *, created_by, payload)` spawns an `asyncio` task running `work(job)`; the `Job` handle's `set_total`/`advance` persist progress **throttled** (every `_FLUSH_EVERY=25` steps or `_FLUSH_INTERVAL=1s`) so per-item loops don't hammer the DB, while status transitions and `set_total` flush immediately. `get_job`/`list_jobs` read back a dict whose shape matches the old `to_dict` (epoch-float timestamps) so the poll contract is unchanged. (Live per-fetcher fetch progress still uses the in-memory `pipeline/progress.py`; migrating it to DB is a later 阶段3 step.)
+
+## 周期任务的迟到宽限(issue #318)
+
+APScheduler 默认 `misfire_grace_time` 只有 1 秒:事件循环被拖住几秒,到点的那一拍就被整个丢弃(日志 `was missed by`),要等下一个周期。
+
+- **cron 类**:一律经 `add_cron_job`,宽限 `CRON_MISFIRE_GRACE_SECONDS = 300` 并 `coalesce`。
+- **interval 类**:一律带 `interval_job_options(...)`——宽限一个周期、积压合并成一拍。`_ensure_interval_job` 自动带上;直接 `scheduler.add_job(..., "interval", ...)` 的几处(存储巡检、播客 worker、用户自定源刷新)显式展开它。`tests/test_scheduler_reload.py` 用 AST 检查 `app.py` 里每处 `"interval"` 注册都带这组选项,新加任务绕不开。
+
+播客 worker 每拍结束后的精品导读候选巡检另有降频(`_podcast_premium_scan_due`,60 秒一次;本拍有进展时立即巡检),见 [`podcast.md`](podcast.md)。
+

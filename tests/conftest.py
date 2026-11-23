@@ -118,6 +118,20 @@ def idle_automatic_title_worker(monkeypatch):
 TEST_PBKDF2_ITERATIONS = 1_000
 
 
+@pytest.fixture(autouse=True)
+def fresh_premium_scan_throttle():
+    """精品导读候选巡检的降频状态是进程级的(issue #318):每个用例从「刚启动」开始。
+
+    不复位的话,前一个用例跑过一次巡检,后一个用例在 60 秒内的空转一拍就不再巡检
+    ——结果取决于用例顺序。只在 ``api.app`` 已被导入时动它,不为此引入导入开销。
+    """
+
+    module = sys.modules.get("api.app")
+    if module is not None and hasattr(module, "_podcast_premium_scan_at"):
+        module._podcast_premium_scan_at = None
+    yield
+
+
 @pytest.fixture(autouse=True, scope="session")
 def fast_password_hashing():
     from services import accounts

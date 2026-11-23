@@ -80,6 +80,7 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
+- ☐ [#318 播客处理的内存与读盘根治](plans/issue-318-podcast-memory-io.md) — 热度查询只取小列并在 SQL 里按日期粗筛、候选巡检不再每拍读全部转写、回执回收不整表加载、interval 任务补迟到宽限;租约路径与去重(PR-2)待做。
 - ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
 
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。

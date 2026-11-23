@@ -1421,3 +1421,122 @@ def test_audio_qa_fails_when_exceeding_hard_ceiling_and_keeps_blog(tmp_path):
             )
         ).all()
         assert audios == []
+
+
+# ---------- 候选巡检的读路径(issue #318) ----------
+#
+# ``podcast_text_artifacts`` 的 ``language / authority_id / provenance_json`` 等列在行里
+# 排在 ``inline_text`` 之后。SQLite 读它们要沿溢出页链走完整段逐字稿,所以哪怕查询
+# 不取正文,每拍也会把全部逐字稿读一遍(生产实测一拍 340MB)。
+
+
+def _statements_during(engine, call):
+    from sqlalchemy import event
+
+    statements: list[str] = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(" ".join(statement.split()))
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        result = call()
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    return result, statements
+
+
+_AFTER_TRANSCRIPT_TEXT = (
+    "podcast_text_artifacts.language",
+    "podcast_text_artifacts.authority_id",
+    "podcast_text_artifacts.source_artifact_id",
+    "podcast_text_artifacts.source_content_hash",
+    "podcast_text_artifacts.provenance_json",
+)
+
+
+def test_candidate_scan_reads_each_transcript_tail_once_per_process(tmp_path):
+    sink = _eligible_force_sink(tmp_path, "scan-tail.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+
+    def scan():
+        return pending_premium_guide_candidates(sink.engine, **scope)
+
+    first, first_statements = _statements_during(sink.engine, scan)
+    second, second_statements = _statements_during(sink.engine, scan)
+    assert first == second == ["episode-force"]
+
+    def select_list(statement: str) -> str:
+        return statement[: statement.upper().index(" FROM ")]
+
+    def touching_transcripts(statements):
+        return [s for s in statements if "podcast_text_artifacts" in s]
+
+    for statements in (first_statements, second_statements):
+        joins = [s for s in touching_transcripts(statements) if " JOIN " in s.upper()]
+        assert len(joins) == 1
+        # 主查询只取排在正文之前的转写列。
+        for column in (*_AFTER_TRANSCRIPT_TEXT, "podcast_text_artifacts.inline_text"):
+            assert column not in select_list(joins[0])
+        # 任何语句都不取逐字稿正文。
+        for statement in statements:
+            assert "inline_text" not in select_list(statement)
+
+    def tail_reads(statements):
+        return [
+            s for s in touching_transcripts(statements)
+            if any(column in select_list(s) for column in _AFTER_TRANSCRIPT_TEXT)
+        ]
+
+    # 第一拍为这份转写读一次尾部列;之后同一进程不再读。
+    assert len(tail_reads(first_statements)) == 1
+    assert tail_reads(second_statements) == []
+
+
+def test_transcript_column_order_keeps_the_light_columns_before_the_text():
+    """这条守卫记录前提:哪几列在正文之前(便宜)、哪几列在之后(要走溢出页链)。"""
+
+    names = [column.name for column in PodcastTextArtifactRecord.__table__.columns]
+    text_at = names.index("inline_text")
+    assert max(names.index(n) for n in ("id", "episode_id", "kind", "content_hash")) < text_at
+    assert min(
+        names.index(n.split(".", 1)[1]) for n in _AFTER_TRANSCRIPT_TEXT
+    ) > text_at
+
+
+def test_transcript_tail_cache_is_per_database_and_bounded(tmp_path, monkeypatch):
+    from services import podcast_premium_guides as guides
+
+    def sink_with(name: str, language: str) -> DatabaseStorage:
+        sink = DatabaseStorage(f"sqlite:///{tmp_path / name}")
+        _seed_force_candidate(sink)
+        with Session(sink.engine) as session:
+            for index in range(3):
+                session.add(PodcastTextArtifactRecord(
+                    id=f"extra-{index}", episode_id="episode-force",
+                    kind="transcript_zh", version=index + 1, content_hash=f"{index}" * 64,
+                    inline_text="x" * 10, language=language, authority_id="test-authority",
+                    provenance_json="{}", created_at=STAMP,
+                ))
+            session.commit()
+        return sink
+
+    english = sink_with("tail-en.db", "en")
+    french = sink_with("tail-fr.db", "fr")
+    # 两个库里同名的产物各记各的,不串。
+    with Session(english.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0"])["extra-0"].language == "en"
+    with Session(french.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0"])["extra-0"].language == "fr"
+    with Session(english.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0", "missing"]).keys() == {"extra-0"}
+
+    monkeypatch.setattr(guides, "_ARTIFACT_TAIL_CACHE_LIMIT", 2)
+    with Session(french.engine) as session:
+        loaded = guides._artifact_tails(session, ["extra-0", "extra-1", "extra-2"])
+        assert set(loaded) == {"extra-0", "extra-1", "extra-2"}
+        assert len(guides._artifact_tail_caches[session.get_bind()]) == 2
