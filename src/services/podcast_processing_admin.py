@@ -587,6 +587,47 @@ def _select_external_input(
     raise PodcastAdminError("podcast_artifact_not_ready", status_code=409)
 
 
+# 仍会自己往下走的处理单状态。停给人工的(待对账 / 待审)不算:它们不会自己推进。
+_LIVE_PROCESSING_STATUSES = ("queued", "running", "retry_wait")
+
+
+def live_owner_of_transcript(
+    session: Session, *, episode_id: str, artifact_id: str, target: str = "full_analysis"
+) -> PodcastProcessingRecord | None:
+    """仍在途、且这份转写正是它自己的 ASR 产出的那个处理单(issue #318)。
+
+    从源音频起步的处理单,ASR 成功后会自己接着分析这份转写。自动入队若把它当成
+    「新出现的输入」再建一单,第二单排在第一单后面,把同一份转写再分析一遍
+    (输入指纹含产物种类,所以两单的幂等键不同,键去重拦不住)。
+    """
+
+    return session.exec(
+        select(PodcastProcessingRecord)
+        .join(
+            PodcastStageAttemptRecord,
+            PodcastStageAttemptRecord.processing_id == PodcastProcessingRecord.id,
+        )
+        .where(
+            PodcastProcessingRecord.episode_id == episode_id,
+            PodcastProcessingRecord.requested_target == target,
+            PodcastProcessingRecord.processing_status.in_(_LIVE_PROCESSING_STATUSES),
+            PodcastStageAttemptRecord.stage == "asr",
+            PodcastStageAttemptRecord.submission_state == "succeeded",
+            PodcastStageAttemptRecord.output_artifact_id == artifact_id,
+        )
+        .order_by(PodcastProcessingRecord.queued_at, PodcastProcessingRecord.id)
+        .limit(1)
+    ).first()
+
+
+def transcript_is_owned_by_live_processing(
+    session: Session, *, episode_id: str, artifact_id: str, target: str = "full_analysis"
+) -> bool:
+    return live_owner_of_transcript(
+        session, episode_id=episode_id, artifact_id=artifact_id, target=target
+    ) is not None
+
+
 def select_full_analysis_input(
     engine: Engine,
     *,
@@ -833,6 +874,7 @@ def request_processing(
     reason: str,
     actor: str,
     idempotency_key_prefix: str | None = None,
+    reused_owner: list[str] | None = None,
 ) -> PodcastProcessingRecord:
     """Durably enqueue one processing request.
 
@@ -842,6 +884,11 @@ def request_processing(
     request actually selects (``prefix:content_hash[:16]``), so a restart that
     re-resolves the same input replays the same record instead of colliding
     with it, and a changed input naturally yields a new key.
+
+    An automatic request whose selected transcript belongs to a live run of
+    its own returns that run instead of creating another one; its id is then
+    appended to ``reused_owner`` so the caller can tell "nothing new was
+    enqueued for this input" from a real enqueue.
     """
 
     if target not in {"transcript", "full_analysis", "digest_blog"}:
@@ -897,6 +944,22 @@ def request_processing(
                     session.expunge(replay)
                     session.commit()
                     return replay
+                # 自动请求:最终选中的若是某个在途处理单自己产出的转写,就复用那
+                # 一单,不另建。必须在这里(持锁、输入已最终选定)判断——巡检侧的
+                # 同类判断只是省一次入队,它看的是更早的状态:巡检时 ASR 还没完成、
+                # 入队时刚好完成,选中的输入就从源音频变成了转写。
+                owner = live_owner_of_transcript(
+                    session,
+                    episode_id=episode_id,
+                    artifact_id=selected.artifact_id,
+                    target=target,
+                )
+                if owner is not None:
+                    if reused_owner is not None:
+                        reused_owner.append(owner.id)
+                    session.expunge(owner)
+                    session.commit()
+                    return owner
             selection_source = "editor" if selection_override else "policy"
             if not selection_override:
                 analysis = session.get(ArticleAnalysisRecord, episode_id)

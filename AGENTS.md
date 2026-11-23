@@ -38,7 +38,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 5. **主仓不离开 `main`**:一波一分支 `feat/issue-<N>-<slug>` 自最新 `origin/main` 拉出,在 worktree 里实现;内网适配(含看似通用的 src 改动)只进 `master`,master 永不合回 main。
 6. **部署脚本里不写 `| grep -q` 当条件**(`pipefail` 下生产者吃 SIGPIPE、条件翻转,issue #150 已修六处);bash 3.2 下中文文案里变量一律 `${NAME}`;`$( case … )` 先算变量。
 7. **文件锁一律经 `services/file_lock`**(POSIX `flock` / Windows `msvcrt`),不裸 `import fcntl`;Windows 上先关句柄再 `os.replace` / `unlink`。
-8. **cron 类任务统一 `misfire_grace_time=300` + `coalesce`**(`add_cron_job`):2026-09-14 默认 1 s 宽限撞上一次事件循环阻塞,日报与四个采集任务整天缺席。
+8. **cron 类任务统一 `misfire_grace_time=300` + `coalesce`**(`add_cron_job`):2026-09-14 默认 1 s 宽限撞上一次事件循环阻塞,日报与四个采集任务整天缺席。interval 类一律带 `interval_job_options`(宽限一个周期)。
 9. **测试**:造数据用相对时间(滚动窗 + 固定日期 = 时间炸弹);涉及 DNS 公网性判定的用例一律打桩(开发机 fake-ip 代理会掩盖);测试命令 `cmd > log 2>&1; rc=$?` 不走管道;新 TestClient 测试显式建 tmp sink → `docs/dev/testing.md`。
 10. **改「系统记录」的语义前先 grep 消费方**:日报记录的分析行被个人早报与 readiness 消费;给 Archive Sync 分析流加字段时 `archive_sync_v2.ANALYSIS_PAYLOAD_GENERATION` +1;`ScoredItem.to_reduce_dict` 字段被内网神灯流水线消费(只读 `extensions.items`)。
 11. **文档同波**:每波改 `docs/version-history.md`(年表加一行 + 详细一段)、`docs/backlog.md`(有意不做的遗留)、`docs/decisions.md`(拍板 / 不做 / 触发各一行);方案落地后 `git mv` 到 `docs/archive/` 并加归档注;新方案文件名 `docs/plans/issue-<N>-<slug>.md`。跑 `scripts/check_docs.py`。

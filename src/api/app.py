@@ -18,7 +18,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from sqlmodel import Session, select
 from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1199,6 +1199,7 @@ async def enqueue_podcast_processing_with_input(
     reason: str,
     actor: str,
     idempotency_key_prefix: str | None = None,
+    reused_owner: list[str] | None = None,
 ):
     """Prepare a full-analysis input, then issue the durable admin command.
 
@@ -1237,6 +1238,7 @@ async def enqueue_podcast_processing_with_input(
             idempotency_key_prefix=idempotency_key_prefix,
             reason=reason,
             actor=actor,
+            reused_owner=reused_owner,
         )
 
     publisher_failure: BaseException | None = None
@@ -1459,6 +1461,18 @@ def _resolve_podcast_landing_candidate(
             and selected.artifact_id == analysis.transcript_artifact_id
         ):
             return None
+        if (
+            not locator_revision
+            and podcast_processing_admin_service.transcript_is_owned_by_live_processing(
+                session, episode_id=article_id, artifact_id=selected.artifact_id
+            )
+        ):
+            # 在途的那一单会自己分析这份转写;等它落定后上面那条判断自然成立。
+            # 它若最终失败,下一轮巡检再把这份转写当作候选。
+            # 有待刷新的发布方逐字稿(locator_revision)时不拦:此刻选中的还是旧
+            # 转写,新文本要等入队流程把它取回来才成为输入;正式入队处会对最终
+            # 选定的输入再判一次。
+            return None
         revision = (locator_revision or selected.content_hash)[:16]
     return PodcastLandingCandidate(
         article_id,
@@ -1648,6 +1662,8 @@ async def execute_podcast_landing_job() -> dict[str, int]:
 
         async def _run(candidate: PodcastLandingCandidate) -> None:
             async with semaphore:
+                # 正式入队若只是复用了拥有这份转写的在途处理单,它的 id 会记在这里。
+                reused_owner: list[str] = []
                 try:
                     await enqueue_podcast_processing_with_input(
                         episode_id=candidate.episode_id,
@@ -1660,6 +1676,7 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                         idempotency_key_prefix=f"full-analysis:auto:{candidate.episode_id}",
                         reason="简介初评达到全文处理线",
                         actor="system",
+                        reused_owner=reused_owner,
                     )
                 except Exception as exc:  # noqa: BLE001 - remembered, retried with backoff
                     failure = podcast_landing_service.classify_failure(exc)
@@ -1682,7 +1699,13 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                     final = await asyncio.to_thread(
                         collect_podcast_landing_candidates, [candidate.episode_id]
                     )
-                    if final.candidates:
+                    if reused_owner:
+                        # 没有为这份输入新建处理单。重解析若仍给出候选,说明那一单
+                        # 此刻已不在途(刚失败),这个候选还没人接:不能记成「已入队」
+                        # ——那条记忆会让同一 revision 永远被跳过。什么都不记,下一轮
+                        # 再看(那一单还在途时巡检侧会直接放过,不会反复入队)。
+                        pass
+                    elif final.candidates:
                         podcast_landing_service.record_enqueued(
                             state, candidate.episode_id, final.candidates[0].revision, now
                         )
@@ -1866,7 +1889,8 @@ def reload_storage_schedule():
     enabled = any(store.enabled and store.config.cache_enabled for store in _object_stores())
     if enabled or settings.backup.enabled:
         scheduler.add_job(execute_storage_maintenance_job, "interval", seconds=60,
-                          id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
+                          id="storage_maintenance", replace_existing=True, max_instances=1,
+                          **interval_job_options(seconds=60))
     elif scheduler.get_job("storage_maintenance"):
         scheduler.remove_job("storage_maintenance")
 
@@ -2912,10 +2936,28 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool
     return True
 
 
+_INTERVAL_UNITS = ("weeks", "days", "hours", "minutes", "seconds")
+
+
+def interval_job_options(**interval) -> dict[str, Any]:
+    """interval 类任务的迟到宽限:晚到不超过一个周期就照跑,积压的多拍合并成一拍。
+
+    APScheduler 默认宽限只有 1 秒——事件循环被拖住几秒,这一拍就被整个丢弃
+    (日志里的 ``was missed by``),要等下一个周期。cron 类任务已由
+    ``add_cron_job`` 统一给 300 秒;interval 类在这里统一(issue #318)。
+    """
+
+    period = datetime.timedelta(
+        **{unit: interval[unit] for unit in _INTERVAL_UNITS if unit in interval}
+    ).total_seconds()
+    return {"misfire_grace_time": max(1, int(period)), "coalesce": True}
+
+
 def _ensure_interval_job(job_id: str, callback, **kwargs) -> None:
     """固定 interval worker 只在缺席时注册;已在的原样保留(replace 会把 next_run_time 重置为现在起算)。"""
     if scheduler.get_job(job_id) is None:
-        scheduler.add_job(callback, "interval", id=job_id, **kwargs)
+        options = {**interval_job_options(**kwargs), **kwargs}
+        scheduler.add_job(callback, "interval", id=job_id, **options)
 
 
 COLLECTION_JOB_ID_PREFIX = "collection_job_"
@@ -3249,6 +3291,31 @@ def _configured_podcast_full_analysis_worker():
     return podcast_processing_providers.worker_for("analyze")
 
 
+# 精品导读候选巡检要把全部「有逐字稿分析」的单集过一遍。它不必跟着 10 秒一拍的
+# worker 跑:候选只在一次分析落定、发布变化或重试到点时才会变,晚一分钟发现没有
+# 区别(issue #318)。本拍 worker 确实推进了工作时不等,立即巡检。
+PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS = 60.0
+_podcast_premium_scan_at: float | None = None
+
+
+def _podcast_premium_scan_due(
+    actions: tuple[str, ...], *, clock: Callable[[], float] = time.monotonic
+) -> bool:
+    """Whether this worker tick should also look for premium-guide candidates."""
+
+    global _podcast_premium_scan_at
+    current = clock()
+    progressed = any(action != "idle" for action in actions)
+    if (
+        not progressed
+        and _podcast_premium_scan_at is not None
+        and current - _podcast_premium_scan_at < PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS
+    ):
+        return False
+    _podcast_premium_scan_at = current
+    return True
+
+
 async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
     """Advance bounded ASR and full-analysis work from the durable queue."""
 
@@ -3344,6 +3411,9 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
+        if not _podcast_premium_scan_due(actions):
+            return actions
+
         def _read_threshold():
             with Session(db_sink.engine) as threshold_session:
                 return podcast_premium_service.get_threshold(threshold_session)
@@ -3368,6 +3438,10 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 def reload_podcast_asr_worker_schedule() -> None:
     """Register one delayed ASR tick, or remove it when readiness disappears."""
 
+    # (重新)注册 worker 之后的第一拍总要巡检一次精品导读候选:重启前已经落定、
+    # 还没来得及排上的候选靠它接续。
+    global _podcast_premium_scan_at
+    _podcast_premium_scan_at = None
     if (
         _configured_podcast_asr_worker() is None
         and _configured_podcast_full_analysis_worker() is None
@@ -3387,7 +3461,7 @@ def reload_podcast_asr_worker_schedule() -> None:
         id=PODCAST_ASR_WORKER_JOB_ID,
         replace_existing=True,
         max_instances=1,
-        coalesce=True,
+        **interval_job_options(seconds=interval_seconds),
     )
 
 
@@ -3568,6 +3642,7 @@ def reload_user_rss_schedule():
         scheduler.add_job(
             execute_user_rss_refresh_job, "interval", minutes=minutes,
             id="user_rss_refresh", replace_existing=True, max_instances=1,
+            **interval_job_options(minutes=minutes),
         )
     elif scheduler.get_job("user_rss_refresh"):
         scheduler.remove_job("user_rss_refresh")

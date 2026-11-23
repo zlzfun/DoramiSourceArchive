@@ -1421,3 +1421,219 @@ def test_audio_qa_fails_when_exceeding_hard_ceiling_and_keeps_blog(tmp_path):
             )
         ).all()
         assert audios == []
+
+
+# ---------- 候选巡检的读路径(issue #318) ----------
+#
+# ``podcast_text_artifacts`` 的 ``language / authority_id / provenance_json`` 等列在行里
+# 排在 ``inline_text`` 之后。SQLite 读它们要沿溢出页链走完整段逐字稿,所以哪怕查询
+# 不取正文,每拍也会把全部逐字稿读一遍(生产实测一拍 340MB)。
+
+
+def _statements_during(engine, call):
+    from sqlalchemy import event
+
+    statements: list[str] = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(" ".join(statement.split()))
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        result = call()
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    return result, statements
+
+
+_AFTER_TRANSCRIPT_TEXT = (
+    "podcast_text_artifacts.language",
+    "podcast_text_artifacts.authority_id",
+    "podcast_text_artifacts.source_artifact_id",
+    "podcast_text_artifacts.source_content_hash",
+    "podcast_text_artifacts.provenance_json",
+)
+
+
+def test_candidate_scan_reads_each_transcript_tail_once_per_process(tmp_path):
+    sink = _eligible_force_sink(tmp_path, "scan-tail.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+
+    def scan():
+        return pending_premium_guide_candidates(sink.engine, **scope)
+
+    first, first_statements = _statements_during(sink.engine, scan)
+    second, second_statements = _statements_during(sink.engine, scan)
+    assert first == second == ["episode-force"]
+
+    def select_list(statement: str) -> str:
+        return statement[: statement.upper().index(" FROM ")]
+
+    def touching_transcripts(statements):
+        return [s for s in statements if "podcast_text_artifacts" in s]
+
+    for statements in (first_statements, second_statements):
+        joins = [s for s in touching_transcripts(statements) if " JOIN " in s.upper()]
+        assert len(joins) == 1
+        # 主查询只取排在正文之前的转写列。
+        for column in (*_AFTER_TRANSCRIPT_TEXT, "podcast_text_artifacts.inline_text"):
+            assert column not in select_list(joins[0])
+        # 任何语句都不取逐字稿正文。
+        for statement in statements:
+            assert "inline_text" not in select_list(statement)
+
+    def authority_probes(statements):
+        return [
+            s for s in touching_transcripts(statements)
+            if select_list(s).replace(" ", "") == "SELECTid,authority_id"
+        ]
+
+    def tail_reads(statements):
+        probes = authority_probes(statements)
+        return [
+            s for s in touching_transcripts(statements)
+            if s not in probes
+            and any(column in select_list(s) for column in _AFTER_TRANSCRIPT_TEXT)
+        ]
+
+    # 第一拍为这份转写读一次尾部列;之后同一进程不再读。
+    assert len(tail_reads(first_statements)) == 1
+    assert tail_reads(second_statements) == []
+    # authority_id 每拍现取(缓存键的一部分),但只读索引、不回表——回表就要走完
+    # 整段逐字稿。
+    for statements in (first_statements, second_statements):
+        [probe] = authority_probes(statements)
+        assert "INDEXED BY uq_podcast_text_artifacts_authority_slot" in probe
+    with sink.engine.connect() as connection:
+        plan = connection.exec_driver_sql(
+            "EXPLAIN QUERY PLAN SELECT id, authority_id FROM podcast_text_artifacts "
+            "INDEXED BY uq_podcast_text_artifacts_authority_slot WHERE id IN ('transcript-force')"
+        ).fetchall()
+    assert any("COVERING INDEX uq_podcast_text_artifacts_authority_slot" in row[-1] for row in plan)
+
+
+def test_transcript_column_order_keeps_the_light_columns_before_the_text():
+    """这条守卫记录前提:哪几列在正文之前(便宜)、哪几列在之后(要走溢出页链)。"""
+
+    names = [column.name for column in PodcastTextArtifactRecord.__table__.columns]
+    text_at = names.index("inline_text")
+    assert max(names.index(n) for n in ("id", "episode_id", "kind", "content_hash")) < text_at
+    assert min(
+        names.index(n.split(".", 1)[1]) for n in _AFTER_TRANSCRIPT_TEXT
+    ) > text_at
+
+
+def test_transcript_tail_cache_is_per_database_and_bounded(tmp_path, monkeypatch):
+    from services import podcast_premium_guides as guides
+
+    def sink_with(name: str, language: str) -> DatabaseStorage:
+        sink = DatabaseStorage(f"sqlite:///{tmp_path / name}")
+        _seed_force_candidate(sink)
+        with Session(sink.engine) as session:
+            for index in range(3):
+                session.add(PodcastTextArtifactRecord(
+                    id=f"extra-{index}", episode_id="episode-force",
+                    kind="transcript_zh", version=index + 1, content_hash=f"{index}" * 64,
+                    inline_text="x" * 10, language=language, authority_id="test-authority",
+                    provenance_json="{}", created_at=STAMP,
+                ))
+            session.commit()
+        return sink
+
+    english = sink_with("tail-en.db", "en")
+    french = sink_with("tail-fr.db", "fr")
+    # 两个库里同名的产物各记各的,不串。
+    with Session(english.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0"])["extra-0"].language == "en"
+    with Session(french.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0"])["extra-0"].language == "fr"
+    with Session(english.engine) as session:
+        assert guides._artifact_tails(session, ["extra-0", "missing"]).keys() == {"extra-0"}
+
+    monkeypatch.setattr(guides, "_ARTIFACT_TAIL_CACHE_LIMIT", 2)
+    with Session(french.engine) as session:
+        loaded = guides._artifact_tails(session, ["extra-0", "extra-1", "extra-2"])
+        assert set(loaded) == {"extra-0", "extra-1", "extra-2"}
+        assert len(guides._artifact_tail_caches[session.get_bind()]) == 2
+
+
+def test_reimported_artifact_with_the_same_id_is_not_served_from_the_cache(tmp_path):
+    """单集删除后经同步原样导回:产物 id 不变,所属方变了,尾部列必须重新读。
+
+    「行不可变」只管 UPDATE;删除单集会连带删掉产物,之后可以用同一个 id 重建。
+    """
+
+    from sqlalchemy import text
+
+    from services import podcast_premium_guides as guides
+
+    sink = _eligible_force_sink(tmp_path, "reimport.db")
+    config = _external_config()
+    scope = dict(
+        minimum_duration_seconds=config.premium_min_duration_seconds,
+        score_threshold=config.premium_score_threshold,
+    )
+    assert pending_premium_guide_candidates(sink.engine, **scope) == ["episode-force"]
+    with Session(sink.engine) as session:
+        before = guides._artifact_tails(session, ["transcript-force"])["transcript-force"]
+    assert (before.authority_id, before.language) == ("test-authority", "en")
+
+    with Session(sink.engine) as session:
+        # 删单集;分析与产物随外键级联删除(产物的删除触发器只在单集已不存在时放行)。
+        session.exec(text("DELETE FROM articles WHERE id = 'episode-force'"))
+        session.commit()
+    with Session(sink.engine) as session:
+        assert session.get(PodcastTextArtifactRecord, "transcript-force") is None
+    assert pending_premium_guide_candidates(sink.engine, **scope) == []
+
+    transcript = json.dumps({"text": "complete forced transcript"})
+    with Session(sink.engine) as session:
+        session.add(ArticleRecord(
+            id="episode-force", title="Force", content_type="podcast_episode",
+            source_id="podcast-force", source_url="https://example.test/force",
+            publish_date=STAMP, fetched_date=STAMP, content="show notes",
+            extensions_json=json.dumps({"duration_seconds": 21 * 60}),
+        ))
+        session.commit()
+        session.add(ArticleAnalysisRecord(
+            article_id="episode-force", status="succeeded", quality_score=9.0,
+            podcast_final_score=9.0, analysis_basis="asr_transcript",
+            transcript_artifact_id="transcript-force", created_at=STAMP, updated_at=STAMP,
+        ))
+        session.add(PodcastTextArtifactRecord(
+            id="transcript-force", episode_id="episode-force",
+            kind="normalized_transcript", version=1,
+            content_hash=hashlib.sha256(transcript.encode()).hexdigest(),
+            inline_text=transcript, language="fr", authority_id="upstream-authority",
+            provenance_json='{"provider":"fake"}', created_at=STAMP,
+        ))
+        session.flush()
+        session.add(PodcastTextPublicationRecord(
+            identity="episode-force:normalized_transcript", episode_id="episode-force",
+            kind="normalized_transcript", artifact_id="transcript-force",
+            authority_id="upstream-authority", status="published", published_at=STAMP,
+            updated_at=STAMP,
+        ))
+        session.commit()
+
+    with Session(sink.engine) as session:
+        after = guides._artifact_tails(session, ["transcript-force"])["transcript-force"]
+    assert (after.authority_id, after.language) == ("upstream-authority", "fr")
+    # 发布指针的所属方与产物一致:候选不该因为缓存里的旧所属方被跳过。
+    assert pending_premium_guide_candidates(sink.engine, **scope) == ["episode-force"]
+
+
+def test_authority_probe_survives_a_missing_index(tmp_path, monkeypatch, captured_log):
+    from services import podcast_premium_guides as guides
+
+    sink = _eligible_force_sink(tmp_path, "no-index.db")
+    monkeypatch.setattr(guides, "_AUTHORITY_SLOT_INDEX", "no_such_index")
+    with captured_log(guides.logger) as logged:
+        with Session(sink.engine) as session:
+            tails = guides._artifact_tails(session, ["transcript-force"])
+    assert tails["transcript-force"].authority_id == "test-authority"
+    assert any("no_such_index" in record.getMessage() for record in logged)

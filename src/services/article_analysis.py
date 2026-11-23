@@ -1684,6 +1684,47 @@ def _podcast_people_payloads_are_current(
     return recorded == list(_normalized_podcast_people(extensions.get("persons")))
 
 
+# 「看起来是带连字符的 ISO 日期」:第 5、8 位是 ``-`` 且至少 10 位。能被
+# ``parse_article_time`` 解析、又匹配这个形状的,只能是 ``YYYY-MM-DD…`` 写法,
+# 它的前 10 位就是该值自身时区下的日期。
+_ISO_DATE_SHAPE = "____-__-__%"
+
+
+def _may_be_seen_since(coarse_start: str):
+    """SQL 侧「只多不少」的日期粗筛,与 ``parse(publish) or parse(fetched)`` 配套。
+
+    Python 侧的判定是:发布时间能解析就用它,否则回退抓取时间,再与窗口比较。
+    偏移量绝对值小于 24 小时,所以落在窗口内的时刻,其本地日期一定不早于
+    ``coarse_start``(窗口起点再往前一天)。任何 SQL 判断不了的写法(空值、
+    紧凑写法、周历写法、脏数据)一律放行,交给 Python 精确判定;这里只负责把
+    两个日期都明确早于窗口的行挡在数据库里。
+    """
+
+    # 空值先折成空串:下面每个判断都只会得到真 / 假,不会因为 NULL 让整行被
+    # WHERE 悄悄丢掉。
+    publish = func.coalesce(ArticleRecord.publish_date, "")
+    fetched = func.coalesce(ArticleRecord.fetched_date, "")
+
+    def before_window(value):
+        return and_(
+            value.like(_ISO_DATE_SHAPE),
+            func.substr(value, 1, 10) < coarse_start,
+        )
+
+    def absent(value):
+        return func.trim(value) == ""
+
+    # 排除两种确定在窗口外的情形,其余全部保留:
+    # ① 发布时间是早于窗口的 ISO 日期,且抓取时间也是早于窗口的 ISO 日期或为空
+    #    ——发布时间能解析则它本身在窗口外,不能解析则回退到的抓取时间也在窗口外;
+    # ② 发布时间为空,抓取时间是早于窗口的 ISO 日期。
+    surely_outside = or_(
+        and_(before_window(publish), or_(before_window(fetched), absent(fetched))),
+        and_(absent(publish), before_window(fetched)),
+    )
+    return ~surely_outside
+
+
 def build_topic_heat_context(
     session: Session,
     *,
@@ -1691,10 +1732,16 @@ def build_topic_heat_context(
     active_tags: Sequence[TaxonomyTagDTO],
     now: Optional[dt.datetime] = None,
 ) -> dict[str, Any]:
-    """Snapshot seven-day canonical topic/entity heat without RSS volume bias."""
+    """Snapshot seven-day canonical topic/entity heat without RSS volume bias.
+
+    只取聚合要用的列,并在 SQL 里先挡掉确定早于窗口的行(issue #318)。此前这里
+    整行加载「历史上所有带相关标签的文章 + 分析记录」再在 Python 里按 7 天过滤:
+    一次调用能读入数百 MB 正文,释放后还会留在工作线程的堆里。
+    """
 
     snapshot = _as_utc(now)
     start = snapshot - dt.timedelta(days=7)
+    coarse_start = (start - dt.timedelta(days=1)).date().isoformat()
     relevant = {
         int(tag.id): tag
         for tag in active_tags
@@ -1710,23 +1757,41 @@ def build_topic_heat_context(
 
     public_ids: set[str] = set()
     briefs = session.exec(
-        select(ArticleRecord).where(ArticleRecord.source_id == "dorami_daily_brief")
+        select(
+            ArticleRecord.publish_date,
+            ArticleRecord.fetched_date,
+            ArticleRecord.extensions_json,
+        ).where(
+            ArticleRecord.source_id == "dorami_daily_brief",
+            _may_be_seen_since(coarse_start),
+        )
     ).all()
-    for brief in briefs:
-        brief_time = parse_article_time(brief.publish_date) or parse_article_time(
-            brief.fetched_date
+    for brief_publish_date, brief_fetched_date, brief_extensions in briefs:
+        brief_time = parse_article_time(brief_publish_date) or parse_article_time(
+            brief_fetched_date
         )
         if brief_time is None or not (start <= brief_time <= snapshot):
             continue
-        included = _article_extensions(brief).get("included_article_ids")
+        try:
+            extensions = json.loads(brief_extensions or "{}")
+        except (TypeError, json.JSONDecodeError):
+            extensions = {}
+        included = (
+            extensions.get("included_article_ids")
+            if isinstance(extensions, dict)
+            else None
+        )
         if isinstance(included, list):
             public_ids.update(str(value) for value in included if value)
 
     rows = session.exec(
         select(
-            ArticleTagAssignmentRecord,
-            ArticleRecord,
-            ArticleAnalysisRecord,
+            ArticleTagAssignmentRecord.tag_id,
+            ArticleRecord.id,
+            ArticleRecord.source_id,
+            ArticleRecord.publish_date,
+            ArticleRecord.fetched_date,
+            ArticleAnalysisRecord.quality_score,
         )
         .join(ArticleRecord, ArticleRecord.id == ArticleTagAssignmentRecord.article_id)
         .outerjoin(
@@ -1737,26 +1802,33 @@ def build_topic_heat_context(
             ArticleTagAssignmentRecord.tag_id.in_(list(relevant)),
             ArticleRecord.id != article_id,
             ArticleRecord.source_id != "dorami_daily_brief",
+            _may_be_seen_since(coarse_start),
         )
     ).all()
     aggregates: dict[int, dict[str, Any]] = {}
-    for assignment, evidence_article, analysis in rows:
-        seen_at = parse_article_time(evidence_article.publish_date) or parse_article_time(
-            evidence_article.fetched_date
+    for (
+        assigned_tag_id,
+        evidence_id,
+        evidence_source_id,
+        evidence_publish_date,
+        evidence_fetched_date,
+        score,
+    ) in rows:
+        seen_at = parse_article_time(evidence_publish_date) or parse_article_time(
+            evidence_fetched_date
         )
         if seen_at is None or not (start <= seen_at <= snapshot):
             continue
-        tag_id = int(assignment.tag_id)
+        tag_id = int(assigned_tag_id)
         aggregate = aggregates.setdefault(
             tag_id,
             {"sources": set(), "max_quality_score": None, "latest_seen_at": seen_at,
              "in_public_daily_brief": False},
         )
-        aggregate["sources"].add(evidence_article.source_id)
+        aggregate["sources"].add(evidence_source_id)
         aggregate["latest_seen_at"] = max(aggregate["latest_seen_at"], seen_at)
-        if evidence_article.id in public_ids:
+        if evidence_id in public_ids:
             aggregate["in_public_daily_brief"] = True
-        score = analysis.quality_score if analysis is not None else None
         if score is not None:
             current = aggregate["max_quality_score"]
             aggregate["max_quality_score"] = max(float(score), current or float(score))

@@ -148,6 +148,9 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+_RECLAIM_ARTICLE_CHUNK = 200
+
+
 def _reclaim_completed_receipts_unlocked(
     config: BailianSpeechConfig, engine, *, retention_days: int | None = 7,
     now: dt.datetime | None = None, drop_incompressible: bool = False,
@@ -177,21 +180,33 @@ def _reclaim_completed_receipts_unlocked(
             PodcastArtifactRecord.kind == "digest_audio_zh",
             PodcastArtifactRecord.status == "published",
         )).all())
-        for article in session.exec(select(ArticleRecord)).all():
-            try:
-                extensions = json.loads(article.extensions_json or "{}")
-            except (TypeError, ValueError):
-                continue
-            guide = extensions.get("listen_guide") if isinstance(extensions, dict) else None
-            if not isinstance(guide, dict) or guide.get("status") != "ready":
-                continue
-            content_hash = str(guide.get("content_hash") or "").strip().lower()
-            mime = str(guide.get("mime") or "").strip().lower()
-            if re.fullmatch(r"[0-9a-f]{64}", content_hash) and mime:
-                published.add(article.id)
         rows = session.exec(select(BailianTtsCallRecord).where(
             BailianTtsCallRecord.account_scope == config.account_scope,
         )).all()
+        # 只有「本账号有成功回执、且还没被成品音频判为已发布」的文章才需要看
+        # ``listen_guide``。此前这里整表加载全部文章(连正文),只为读这一个字段
+        # (issue #318)。
+        undecided = sorted({
+            row.episode_id for row in rows
+            if row.status == "succeeded" and row.episode_id not in published
+        })
+        for offset in range(0, len(undecided), _RECLAIM_ARTICLE_CHUNK):
+            chunk = undecided[offset:offset + _RECLAIM_ARTICLE_CHUNK]
+            for article_id, raw_extensions in session.exec(
+                select(ArticleRecord.id, ArticleRecord.extensions_json)
+                .where(ArticleRecord.id.in_(chunk))
+            ).all():
+                try:
+                    extensions = json.loads(raw_extensions or "{}")
+                except (TypeError, ValueError):
+                    continue
+                guide = extensions.get("listen_guide") if isinstance(extensions, dict) else None
+                if not isinstance(guide, dict) or guide.get("status") != "ready":
+                    continue
+                content_hash = str(guide.get("content_hash") or "").strip().lower()
+                mime = str(guide.get("mime") or "").strip().lower()
+                if re.fullmatch(r"[0-9a-f]{64}", content_hash) and mime:
+                    published.add(article_id)
         in_flight = {row.episode_id for row in rows if row.status in {"reserved", "authorized", "generated"}}
         for row in rows:
             if row.status != "succeeded" or row.episode_id not in published or row.episode_id in in_flight:
