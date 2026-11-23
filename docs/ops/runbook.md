@@ -27,6 +27,11 @@
 - 已知病因与修法:只为聚合取数却整行 `.all()` 再在 Python 里过滤(改只取聚合列 + SQL 侧粗筛)、高频查询取了排在大文本之后的列(改不取 / 按不可变行缓存)、租约内的重活排在第一次续租之前(改认领后立刻建 attempt、重活纳入续租保护)。
 - 播客处理单反复重试:`podcast_stage_attempts` 按 `processing_id, error_code` 计数;`lease_expired_local_attempt` 单次出现属正常(重启就会有),同一处理单连续出现说明某一步跑不进租约——日志搜 `失去租约` / `连续 N 次租约到期`,里面有耗时;到上限后处理单是 `failed` / `lease_expired_retry_exhausted`,排除原因后由管理员重试。
 
+## 播客单集进不了全文处理(issue #323 沉淀)
+
+- 先看 landing 的记忆:KV `podcast_landing:attempts` 是「单集 → 最近一次结论」的 JSON,按 `kind / code` 计数就知道卡在哪一类。`gated` 是闸门(产物库容量、ASR 未就绪),10 分钟回访;`transient` 退避重试;`deterministic` / `exhausted` 24 小时复查。
+- 「过大」先核对是不是真的大:订阅源声明的大小不可靠,判定以真实文件和 `max_audio_mb` 为准。「过长」对的是单集转写时长上限(生产配置),不是订阅源里写的时长。量到的值在 KV `podcast_source_media:rejections`(`seconds` / `bytes`、音频地址的 hash、取证时间):同一地址、30 天内、现在的上限仍容不下时,每天的复查不再下载。想立刻重新量,用管理端的显式校验接口(它不看这份记忆)。
+- `artifact_store_capacity` 成片出现说明同时有几路下载占着配额;看 `podcast_artifacts` 的已发布音频占了多少、`total_quota_mb` 还剩多少。
 ## 精品导读语音报「月度预算已满」(issue #322 沉淀)
 
 - 先分清是真花完了还是被占着:`bailian_tts_calls` 按 `budget_period, status` 汇总 `count(*)`、`sum(cost_minor)`。`succeeded` 是真实花费;`authorized` 是结果未知、可能已计费的调用(跨月仍占预算,要对账,并拦住同一期节目的后续合成);`generated` 是已计费、音频还没落盘的分段(跨月仍占预算,再跑一次会从回执续做);`reserved` 是还没发出去的分段——v3.70.2 起它的占用额应为 0,不为 0 说明有合成正在途,或者又有预留被丢下。
