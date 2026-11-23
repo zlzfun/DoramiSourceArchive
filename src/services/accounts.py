@@ -22,6 +22,7 @@ import hmac
 import secrets
 from typing import List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, func, select, update
 
 from models.db import (
@@ -219,6 +220,41 @@ def get_active_user(session: Session, username: str) -> Optional[UserRecord]:
     return record if record and record.is_active else None
 
 
+def resolve_w3_user(session: Session, employee_number: str) -> Optional[UserRecord]:
+    """Resolve one active account by exact ``users.w3_uid`` match.
+
+    Alignment with Dorami ``users`` schema:
+    - HTTP query parameter ``employee_number`` carries the letter-prefixed W3 ID
+      (e.g. ``l00976966``, originating from bot ``subscriptions.user_id``).
+    - ``users.w3_uid`` (and typically SSO ``users.username``) stores ``l00976966``,
+      whereas ``users.w3_employee_number`` stores numeric-only ``00976966``.
+    - This function MUST compare ``UserRecord.w3_uid == employee_number`` verbatim
+      (no trim, no case-folding, no stripping of the leading letter), MUST NOT
+      query ``w3_employee_number``, and MUST NOT fall back to ``UserRecord.username``.
+    """
+    if not isinstance(employee_number, str) or not employee_number:
+        return None
+    rows = list(session.exec(
+        select(UserRecord).where(UserRecord.w3_uid == employee_number)
+    ).all())
+    if len(rows) > 1:
+        import logging
+        from services.briefs_contract import BriefsError
+
+        logging.getLogger("dorami.accounts").error(
+            "w3_uid mapping conflict count=%s", len(rows)
+        )
+        raise BriefsError(
+            500,
+            "ACCOUNT_MAPPING_CONFLICT",
+            "employee_number maps to multiple Dorami accounts",
+        )
+    if not rows:
+        return None
+    record = rows[0]
+    return record if record.is_active else None
+
+
 def list_users(session: Session) -> List[UserRecord]:
     """全部账户(不含游客保留账号:它不是账户,不进名单、读者数与任何管理操作)。"""
     return list(session.exec(
@@ -323,13 +359,25 @@ def _normalize_role(role: str) -> str:
     return role
 
 
-def create_user(session: Session, username: str, password: str, role: str) -> UserRecord:
+def create_user(
+    session: Session,
+    username: str,
+    password: str,
+    role: str,
+    *,
+    w3_uid: Optional[str] = None,
+) -> UserRecord:
     username = (username or "").strip()
     if not username:
         raise AccountError("用户名不能为空")
     if ":" in username:
         raise AccountError("用户名不能包含冒号")
     role = _normalize_role(role)
+    normalized_w3_uid = (str(w3_uid).strip() or None) if w3_uid is not None else None
+    if normalized_w3_uid is not None and session.exec(
+        select(UserRecord.username).where(UserRecord.w3_uid == normalized_w3_uid)
+    ).first() is not None:
+        raise AccountError("w3_uid is already bound to another account")
     if session.get(UserRecord, username) is not None:
         raise AccountError(f"账户 '{username}' 已存在")
     now = _now_iso()
@@ -337,6 +385,7 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
         username=username,
         password_hash=hash_password(password),
         role=role,
+        w3_uid=(str(w3_uid).strip() or None) if w3_uid is not None else None,
         is_active=True,
         ai_beta_enabled=ai_beta_new_user_default(session),
         session_epoch=new_session_epoch(),
@@ -344,7 +393,33 @@ def create_user(session: Session, username: str, password: str, role: str) -> Us
         updated_at=now,
     )
     session.add(record)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if normalized_w3_uid is not None and session.exec(
+            select(UserRecord.username).where(UserRecord.w3_uid == normalized_w3_uid)
+        ).first() is not None:
+            raise AccountError("w3_uid is already bound to another account") from exc
+        raise AccountError("account could not be created due to conflicting data") from exc
+    session.refresh(record)
+    return record
+
+
+def set_w3_uid(session: Session, username: str, w3_uid: Optional[str]) -> UserRecord:
+    """Bind or clear one exact ``w3_uid`` (e.g. ``l00976966``) on an account."""
+    record = _get_manageable_user(session, username)
+    if record is None:
+        raise AccountError(f"account '{username}' does not exist")
+    value = str(w3_uid).strip() if w3_uid is not None else ""
+    record.w3_uid = value or None
+    record.updated_at = _now_iso()
+    session.add(record)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise AccountError("w3_uid is already bound to another account") from exc
     session.refresh(record)
     return record
 

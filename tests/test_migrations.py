@@ -2565,14 +2565,24 @@ def test_archive_sync_v2_downgrade_refuses_to_reopen_live_writers(tmp_path, bloc
                 ))
                 session.commit()
         elif blocker == "digest_intent":
-            with Session(engine) as session:
-                session.add(PersonalDigestEditionRecord(
-                    owner_username="alice", report_date="2026-09-04", revision=1,
-                    status="pending", check_after="2026-09-04", cutoff_at="2026-09-04",
-                    desired_generation_reason="manual_rebuild",
-                    desired_requested_at="2026-09-04", created_at="now", updated_at="now",
-                ))
-                session.commit()
+            from sqlalchemy import MetaData, Table
+
+            edition = PersonalDigestEditionRecord(
+                owner_username="alice", report_date="2026-09-04", revision=1,
+                status="pending", check_after="2026-09-04", cutoff_at="2026-09-04",
+                desired_generation_reason="manual_rebuild",
+                desired_requested_at="2026-09-04", created_at="now", updated_at="now",
+            )
+            historical_table = Table(
+                "personal_digest_editions", MetaData(), autoload_with=engine
+            )
+            payload = {
+                key: value
+                for key, value in edition.model_dump().items()
+                if key in historical_table.c and key != "id"
+            }
+            with engine.begin() as conn:
+                conn.execute(historical_table.insert().values(**payload))
     finally:
         engine.dispose()
 

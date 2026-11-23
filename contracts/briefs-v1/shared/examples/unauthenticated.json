@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "UNAUTHENTICATED",
+    "message": "联调错误示例 UNAUTHENTICATED",
+    "request_id": "briefs-example-001"
+  }
+}

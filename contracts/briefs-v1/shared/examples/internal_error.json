@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "联调错误示例 INTERNAL_ERROR",
+    "request_id": "briefs-example-001"
+  }
+}

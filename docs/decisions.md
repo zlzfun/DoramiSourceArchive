@@ -6,6 +6,7 @@
 
 ## 文档与协作(2026-10-21,issue #210)
 
+- 决策:W3 日报桥接只接受管理员 Cookie 会话，`employee_number` 必须精确映射唯一 active `users.w3_uid`；GET 永不生成，ensure 只在当天没有当前 revision 时通过 SQLite 原子首版保护创建并同步处理。业务状态统一放 HTTP 200 响应体，失败才使用 401/403/422/404；不做:按用户名路径代取、Bearer 鉴权、用 202/409 表达业务状态、服务端代管 bot 白名单和发送水位；触发:W3 身份源或日报 revision 生命周期改变时重评估。详见 [契约](contracts/admin_reader_briefs.md)。
 - 落地:PR(本波);关联 issue:#210、#89
 - 决策:L0 = `AGENTS.md` 正文(≤ 220 行 / ≤ 32 KiB,Codex 直接读)+ `CLAUDE.md` `@AGENTS.md` 导入 + Claude 专属附注;设计说明按域放 `docs/architecture/`,只在不变量 / 命令变化时改 L0 — 方案 §3.1–3.2
 - 决策:三层分发——常驻(L0)/ 按路径(`.claude/rules/*.md` 带 `paths:`)/ 按需(docs、技能);规则与技能只是硬规则 + 指针,正文在 `docs/` 让 Codex 也能读到 — 方案 §1.4

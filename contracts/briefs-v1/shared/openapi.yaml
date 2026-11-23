@@ -1,0 +1,964 @@
+openapi: 3.1.0
+info:
+  title: Dorami Personal Briefs M2M Contract
+  version: 1.0.0
+  description: 业务语义以同版本 CONTRACT.md 为准。登录与既有 CSRF 规则通过环境交接。所有已定义字段固定，允许兼容新增字段。
+servers:
+- url: /
+  description: 同一 Dorami base URL，部署时由双方配置
+paths:
+  /api/admin/reader/briefs/today:
+    get:
+      operationId: getTodayPersonalBrief
+      summary: 只读获取今日最新 revision
+      description: 无生成副作用；账号存在但无版返回 200/missing。
+      security:
+      - AdminCookie: []
+      parameters:
+      - name: employee_number
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/EmployeeNumber'
+        description: subscriptions.user_id，精确匹配 users.w3_uid。仅允许出现一次；未知 query 参数返回
+          422。
+      - name: X-Request-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._-]+$
+        description: 可选追踪 ID；缺失或无效由服务端生成。
+      responses:
+        '401':
+          description: UNAUTHENTICATED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                UNAUTHENTICATED:
+                  value:
+                    error:
+                      code: UNAUTHENTICATED
+                      message: 联调错误示例 UNAUTHENTICATED
+                      request_id: briefs-example-001
+        '403':
+          description: FORBIDDEN / CSRF_REJECTED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                FORBIDDEN:
+                  value:
+                    error:
+                      code: FORBIDDEN
+                      message: 联调错误示例 FORBIDDEN
+                      request_id: briefs-example-001
+                CSRF_REJECTED:
+                  value:
+                    error:
+                      code: CSRF_REJECTED
+                      message: 联调错误示例 CSRF_REJECTED
+                      request_id: briefs-example-001
+        '404':
+          description: ACCOUNT_NOT_FOUND
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                ACCOUNT_NOT_FOUND:
+                  value:
+                    error:
+                      code: ACCOUNT_NOT_FOUND
+                      message: 联调错误示例 ACCOUNT_NOT_FOUND
+                      request_id: briefs-example-001
+        '422':
+          description: INVALID_ARGUMENT
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                INVALID_ARGUMENT:
+                  value:
+                    error:
+                      code: INVALID_ARGUMENT
+                      message: 联调错误示例 INVALID_ARGUMENT
+                      request_id: briefs-example-001
+        '429':
+          description: RATE_LIMITED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+            Retry-After:
+              description: 限流等待秒数或 HTTP-date；bot 不早于此时间补查
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                RATE_LIMITED:
+                  value:
+                    error:
+                      code: RATE_LIMITED
+                      message: 联调错误示例 RATE_LIMITED
+                      request_id: briefs-example-001
+        '500':
+          description: INTERNAL_ERROR / ACCOUNT_MAPPING_CONFLICT
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                INTERNAL_ERROR:
+                  value:
+                    error:
+                      code: INTERNAL_ERROR
+                      message: 联调错误示例 INTERNAL_ERROR
+                      request_id: briefs-example-001
+                ACCOUNT_MAPPING_CONFLICT:
+                  value:
+                    error:
+                      code: ACCOUNT_MAPPING_CONFLICT
+                      message: 联调错误示例 ACCOUNT_MAPPING_CONFLICT
+                      request_id: briefs-example-001
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                SERVICE_UNAVAILABLE:
+                  value:
+                    error:
+                      code: SERVICE_UNAVAILABLE
+                      message: 联调错误示例 SERVICE_UNAVAILABLE
+                      request_id: briefs-example-001
+        default:
+          description: 未约定 HTTP、网关非 JSON、连接错误按调用失败处理，不触发 ensure；详见 CONTRACT.md
+        '200':
+          description: 业务结果，按 pushable 与状态表决策
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefResponse'
+              examples:
+                missing:
+                  value:
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: missing
+                    pushable: false
+                    fallback_hint: retry
+                    edition: null
+                pending:
+                  value: &id001
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: pending
+                    pushable: false
+                    fallback_hint: retry
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: pending
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: null
+                      items: []
+                processing:
+                  value: &id002
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: processing
+                    pushable: false
+                    fallback_hint: retry
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: processing
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: null
+                      items: []
+                ready:
+                  value: &id003
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: ready
+                    pushable: true
+                    fallback_hint: null
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: ready
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: '2026-11-09T08:31:00+08:00'
+                      items:
+                      - position: 1
+                        section: 重点关注
+                        selection_lane: interest
+                        quality_score: 7.5
+                        selection_reason: 匹配用户关注领域
+                        snapshot:
+                          title: 储能行业动态示例
+                          source_name: 示例来源
+                          source_url: https://example.com/news/energy-001
+                          publish_date: '2026-11-09'
+                          summary: 此条为契约联调模拟素材，不表示真实新闻。
+                          score_reason: null
+                          tags:
+                          - 储能
+                          display_tags:
+                          - 行业动态
+                          - 储能
+                          event_id: event-example-001
+                          related_sources:
+                          - title: 相关报道示例
+                            source_name: 另一示例来源
+                            source_url: https://example.com/news/energy-002
+                            publish_date: null
+                degraded:
+                  value: &id004
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: degraded
+                    pushable: true
+                    fallback_hint: null
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: ready
+                      degraded_reason: 中文化部分失败，使用可用标题
+                      selection_stats: {}
+                      generated_at: '2026-11-09T08:31:00+08:00'
+                      items:
+                      - position: 1
+                        section: 重点关注
+                        selection_lane: interest
+                        quality_score: 7.5
+                        selection_reason: 匹配用户关注领域
+                        snapshot:
+                          title: 储能行业动态示例
+                          source_name: 示例来源
+                          source_url: https://example.com/news/energy-001
+                          publish_date: '2026-11-09'
+                          summary: 此条为契约联调模拟素材，不表示真实新闻。
+                          score_reason: null
+                          tags:
+                          - 储能
+                          display_tags:
+                          - 行业动态
+                          - 储能
+                          event_id: event-example-001
+                          related_sources:
+                          - title: 相关报道示例
+                            source_name: 另一示例来源
+                            source_url: https://example.com/news/energy-002
+                            publish_date: null
+                empty:
+                  value: &id005
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: empty
+                    pushable: false
+                    fallback_hint: public
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: ready
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: '2026-11-09T08:31:00+08:00'
+                      items: []
+                failed:
+                  value: &id006
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: failed
+                    pushable: false
+                    fallback_hint: public
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: failed
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: null
+                      items: []
+                ready_nullable_fields:
+                  value: &id007
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: ready
+                    pushable: true
+                    fallback_hint: null
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 1
+                      status: ready
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: '2026-11-09T08:31:00+08:00'
+                      items:
+                      - position: 1
+                        section: 重点关注
+                        selection_lane: interest
+                        quality_score: 7.5
+                        selection_reason: 匹配用户关注领域
+                        snapshot:
+                          title: 储能行业动态示例
+                          source_name: 示例来源
+                          source_url: https://example.com/news/energy-001
+                          publish_date: null
+                          summary: null
+                          score_reason: null
+                          tags: []
+                          display_tags: []
+                          event_id: null
+                          related_sources: []
+                ready_revision_2:
+                  value: &id008
+                    employee_number: l00976966
+                    username: dorami-demo-owner
+                    status: ready
+                    pushable: true
+                    fallback_hint: null
+                    edition:
+                      report_date: '2026-11-09'
+                      revision: 2
+                      status: ready
+                      degraded_reason: null
+                      selection_stats: {}
+                      generated_at: '2026-11-09T08:31:00+08:00'
+                      items:
+                      - position: 1
+                        section: 重点关注
+                        selection_lane: interest
+                        quality_score: 7.5
+                        selection_reason: 匹配用户关注领域
+                        snapshot:
+                          title: 储能行业动态示例
+                          source_name: 示例来源
+                          source_url: https://example.com/news/energy-001
+                          publish_date: '2026-11-09'
+                          summary: 此条为契约联调模拟素材，不表示真实新闻。
+                          score_reason: null
+                          tags:
+                          - 储能
+                          display_tags:
+                          - 行业动态
+                          - 储能
+                          event_id: event-example-001
+                          related_sources:
+                          - title: 相关报道示例
+                            source_name: 另一示例来源
+                            source_url: https://example.com/news/energy-002
+                            publish_date: null
+  /api/admin/reader/briefs/today/ensure:
+    post:
+      operationId: ensureTodayPersonalBrief
+      summary: 今日缺版时原子创建并同步生成
+      description: POST 参数仍在 query，body 为空；已有任何状态版本直接返回。正常 ensure 不返回 missing。
+      security:
+      - AdminCookie: []
+      parameters:
+      - name: employee_number
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/EmployeeNumber'
+        description: subscriptions.user_id，精确匹配 users.w3_uid。仅允许出现一次；未知 query 参数返回
+          422。
+      - name: X-Request-ID
+        in: header
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._-]+$
+        description: 可选追踪 ID；缺失或无效由服务端生成。
+      responses:
+        '401':
+          description: UNAUTHENTICATED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                UNAUTHENTICATED:
+                  value:
+                    error:
+                      code: UNAUTHENTICATED
+                      message: 联调错误示例 UNAUTHENTICATED
+                      request_id: briefs-example-001
+        '403':
+          description: FORBIDDEN / CSRF_REJECTED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                FORBIDDEN:
+                  value:
+                    error:
+                      code: FORBIDDEN
+                      message: 联调错误示例 FORBIDDEN
+                      request_id: briefs-example-001
+                CSRF_REJECTED:
+                  value:
+                    error:
+                      code: CSRF_REJECTED
+                      message: 联调错误示例 CSRF_REJECTED
+                      request_id: briefs-example-001
+        '404':
+          description: ACCOUNT_NOT_FOUND
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                ACCOUNT_NOT_FOUND:
+                  value:
+                    error:
+                      code: ACCOUNT_NOT_FOUND
+                      message: 联调错误示例 ACCOUNT_NOT_FOUND
+                      request_id: briefs-example-001
+        '422':
+          description: INVALID_ARGUMENT
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                INVALID_ARGUMENT:
+                  value:
+                    error:
+                      code: INVALID_ARGUMENT
+                      message: 联调错误示例 INVALID_ARGUMENT
+                      request_id: briefs-example-001
+        '429':
+          description: RATE_LIMITED
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+            Retry-After:
+              description: 限流等待秒数或 HTTP-date；bot 不早于此时间补查
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                RATE_LIMITED:
+                  value:
+                    error:
+                      code: RATE_LIMITED
+                      message: 联调错误示例 RATE_LIMITED
+                      request_id: briefs-example-001
+        '500':
+          description: INTERNAL_ERROR / ACCOUNT_MAPPING_CONFLICT
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                INTERNAL_ERROR:
+                  value:
+                    error:
+                      code: INTERNAL_ERROR
+                      message: 联调错误示例 INTERNAL_ERROR
+                      request_id: briefs-example-001
+                ACCOUNT_MAPPING_CONFLICT:
+                  value:
+                    error:
+                      code: ACCOUNT_MAPPING_CONFLICT
+                      message: 联调错误示例 ACCOUNT_MAPPING_CONFLICT
+                      request_id: briefs-example-001
+        '503':
+          description: SERVICE_UNAVAILABLE
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+              examples:
+                SERVICE_UNAVAILABLE:
+                  value:
+                    error:
+                      code: SERVICE_UNAVAILABLE
+                      message: 联调错误示例 SERVICE_UNAVAILABLE
+                      request_id: briefs-example-001
+        default:
+          description: 未约定 HTTP、网关非 JSON、连接错误按调用失败处理，不触发 ensure；详见 CONTRACT.md
+        '200':
+          description: 业务结果，按 pushable 与状态表决策
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+            X-Briefs-Contract-Version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnsureResponse'
+              examples:
+                pending:
+                  value: *id001
+                processing:
+                  value: *id002
+                ready:
+                  value: *id003
+                degraded:
+                  value: *id004
+                empty:
+                  value: *id005
+                failed:
+                  value: *id006
+                ready_nullable_fields:
+                  value: *id007
+                ready_revision_2:
+                  value: *id008
+components:
+  securitySchemes:
+    AdminCookie:
+      type: apiKey
+      in: cookie
+      name: dorami_admin_session
+      description: 必须有效且 role=admin。CSRF 要求由现有部署交接。
+  headers:
+    CacheControl:
+      description: 个人内容禁止缓存
+      schema:
+        type: string
+        const: no-store
+    RequestId:
+      description: 服务端确认或生成的追踪 ID
+      schema:
+        type: string
+        minLength: 1
+    ContractVersion:
+      description: 当前契约版本；bot 接受兼容的 1.x
+      schema:
+        type: string
+        const: '1.0'
+  schemas:
+    EmployeeNumber:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^\S+$
+    RelatedSource:
+      type: object
+      required:
+      - title
+      - source_name
+      - source_url
+      properties:
+        title: &id009
+          type: string
+          minLength: 1
+          pattern: \S
+        source_name: *id009
+        source_url: &id010
+          type: string
+          format: uri
+          pattern: ^https?://[^\s/]+(?:[^\s]*)$
+        publish_date: &id011
+          anyOf:
+          - &id014
+            type: string
+            format: date
+            pattern: ^\d{4}-\d{2}-\d{2}$
+          - &id016
+            type: string
+            format: date-time
+            pattern: (Z|[+-]\d{2}:\d{2})$
+          - type: 'null'
+      additionalProperties: true
+    Snapshot:
+      type: object
+      required:
+      - title
+      - source_name
+      - source_url
+      - publish_date
+      - summary
+      - score_reason
+      - tags
+      - display_tags
+      - event_id
+      - related_sources
+      properties:
+        title: *id009
+        source_name: *id009
+        source_url: *id010
+        publish_date: *id011
+        summary: &id012
+          type:
+          - string
+          - 'null'
+        score_reason: *id012
+        tags: &id013
+          type: array
+          items: *id009
+        display_tags: *id013
+        event_id: &id015
+          anyOf:
+          - *id009
+          - type: 'null'
+        related_sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedSource'
+      additionalProperties: true
+    Item:
+      type: object
+      required:
+      - position
+      - section
+      - selection_lane
+      - quality_score
+      - selection_reason
+      - snapshot
+      properties:
+        position:
+          type: integer
+          minimum: 1
+        section: *id009
+        selection_lane:
+          type: string
+          enum:
+          - interest
+          - quality
+          - breaking
+        quality_score:
+          type:
+          - number
+          - 'null'
+        selection_reason: *id012
+        snapshot:
+          $ref: '#/components/schemas/Snapshot'
+      additionalProperties: true
+    Edition:
+      type: object
+      required:
+      - report_date
+      - revision
+      - status
+      - degraded_reason
+      - selection_stats
+      - generated_at
+      - items
+      properties:
+        report_date: *id014
+        revision:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - pending
+          - processing
+          - ready
+          - failed
+        degraded_reason: *id015
+        selection_stats:
+          type: object
+          additionalProperties: true
+        generated_at:
+          anyOf:
+          - *id016
+          - type: 'null'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+      additionalProperties: true
+      oneOf:
+      - properties:
+          status:
+            const: ready
+          generated_at: *id016
+      - properties:
+          status:
+            enum:
+            - pending
+            - processing
+            - failed
+          generated_at:
+            type: 'null'
+          items:
+            maxItems: 0
+    BriefResponse:
+      type: object
+      required:
+      - employee_number
+      - username
+      - status
+      - pushable
+      - fallback_hint
+      - edition
+      properties:
+        employee_number:
+          $ref: '#/components/schemas/EmployeeNumber'
+        username: *id009
+        status:
+          type: string
+          enum:
+          - missing
+          - pending
+          - processing
+          - ready
+          - degraded
+          - empty
+          - failed
+        pushable:
+          type: boolean
+        fallback_hint:
+          enum:
+          - public
+          - retry
+          - null
+        edition:
+          anyOf:
+          - $ref: '#/components/schemas/Edition'
+          - type: 'null'
+      additionalProperties: true
+      oneOf:
+      - properties:
+          status:
+            const: missing
+          pushable:
+            const: false
+          fallback_hint:
+            const: retry
+          edition:
+            type: 'null'
+      - properties:
+          status:
+            const: pending
+          pushable:
+            const: false
+          fallback_hint:
+            const: retry
+          edition:
+            type: object
+            properties:
+              status:
+                const: pending
+      - properties:
+          status:
+            const: processing
+          pushable:
+            const: false
+          fallback_hint:
+            const: retry
+          edition:
+            type: object
+            properties:
+              status:
+                const: processing
+      - properties:
+          status:
+            const: ready
+          pushable:
+            const: true
+          fallback_hint:
+            const: null
+          edition:
+            type: object
+            properties:
+              status:
+                const: ready
+              items:
+                minItems: 1
+              degraded_reason:
+                type: 'null'
+      - properties:
+          status:
+            const: degraded
+          pushable:
+            const: true
+          fallback_hint:
+            const: null
+          edition:
+            type: object
+            properties:
+              status:
+                const: ready
+              items:
+                minItems: 1
+              degraded_reason: *id009
+      - properties:
+          status:
+            const: empty
+          pushable:
+            const: false
+          fallback_hint:
+            const: public
+          edition:
+            type: object
+            properties:
+              status:
+                const: ready
+              items:
+                maxItems: 0
+      - properties:
+          status:
+            const: failed
+          pushable:
+            const: false
+          fallback_hint:
+            const: public
+          edition:
+            type: object
+            properties:
+              status:
+                const: failed
+    EnsureResponse:
+      allOf:
+      - $ref: '#/components/schemas/BriefResponse'
+      - properties:
+          status:
+            not:
+              const: missing
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          - request_id
+          properties:
+            code:
+              type: string
+              enum:
+              - UNAUTHENTICATED
+              - FORBIDDEN
+              - CSRF_REJECTED
+              - ACCOUNT_NOT_FOUND
+              - INVALID_ARGUMENT
+              - RATE_LIMITED
+              - INTERNAL_ERROR
+              - ACCOUNT_MAPPING_CONFLICT
+              - SERVICE_UNAVAILABLE
+            message: *id009
+            request_id: *id009
+          additionalProperties: true
+      additionalProperties: true
