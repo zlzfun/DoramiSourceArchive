@@ -414,6 +414,214 @@ def test_capacity_wait_retries_tts_without_another_supplier_or_llm_call(tmp_path
         assert {row.status for row in rows} == {"succeeded"}
 
 
+# ── issue #326:回执音频被逐出之后,同一份口播稿改用成品 ─────────────────────
+
+
+def _evictable_guide(tmp_path, name):
+    """一期跑得通完整导读流程的节目,配真实的语音回执与产物库。"""
+
+    from config_bailian import BailianSpeechConfig
+    from services.bailian_speech_client import BailianSpeechError
+    from services.bailian_tts import BailianPremiumGuideTtsProvider
+
+    sink = _eligible_force_sink(tmp_path, name)
+    root = tmp_path / "receipts"
+    cfg = BailianSpeechConfig(
+        enabled=True, api_key="secret-test", account_scope="test-account",
+        tts_monthly_budget_minor=100, tts_per_run_budget_minor=50,
+        tts_chunk_chars=8, tts_receipt_root=str(root), tts_cache_max_bytes=40_000_000,
+        asr_entitlement_ends_at="2027-01-01T00:00:00+00:00",
+    )
+    state = {"posts": 0, "url_expired": False, "frames": 2400}
+
+    class Supplier:
+        def __init__(self, _config):
+            pass
+
+        def close(self):
+            pass
+
+        def synthesize(self, text):
+            state["posts"] += 1
+            return {
+                "request_id": f"req-{state['posts']}",
+                "usage": {"characters": len(text)},
+                "output": {"audio": {"url": "https://result.oss-ap-southeast-1.aliyuncs.com/a.wav"}},
+            }
+
+    async def download(*_args, **_kwargs):
+        if state["url_expired"]:
+            raise BailianSpeechError("result_download_failed")
+        out = io.BytesIO()
+        with wave.open(out, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(24000)
+            handle.writeframes(b"\x00\x00" * state["frames"])
+        return out.getvalue()
+
+    store = PodcastArtifactStore(
+        sink.engine, tmp_path / "audio", max_bytes=1024 * 1024,
+        total_quota_bytes=10 * 1024 * 1024, minimum_free_bytes=0,
+        staging_ttl_seconds=60, allowed_mime_types=("audio/wav",),
+        probe_runner=lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, stdout='{"streams":[{"codec_type":"audio","duration":"1"}],"format":{"duration":"1"}}', stderr="",
+        ),
+    )
+    tts = BailianPremiumGuideTtsProvider(
+        cfg, engine=sink.engine, episode_id="episode-force", voice_profile="narrator_zh",
+        max_audio_bytes=store.max_bytes, client_factory=Supplier, downloader=download,
+    )
+    kwargs = dict(
+        engine=sink.engine, store=store, episode_id="episode-force", config=_external_config(),
+        text_provider=TextProvider(), tts_provider=tts,
+    )
+    return sink, store, root, state, kwargs
+
+
+def _evict_receipt_audio(sink, root, state):
+    """节目有了成品之后回执音频被逐出;供应商的临时地址随后过期。"""
+
+    from models.db import BailianTtsCallRecord
+    from services.bailian_tts import _drop_audio
+
+    with Session(sink.engine) as session:
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+        ledger = sorted((row.id, row.status, row.cost_minor, row.audio_hash) for row in rows)
+    for key, *_rest in ledger:
+        _drop_audio(root, key, root / f"{key}.wav")
+    state["url_expired"] = True
+    return ledger
+
+
+def _ledger_rows(sink):
+    from models.db import BailianTtsCallRecord
+
+    with Session(sink.engine) as session:
+        return sorted(
+            (row.id, row.status, row.cost_minor, row.audio_hash)
+            for row in session.exec(select(BailianTtsCallRecord)).all()
+        )
+
+
+def test_evicted_receipts_fall_back_to_the_withdrawn_audio_of_the_same_narration(tmp_path):
+    sink, store, root, state, kwargs = _evictable_guide(tmp_path, "evicted-withdrawn.db")
+    first = asyncio.run(run_premium_guide(**kwargs))
+    posts = state["posts"]
+    original = store.get(first["audio_artifact_id"])
+    ledger = _evict_receipt_audio(sink, root, state)
+
+    # 管理端撤回成品后重跑:成品文件还完好,回执却重放不了。
+    store.withdraw(original.id)
+    again = asyncio.run(run_premium_guide(**kwargs))
+
+    restored = store.get(again["audio_artifact_id"])
+    assert restored.id != original.id and restored.status == "published"
+    assert restored.content_hash == original.content_hash
+    assert restored.narration_artifact_id == original.narration_artifact_id
+    assert _force_guide(sink)["status"] == "ready"
+    # 没有再调供应商,账本一行没动。
+    assert state["posts"] == posts
+    assert _ledger_rows(sink) == ledger
+
+
+def test_evicted_receipts_fall_back_when_the_same_text_returns_as_a_new_narration(tmp_path):
+    """流程版本变了、重新生成的口播文本恰好一样:口播稿换了记录,旧成品被撤回。"""
+
+    sink, store, root, state, kwargs = _evictable_guide(tmp_path, "evicted-renarrated.db")
+    first = asyncio.run(run_premium_guide(**kwargs))
+    posts = state["posts"]
+    original = store.get(first["audio_artifact_id"])
+    ledger = _evict_receipt_audio(sink, root, state)
+
+    bumped = replace(kwargs["config"], text_pipeline_version="next-pipeline")
+    again = asyncio.run(run_premium_guide(**{**kwargs, "config": bumped}))
+
+    restored = store.get(again["audio_artifact_id"])
+    assert store.get(original.id).status == "withdrawn"
+    assert restored.status == "published" and restored.content_hash == original.content_hash
+    assert restored.narration_artifact_id != original.narration_artifact_id
+    assert restored.narration_content_hash == original.narration_content_hash
+    assert state["posts"] == posts
+    assert _ledger_rows(sink) == ledger
+
+
+def test_evicted_receipts_without_an_intact_audio_of_that_text_surface_the_error(tmp_path):
+    """只认同一份口播文本的完好成品:别的稿子的音频不能顶替,找不到就如实报错。"""
+
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink, store, root, state, kwargs = _evictable_guide(tmp_path, "evicted-lost.db")
+    earlier = store.get(asyncio.run(run_premium_guide(**kwargs))["audio_artifact_id"])
+
+    class Rewritten(TextProvider):
+        async def create_narration(self, **_kwargs):
+            return "这是改写之后的另一份导读。"
+
+    # 口播稿改写过一次:新稿合成并发布,旧稿的成品被撤回(文件还在)。
+    state["frames"] = 4800
+    current_kwargs = {
+        **kwargs,
+        "config": replace(kwargs["config"], text_pipeline_version="next-pipeline"),
+        "text_provider": Rewritten(),
+    }
+    current = store.get(asyncio.run(run_premium_guide(**current_kwargs))["audio_artifact_id"])
+    assert store.get(earlier.id).status == "withdrawn" and store.is_intact(earlier)
+    assert current.content_hash != earlier.content_hash
+    posts = state["posts"]
+
+    _evict_receipt_audio(sink, root, state)
+    store.withdraw(current.id)
+    store.file_path_for(current).unlink()  # 当前这份稿子的成品文件也没了
+
+    with pytest.raises(BailianSpeechError, match="tts_cached_audio_evicted"):
+        asyncio.run(run_premium_guide(**current_kwargs))
+    guide = _force_guide(sink)
+    assert guide["status"] == "failed" and "tts_cached_audio_evicted" in guide["error"]
+    assert state["posts"] == posts  # 不重新付费合成
+    with Session(sink.engine) as session:
+        assert not session.exec(select(PodcastArtifactRecord).where(
+            PodcastArtifactRecord.status.in_(("ready", "published")),
+        )).all()
+
+
+def test_evicted_receipts_use_the_audio_another_worker_just_published(tmp_path):
+    """两个进程同时重试:一个从缓存发布完,缓存被逐出,另一个才轮到合成。"""
+
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink, store, _root, _state, kwargs = _evictable_guide(tmp_path, "evicted-raced.db")
+    published_by_other = {}
+
+    class LateWorker:
+        async def synthesize(self, _text):
+            with Session(sink.engine) as session:
+                pointer = session.get(
+                    PodcastTextPublicationRecord, "episode-force:narration_script_zh"
+                )
+                narration = session.get(PodcastTextArtifactRecord, pointer.artifact_id)
+                binding = dict(
+                    narration_artifact_id=narration.id,
+                    narration_content_hash=narration.content_hash,
+                )
+            other = store.import_bytes(
+                episode_id="episode-force", kind="digest_audio_zh", data=_pcm_wav(),
+                declared_mime="audio/wav", provenance="premium_guide_tts", authority_id="",
+                **binding,
+            )
+            published_by_other["id"] = store.publish(
+                other.id, expected_updated_at=other.updated_at
+            ).id
+            raise BailianSpeechError("tts_cached_audio_evicted")
+
+    result = asyncio.run(run_premium_guide(**{**kwargs, "tts_provider": LateWorker()}))
+
+    audio = store.get(result["audio_artifact_id"])
+    assert audio.status == "published"
+    assert audio.content_hash == store.get(published_by_other["id"]).content_hash
+    assert _force_guide(sink)["status"] == "ready"
+
+
 def _force_guide(sink: DatabaseStorage) -> dict:
     with Session(sink.engine) as session:
         episode = session.get(ArticleRecord, "episode-force")

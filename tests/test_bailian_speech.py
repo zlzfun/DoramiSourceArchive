@@ -1436,6 +1436,58 @@ def test_receipt_overview_reports_the_shortfall_left_after_eviction(tts_env):
     assert pending.exists() and evictable.exists()  # 概览只读
 
 
+def test_an_evicted_chunk_that_cannot_replay_says_it_was_evicted(tts_env):
+    """地址过期后,被有意逐出的分段报专门的错误码——导读流程据此改用成品。"""
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    asyncio.run(provider(engine, cfg).synthesize("hello"))
+    root = Path(cfg.tts_receipt_root)
+    with Session(engine) as session:
+        key = session.exec(select(BailianTtsCallRecord)).one().id
+
+    async def expired(*_args, **_kwargs):
+        raise BailianSpeechError("result_download_failed")
+
+    # 没有标记的缺失是别的问题,原样上报。
+    (root / f"{key}.wav").unlink()
+    with pytest.raises(BailianSpeechError, match="result_download_failed"):
+        asyncio.run(provider(engine, cfg, downloader=expired).synthesize("hello"))
+    (root / f"{key}.evicted").write_bytes(b"")
+    with pytest.raises(BailianSpeechError, match="tts_cached_audio_evicted"):
+        asyncio.run(provider(engine, cfg, downloader=expired).synthesize("hello"))
+    # 地址还取得回时照常重放;哪一种都不再发请求、不动账本。
+    assert asyncio.run(provider(engine, cfg).synthesize("hello")).data
+    assert FakeTtsClient.calls == ["hello"]
+    assert _ledger_status(engine, key) == "succeeded"
+
+
+def test_receipt_overview_survives_a_file_vanishing_while_it_reads(tts_env, monkeypatch):
+    """概览不持回执目录锁,读到一半文件可能被压缩或逐出。"""
+
+    engine, cfg = tts_env
+    root = Path(cfg.tts_receipt_root)
+    root.mkdir(parents=True)
+    (root / "kept").write_bytes(b"x" * 10)
+    (root / "vanishing").write_bytes(b"y" * 7)
+    (root / "gone").write_bytes(b"z" * 5)
+    real_stat = Path.stat
+    stats = []
+
+    def flaky(self, *args, **kwargs):
+        if self.name == "gone":
+            raise FileNotFoundError(str(self))
+        if self.name == "vanishing":
+            stats.append(self)
+            if len(stats) > 1:  # 「先确认是文件、再读大小」的第二次读
+                raise FileNotFoundError(str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky)
+    overview = receipt_cache_overview(cfg, engine, max_audio_bytes=1000)
+    assert overview["used_bytes"] == 17
+
+
 def test_asr_admission_is_independent_of_tts_and_secret():
     cfg = configuration()
     assert admission_fingerprint(cfg) == admission_fingerprint(

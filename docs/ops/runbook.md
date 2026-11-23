@@ -38,7 +38,9 @@
 - 先看管理面「TTS 回执缓存」:缺口已经减去可逐出的量,不为 0 才需要处理。再按节目归类回执目录里的音频:`bailian_tts_calls` 的行 id 就是文件名,`episode_id` 对到 `podcast_artifacts` 里有没有 `published` 的 `digest_audio_zh`。
 - **不要手工删回执目录里的文件。** 每日备份要求每条 `succeeded` 有音频或 `<id>.evicted` 标记,手工删除不留标记,备份会以 `backup_paid_audio_missing_or_corrupt` 失败;没有成品的音频删掉后,同一份口播稿也无法重放。真要腾地方,调高 `tts_cache_max_bytes`。
 - 容量等待最多 8 次(5 分钟、30 分钟、2 小时、之后每 6 小时),用完是终态 `failed`(`error_code` 仍在),不会自动重新排队,要手动「运行」。
-- `tts_cached_audio_missing`:某段已成功、本地没有音频、供应商的临时地址也过期了。常见于成品被撤回或损坏之后重跑一期回执音频已被逐出的节目;不会重新付费合成。
+- `tts_cached_audio_evicted`:某段已成功、音频被逐出、供应商的临时地址也取不回,而且这期节目找不到同一份口播文本的完好成品(找得到时导读流程自己用成品补上,不报错)。通常是成品文件损坏或记录被删;不会重新付费合成,先从备份恢复成品文件。
+- 本地没有音频、也没有 `.evicted` 标记而报下载失败(`result_download_failed`)或 `tts_cached_audio_missing`:音频不是系统逐出的(手工删除、恢复不完整),按数据缺失处理。
+- 回滚到 v3.70.2 及更早版本:只要发生过逐出,旧版本的每日备份会失败、旧恢复工具也不认含 `.evicted` 的归档。升级前的最后一份备份要留着作旧版本的恢复点;回滚期间用新版本的 `scripts/storage_backup.py` 做备份。
 
 ## 精品导读语音报「月度预算已满」(issue #322 沉淀)
 

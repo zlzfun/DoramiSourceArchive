@@ -827,6 +827,69 @@ def _reusable_published_audio(
     return None
 
 
+# ``bailian_tts.EVICTED_AUDIO_CODE``(那边导入本模块,这里不能反过来导入)。
+EVICTED_AUDIO_CODE = "tts_cached_audio_evicted"
+
+
+def _rebind_evicted_audio(
+    engine: Engine,
+    store: PodcastArtifactStore,
+    *,
+    episode_id: str,
+    narration_id: str,
+    narration_hash: str,
+) -> PodcastArtifactRecord | None:
+    """Register an earlier audio of this narration text again, for the current narration.
+
+    The TTS receipt cache evicts the audio of episodes that already have
+    published audio (issue #326). When the same text has to be produced again
+    after that (the publication was withdrawn, or the text came back under a
+    new narration record), the receipts cannot replay: the supplier's signed
+    URL has expired. The earlier artifact holds exactly that audio, so its
+    bytes become a new ``ready`` artifact bound to the current narration. No
+    supplier call, no ledger change.
+
+    A narration's ``content_hash`` is the hash of its text, so an equal hash
+    means equal text. The artifact does not record which TTS settings made it;
+    the newest one wins.
+    """
+
+    with Session(engine) as session:
+        candidates = session.exec(
+            select(PodcastArtifactRecord)
+            .where(
+                PodcastArtifactRecord.episode_id == episode_id,
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.provenance == "premium_guide_tts",
+                PodcastArtifactRecord.narration_content_hash == narration_hash,
+            )
+            .order_by(
+                PodcastArtifactRecord.created_at.desc(),
+                PodcastArtifactRecord.id.desc(),
+            )
+        ).all()
+        for candidate in candidates:
+            session.expunge(candidate)
+    for candidate in candidates:
+        if not store.is_intact(candidate):
+            continue
+        rebound = store.import_bytes(
+            episode_id=episode_id,
+            kind="digest_audio_zh",
+            data=store.readable_path(candidate).read_bytes(),
+            declared_mime=candidate.mime,
+            provenance="premium_guide_tts",
+            authority_id="",
+            narration_artifact_id=narration_id,
+            narration_content_hash=narration_hash,
+        )
+        logger.info(
+            "精品导读 %s:语音回执已被逐出,改用已有成品 %s 重新登记", episode_id, candidate.id
+        )
+        return rebound
+    return None
+
+
 async def run_premium_guide(
     engine: Engine,
     store: PodcastArtifactStore,
@@ -1046,18 +1109,35 @@ async def run_premium_guide(
         _set_episode_status(
             engine, episode_id, "synthesizing", guide_metadata=guide_metadata
         )
-        synthesized = await tts_provider.synthesize(narration_text)
-        audio = await asyncio.to_thread(
-            store.import_bytes,
-            episode_id=episode_id,
-            kind="digest_audio_zh",
-            data=synthesized.data,
-            declared_mime=synthesized.mime,
-            provenance="premium_guide_tts",
-            authority_id="",
-            narration_artifact_id=narration_id,
-            narration_content_hash=narration_hash,
-        )
+        try:
+            synthesized = await tts_provider.synthesize(narration_text)
+        except BailianSpeechError as exc:
+            # 这份口播稿早就合成过,只是回执音频在节目有了成品之后被逐出了:
+            # 用成品补上,而不是让节目卡在「重放不了、又不会重新付费」。
+            if exc.code != EVICTED_AUDIO_CODE:
+                raise
+            audio = await asyncio.to_thread(
+                _rebind_evicted_audio,
+                engine,
+                store,
+                episode_id=episode_id,
+                narration_id=narration_id,
+                narration_hash=narration_hash,
+            )
+            if audio is None:
+                raise
+        else:
+            audio = await asyncio.to_thread(
+                store.import_bytes,
+                episode_id=episode_id,
+                kind="digest_audio_zh",
+                data=synthesized.data,
+                declared_mime=synthesized.mime,
+                provenance="premium_guide_tts",
+                authority_id="",
+                narration_artifact_id=narration_id,
+                narration_content_hash=narration_hash,
+            )
         actual_duration = float(audio.duration_seconds or 0.0)
         tier_limit_seconds = plan.max_audio_minutes * 60
         hard_limit_seconds = min(config.premium_max_audio_minutes, 15) * 60

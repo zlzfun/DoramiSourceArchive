@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import struct
 import wave
 import zlib
@@ -37,6 +38,9 @@ from services.bailian_speech_client import (
 from services.podcast_premium_guides import SynthesizedAudio
 
 logger = logging.getLogger("dorami.bailian_tts")
+
+# 已成功的分段本地没有音频、供应商的临时地址也取不回,而它是被有意逐出的。
+EVICTED_AUDIO_CODE = "tts_cached_audio_evicted"
 
 
 def _cost_minor(units: int, price_minor: int, price_units: int) -> int:
@@ -168,7 +172,21 @@ def receipt_cache_overview(config: BailianSpeechConfig, engine, *, max_audio_byt
 
 
 def _cache_used_bytes(root: Path) -> int:
-    return sum(path.stat().st_size for path in root.iterdir() if path.is_file())
+    """Bytes of the regular files in ``root``.
+
+    One ``stat`` per file, and a file that disappears meanwhile is skipped: the
+    admin overview reads the directory without the receipt lock while a reclaim
+    may be compressing or evicting.
+    """
+    total = 0
+    for path in root.iterdir():
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            total += info.st_size
+    return total
 
 
 def _room_shortfall(root: Path, config: BailianSpeechConfig, nbytes: int) -> int:
@@ -197,10 +215,18 @@ def _in_flight(row: BailianTtsCallRecord) -> bool:
 
     ``authorized`` (sent, outcome unknown) and ``generated`` (paid, audio not
     downloaded yet) always count. ``reserved`` counts only while it holds
-    budget: a reservation that was released because its synthesis ended before
-    sending it keeps the status with ``cost_minor`` 0 (issue #322) and has
-    nothing left to protect. Prices are validated positive, so a reservation
-    that still holds budget never costs 0.
+    budget. A released reservation keeps the status with ``cost_minor`` 0
+    (issue #322); prices are validated positive, so one that still holds budget
+    never costs 0.
+
+    A zero-cost ``reserved`` row does not prove that no synthesis is running:
+    ``_reserve`` on another receipt directory that shares this ledger releases
+    reservations it does not own. That is fine here. The files this reclaim can
+    reach are in its own directory, whose lock the caller holds, so the only
+    synthesis that can be running on them is the caller itself, and that one
+    passes its own chunks in ``protect`` (before reserving) or has a
+    ``generated`` row (while storing). Sending is guarded separately by
+    ``_authorize``.
     """
     return row.status in {"authorized", "generated"} or (
         row.status == "reserved" and row.cost_minor > 0
@@ -308,9 +334,9 @@ def _reclaim_completed_receipts_unlocked(
     JSON provider receipts and database billing rows stay. The row remains
     ``succeeded``, so a later synthesize of the same narration does not POST
     again. Audio that is deleted rather than archived leaves an ``.evicted``
-    marker (``_drop_audio``). In-flight episodes and episodes without a published replacement
-    stay untouched, and so does every row in ``protect`` (the chunks of the
-    synthesis that is asking for room).
+    marker (``_drop_audio``). In-flight episodes and episodes without a
+    published replacement stay untouched, and so does every row in ``protect``
+    (the chunks of the synthesis that is asking for room).
 
     The daily job keeps ``retention_days`` and only replaces a WAV with a
     smaller zlib archive. A capacity shortfall passes ``retention_days=None``
@@ -832,9 +858,16 @@ class BailianPremiumGuideTtsProvider:
                         # does not POST or rewrite the WAV (rewriting would
                         # refill the cache just freed). An expired signed URL
                         # fails closed with no second charge.
-                        data = self._audio_from_receipt_url(
-                            receipt, cfg, self.max_audio_bytes - sum(map(len, parts)),
-                        )
+                        try:
+                            data = self._audio_from_receipt_url(
+                                receipt, cfg, self.max_audio_bytes - sum(map(len, parts)),
+                            )
+                        except BailianSpeechError as exc:
+                            # 这一段是被有意逐出的(issue #326):音频在已发布的成品里,
+                            # 导读流程据此改用成品。没有标记的缺失是别的问题,原样上报。
+                            if (root / f"{key}.evicted").is_file():
+                                raise BailianSpeechError(EVICTED_AUDIO_CODE) from exc
+                            raise
                     if hashlib.sha256(data).hexdigest() != row.audio_hash:
                         raise BailianSpeechError("tts_cached_audio_corrupt")
                     parts.append(data)
