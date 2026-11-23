@@ -2259,6 +2259,11 @@ class PersonalDigestEditionRecord(SQLModel, table=True):
     interest_snapshot_json: str = Field(default="[]", description="本 revision 冻结的兴趣集合")
     generation_token: Optional[str] = Field(default=None, index=True)
     generation_lease_expires_at: Optional[str] = Field(default=None)
+    generation_attempt_count: int = Field(default=0, sa_column_kwargs={"server_default": text("0")})
+    generation_started_at: Optional[str] = Field(default=None)
+    generation_heartbeat_at: Optional[str] = Field(default=None)
+    generation_deadline_at: Optional[str] = Field(default=None)
+    briefs_payload_json: Optional[str] = Field(default=None, description="Frozen v1 bot projection at publication")
     generation_reason: str = Field(default="scheduled")
     # A trigger that arrives while this immutable revision is generating cannot
     # mutate its frozen scope.  Persist the coalesced desired intent on the
@@ -3275,6 +3280,13 @@ class UserRecord(SQLModel, table=True):
     仅在该表为空时作为初始种子，之后以本表为准。
     """
     __tablename__ = "users"
+    __table_args__ = (
+        Index("uq_users_w3_uid", "w3_uid", unique=True),
+    )
+    w3_uid: Optional[str] = Field(
+        default=None,
+        description="W3 账号标识（带字母前缀，如 l00976966；区别于内网纯数字工号列 w3_employee_number 如 00976966）",
+    )
 
     username: str = Field(primary_key=True, description="登录账号，全局唯一身份")
     password_hash: str = Field(description="PBKDF2 编码串 pbkdf2_sha256$iters$salt$hash")

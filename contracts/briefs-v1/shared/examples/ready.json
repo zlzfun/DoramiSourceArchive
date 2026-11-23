@@ -1,0 +1,48 @@
+{
+  "employee_number": "l00976966",
+  "username": "dorami-demo-owner",
+  "status": "ready",
+  "pushable": true,
+  "fallback_hint": null,
+  "edition": {
+    "report_date": "2026-11-09",
+    "revision": 1,
+    "status": "ready",
+    "degraded_reason": null,
+    "selection_stats": {},
+    "generated_at": "2026-11-09T08:31:00+08:00",
+    "items": [
+      {
+        "position": 1,
+        "section": "重点关注",
+        "selection_lane": "interest",
+        "quality_score": 7.5,
+        "selection_reason": "匹配用户关注领域",
+        "snapshot": {
+          "title": "储能行业动态示例",
+          "source_name": "示例来源",
+          "source_url": "https://example.com/news/energy-001",
+          "publish_date": "2026-11-09",
+          "summary": "此条为契约联调模拟素材，不表示真实新闻。",
+          "score_reason": null,
+          "tags": [
+            "储能"
+          ],
+          "display_tags": [
+            "行业动态",
+            "储能"
+          ],
+          "event_id": "event-example-001",
+          "related_sources": [
+            {
+              "title": "相关报道示例",
+              "source_name": "另一示例来源",
+              "source_url": "https://example.com/news/energy-002",
+              "publish_date": null
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -247,11 +247,14 @@ def test_interval_jobs_tolerate_being_late_by_one_period(sandbox):
     app_module.load_tasks_to_scheduler()
     for job_id in (
         "article_analysis", "paper_fulltext", "taxonomy_retag",
-        app_module.PODCAST_LANDING_JOB_ID, "personal_digest_pending",
+        app_module.PODCAST_LANDING_JOB_ID,
     ):
         job = scheduler.get_job(job_id)
         assert job.misfire_grace_time == 60, job_id
         assert job.coalesce is True, job_id
+    pending_digest = scheduler.get_job("personal_digest_pending")
+    assert pending_digest.misfire_grace_time == 30
+    assert pending_digest.coalesce is True
     sweep = scheduler.get_job(app_module.EVENT_ASSIGNMENT_SWEEP_JOB_ID)
     assert sweep.misfire_grace_time == app_module.EVENT_ASSIGNMENT_SWEEP_MINUTES * 60
 

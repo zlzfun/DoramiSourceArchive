@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "联调错误示例 RATE_LIMITED",
+    "request_id": "briefs-example-001"
+  }
+}

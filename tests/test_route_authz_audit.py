@@ -191,6 +191,9 @@ def test_guest_session_denied_outside_whitelist(monkeypatch, tmp_path):
                     body = resp.json()
                 except ValueError:
                     pass
-                if resp.status_code != 403 or body.get("code") != "login_required":
+                if probe in app_module.BRIEFS_PATHS:
+                    if resp.status_code != 403 or (body.get("error") or {}).get("code") != "FORBIDDEN":
+                        leaked.append(f"{method} {probe} -> {resp.status_code}")
+                elif resp.status_code != 403 or body.get("code") != "login_required":
                     leaked.append(f"{method} {probe} -> {resp.status_code}")
     assert not leaked, "以下路由对游客会话未按白名单拒绝:\n  " + "\n  ".join(leaked)
