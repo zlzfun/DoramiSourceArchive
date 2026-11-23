@@ -25,6 +25,17 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 `articles` 同理:`extensions_json`、`analysis_authority_id` 等排在 `content` 之后。新增高频查询前先看 `PRAGMA table_info` 的列顺序。
 
+## 精品导读语音的预算记账(issue #322)
+
+`bailian_tts_calls` 一段一行,状态 `reserved → authorized →(POST)→ generated → succeeded`,被供应商明确拒绝是 `rejected`(费用 0)。月度预算合计 = 当期全部行的 `cost_minor` + 任何月份里仍是 `reserved / authorized / generated` 的行。
+
+- **只有可能已经花出去的调用才长期占预算。** `authorized` / `generated` 结果未知或已计费:跨月仍计入,并拦住同一期节目的后续合成直到对账。`reserved` 一定没发出去过(它写在 `authorized` 之前,`authorized` 写在 POST 之前)。
+- **合成没走完,没发出去的分段解除占用。** `_synthesize` 的异常出口与 `_reserve`(持回执目录锁,清同账号下不属于本次合成的)都会把这类行的 `cost_minor` 记 0。**行不删、状态不改**:`reserved` 且占用额为 0 就是「已解除」。
+- **再合成同一份口播稿时重新计价。** `_reserve` 把本次要复用的旧 `reserved` 行按现在的账期与价格重新占用;不这样做,占用额为 0 的行会让预算检查少算。
+- **月度预算满是等待,不是失败。** `tts_monthly_budget_exceeded` → 导读 `retry_wait`,6 小时后候选巡检重新拉起,不设上限;文字复用,预算检查在发请求之前,重试不花钱。`tts_per_run_budget_exceeded` 取决于稿子本身,是终态。
+
+排查入口:`bailian_tts_calls` 按 `budget_period, status` 汇总 `cost_minor`(`reserved` 的合计长期不为 0 说明又有预留被丢下);日志搜 `因语音预算等待重试` / `未发出的预留没能解除`。
+
 ## 全文分析的租约路径(issue #318)
 
 `run_full_analysis_worker_step` 的顺序与三条约束:

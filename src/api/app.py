@@ -926,15 +926,19 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 episode_id,
                 exc,
             )
-            capacity_wait = getattr(exc, "code", "") in {
-                "tts_receipt_cache_full",
-                "tts_receipt_disk_full",
-            }
+            code = str(getattr(exc, "code", "") or "")
+            if code in podcast_premium_guide_service.BUDGET_WAIT_CODES:
+                outcome = "因语音预算等待重试"
+            elif code in podcast_premium_guide_service.CAPACITY_RETRY_CODES:
+                outcome = "因回执容量等待重试"
+            else:
+                outcome = "生成失败"
             _dorami_logger.warning(
-                "Podcast 精品导读%s episode=%s (%s)",
-                "因回执容量等待重试" if capacity_wait else "生成失败",
+                "Podcast 精品导读%s episode=%s (%s%s)",
+                outcome,
                 episode_id,
                 type(exc).__name__,
+                f": {code}" if code else "",
             )
 
     task = asyncio.create_task(_run())

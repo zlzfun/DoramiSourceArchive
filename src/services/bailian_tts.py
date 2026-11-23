@@ -13,6 +13,7 @@ from services.file_lock import LOCK_EX, LOCK_NB, flock
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ import zlib
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, text as sql_text
+from sqlalchemy import or_, text as sql_text, update
 from sqlmodel import Session, select
 from config_bailian import BailianSpeechConfig
 from models.db import ArticleRecord, BailianTtsCallRecord, PodcastArtifactRecord
@@ -34,6 +35,14 @@ from services.bailian_speech_client import (
     task_id,
 )
 from services.podcast_premium_guides import SynthesizedAudio
+
+logger = logging.getLogger("dorami.bailian_tts")
+
+
+def _reservation_cost_minor(units: int, cfg) -> int:
+    """Budget hold for ``units`` reserved characters at the configured price, rounded up."""
+
+    return (units * cfg.tts_price_minor + cfg.tts_price_units - 1) // cfg.tts_price_units
 
 
 def split_narration(text, limit):
@@ -395,12 +404,42 @@ class BailianPremiumGuideTtsProvider:
             ).first()
             if ambiguous:
                 raise BailianSpeechError("tts_reconciliation_required", unknown=True)
+            # 从未发出的预留不占预算(issue #322)。``reserved`` 写在 ``authorized`` 之前,
+            # 而 ``authorized`` 写在 POST 之前,所以停在 ``reserved`` 的分段一定没有
+            # 远端副作用。调用方此刻持有回执目录锁,整个合成过程都在这把锁里,别的
+            # 合成不可能在途——同账号下不属于本次合成的 ``reserved`` 都是被丢下的
+            # (某段被拒后没发出去的后续分段、进程中途被杀)。解除它们的占用:行留着,
+            # 占用额记 0;同一份口播稿以后再合成时在下面重新计价。``authorized`` /
+            # ``generated`` 结果未知或已计费,不动。
+            session.exec(
+                update(BailianTtsCallRecord)
+                .where(
+                    BailianTtsCallRecord.account_scope == cfg.account_scope,
+                    BailianTtsCallRecord.status == "reserved",
+                    BailianTtsCallRecord.cost_minor > 0,
+                    BailianTtsCallRecord.id.notin_(keys),
+                )
+                .values(cost_minor=0)
+                .execution_options(synchronize_session=False)
+            )
             existing = [session.get(BailianTtsCallRecord, key) for key in keys]
             new = []
             for key, chunk, row in zip(keys, chunks, existing):
                 if row:
                     if row.status == "rejected":
                         raise BailianSpeechError("tts_previously_rejected")
+                    if row.status == "reserved":
+                        # 本次合成要发出的旧预留:按现在的账期与价格重新占用。它可能是
+                        # 上面那种被解除过的(占用额 0),也可能是上个月留下的——钱是
+                        # 现在花的,记在现在的账期。
+                        row.budget_period = period
+                        row.cost_minor = _reservation_cost_minor(
+                            row.reserved_characters, cfg
+                        )
+                        row.price_minor = cfg.tts_price_minor
+                        row.price_units = cfg.tts_price_units
+                        row.pricing_revision = cfg.pricing_revision
+                        session.add(row)
                     continue
                 # UTF-8 length is an explicit conservative upper bound; settle
                 # using the provider's actual `usage.characters`, not this count.
@@ -413,10 +452,7 @@ class BailianPremiumGuideTtsProvider:
                         budget_period=period,
                         created_at=now.isoformat(),
                         reserved_characters=units,
-                        cost_minor=(
-                            units * cfg.tts_price_minor + cfg.tts_price_units - 1
-                        )
-                        // cfg.tts_price_units,
+                        cost_minor=_reservation_cost_minor(units, cfg),
                         price_minor=cfg.tts_price_minor,
                         price_units=cfg.tts_price_units,
                         pricing_revision=cfg.pricing_revision,
@@ -445,6 +481,33 @@ class BailianPremiumGuideTtsProvider:
                 raise BailianSpeechError("tts_monthly_budget_exceeded")
             session.add_all(new)
             session.commit()
+
+    def _release_unsent(self, keys) -> None:
+        """本次合成没走完:解除其中从未发出的分段的预算占用(行保留,占用额记 0)。
+
+        尽力而为——这一步写不进库(比如库正忙)也不该盖住合成本身的错误;下一次
+        ``_reserve`` 会把它们当作被丢下的预留一并解除。
+        """
+
+        try:
+            with Session(self.engine) as session:
+                session.exec(sql_text("BEGIN IMMEDIATE"))
+                session.exec(
+                    update(BailianTtsCallRecord)
+                    .where(
+                        BailianTtsCallRecord.id.in_(keys),
+                        BailianTtsCallRecord.status == "reserved",
+                        BailianTtsCallRecord.cost_minor > 0,
+                    )
+                    .values(cost_minor=0)
+                    .execution_options(synchronize_session=False)
+                )
+                session.commit()
+        except Exception as exc:  # noqa: BLE001 - never mask the synthesis error
+            logger.warning(
+                "TTS 未发出的预留没能解除 episode=%s:%s: %s",
+                self.episode_id, type(exc).__name__, exc,
+            )
 
     def _row(self, key):
         with Session(self.engine) as session:
@@ -603,6 +666,11 @@ class BailianPremiumGuideTtsProvider:
                     mime="audio/wav",
                     provider_task_id=run_id,
                 )
+            except BaseException:
+                # 某一段失败后,后面的分段不会再发出;不解除的话它们会永远停在
+                # ``reserved`` 并跨月占着预算(issue #322)。
+                self._release_unsent(keys)
+                raise
             finally:
                 client.close()
 
