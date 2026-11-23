@@ -5,6 +5,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import logging
 import os
 import wave
 import zlib
@@ -33,6 +34,7 @@ from services.bailian_tts import (
     BailianPremiumGuideTtsProvider,
     join_wav,
     split_narration,
+    receipt_cache_overview,
     reclaim_completed_receipts,
 )
 from services.file_lock import LOCK_EX, flock
@@ -982,7 +984,8 @@ def test_nonblocking_reclaim_skips_while_the_receipt_lock_is_held(tts_env):
     finally:
         os.close(fd)
     assert skipped == {
-        "compressed_wavs": 0, "removed_wavs": 0, "saved_bytes": 0, "skipped": True,
+        "compressed_wavs": 0, "removed_wavs": 0, "evicted_files": 0,
+        "saved_bytes": 0, "skipped": True,
     }
     assert (root / f"{key}.wav").exists()
     done = reclaim_completed_receipts(cfg, engine, now=NOW)
@@ -1009,6 +1012,7 @@ def test_capacity_reclaim_frees_recent_incompressible_wavs(tts_env):
     assert not (root / f"{key}.wav").exists()
     assert not (root / f"{key}.wav.zlib").exists()
     assert (root / f"{key}.json").exists()
+    assert (root / f"{key}.evicted").exists()
     with Session(engine) as session:
         old = session.get(BailianTtsCallRecord, key)
         assert old is not None and old.status == "succeeded" and old.cost_minor == 0
@@ -1030,6 +1034,7 @@ def test_urgent_reclaim_deletes_oversized_verified_wav(tts_env):
     assert not (root / f"{key}.wav").exists()
     assert not (root / f"{key}.wav.zlib").exists()
     assert (root / f"{key}.json").exists()
+    assert (root / f"{key}.evicted").exists()
     with Session(engine) as session:
         row = session.get(BailianTtsCallRecord, key)
         assert row is not None and row.status == "succeeded"
@@ -1094,6 +1099,341 @@ def test_post_download_capacity_failure_resumes_generated_without_another_charge
         assert row.status == "succeeded"
         assert row.request_id == request_id
         assert row.cost_minor == cost
+
+
+# ── issue #326:回执缓存满时逐出已有成品的音频 ─────────────────────────────
+
+
+def _plant_episode(
+    engine, cfg, name, *, age_days=10, payload=None, form="archive", published="current",
+    on_disk=True,
+):
+    """造一期「已合成一段」的节目:账本行 + 回执目录里的文件 + 发布状态。
+
+    ``form``:``archive`` 是每日回收留下的 ``.wav.zlib``,``wav`` 是未压缩的原文件。
+    ``published``:``current`` = 成品音频已发布;``moved_on`` = 成品发布之后口播稿又换了
+    新的一份(新的还没有成品);``listen`` = 文章朗读已就绪;``none`` = 没有成品。
+    返回 ``(账本行 id, 音频内容, 文件路径)``;``on_disk=False`` 时文件由调用方稍后写。
+    """
+    data = _incompressible(4000) if payload is None else payload
+    key, episode = f"receipt-{name}", f"episode-{name}"
+    stamp = (NOW - dt.timedelta(days=age_days)).isoformat()
+    root = Path(cfg.tts_receipt_root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / (f"{key}.wav.zlib" if form == "archive" else f"{key}.wav")
+    content = zlib.compress(data, 6) if form == "archive" else data
+    if on_disk:
+        path.write_bytes(content)
+    (root / f"{key}.json").write_bytes(b"{}")
+    digest = lambda label: hashlib.sha256(f"{name}:{label}".encode()).hexdigest()  # noqa: E731
+    with Session(engine) as session:
+        extensions = "{}"
+        if published == "listen":
+            extensions = json.dumps({"listen_guide": {
+                "status": "ready", "content_hash": digest("listen"), "mime": "audio/wav",
+            }})
+        session.add(ArticleRecord(
+            id=episode, title=name, source_id="test", source_url=f"https://example.test/{name}",
+            content_type="article" if published == "listen" else "podcast_episode",
+            publish_date=NOW.isoformat(), fetched_date=NOW.isoformat(), content=name,
+            extensions_json=extensions,
+        ))
+        session.commit()
+        if published in {"current", "moved_on"}:
+            def narration(version):
+                session.add(PodcastTextArtifactRecord(
+                    id=f"narration-{name}-{version}", episode_id=episode,
+                    kind="narration_script_zh", version=version,
+                    content_hash=digest(f"narration-{version}"), inline_text=f"{name} {version}",
+                    language="zh-CN", created_at=stamp,
+                ))
+                session.commit()
+
+            narration(1)
+            pointer = PodcastTextPublicationRecord(
+                identity=f"{episode}:narration_script_zh", episode_id=episode,
+                kind="narration_script_zh", artifact_id=f"narration-{name}-1",
+                status="published", authority_id="", published_at=stamp, updated_at=stamp,
+            )
+            session.add(pointer)
+            session.commit()
+            session.add(PodcastArtifactRecord(
+                id=f"audio-{name}", episode_id=episode, kind="digest_audio_zh",
+                content_hash=digest("audio"), mime="audio/wav", ext=".wav", size_bytes=len(data),
+                status="published", provenance="premium_guide_tts",
+                narration_artifact_id=f"narration-{name}-1",
+                narration_content_hash=digest("narration-1"),
+                created_at=stamp, updated_at=stamp,
+            ))
+            session.commit()
+            if published == "moved_on":
+                narration(2)
+                pointer.artifact_id = f"narration-{name}-2"
+                session.add(pointer)
+                session.commit()
+        session.add(BailianTtsCallRecord(
+            id=key, episode_id=episode, account_scope=cfg.account_scope,
+            budget_period="2026-09", created_at=stamp, status="succeeded",
+            reserved_characters=1, actual_characters=1, cost_minor=0,
+            price_minor=cfg.tts_price_minor, price_units=cfg.tts_price_units,
+            pricing_revision=cfg.pricing_revision, audio_hash=hashlib.sha256(data).hexdigest(),
+        ))
+        session.commit()
+    return key, content, path
+
+
+def _cache_limit_short_by(cfg, characters, shortfall):
+    root = Path(cfg.tts_receipt_root)
+    used = sum(path.stat().st_size for path in root.iterdir() if path.is_file())
+    return replace(cfg, tts_cache_max_bytes=used + characters * 12_000 + 44 - shortfall)
+
+
+def _ledger_status(engine, key):
+    with Session(engine) as session:
+        return session.get(BailianTtsCallRecord, key).status
+
+
+def test_full_cache_evicts_the_oldest_published_audio_and_only_what_it_needs(tts_env, captured_log):
+    """归档只压不删:缓存被已发布节目的归档占满后,合成自己腾地方(issue #326)。"""
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    # 故意不按新旧顺序落盘,逐出顺序只能来自账本的创建时间。
+    middle_key, _c, middle = _plant_episode(engine, cfg, "middle", age_days=20)
+    newest_key, _c, newest = _plant_episode(engine, cfg, "newest", age_days=10)
+    oldest_key, _c, oldest = _plant_episode(engine, cfg, "oldest", age_days=30)
+    # 缺口比最旧的一份多 1 字节:要逐出最旧的两份,第三份留下。
+    cfg = _cache_limit_short_by(cfg, len("hello"), oldest.stat().st_size + 1)
+    root = Path(cfg.tts_receipt_root)
+
+    with captured_log("dorami.bailian_tts", level=logging.INFO) as records:
+        audio = asyncio.run(provider(engine, cfg).synthesize("hello"))
+
+    assert audio.data and FakeTtsClient.calls == ["hello"]
+    assert not oldest.exists() and not middle.exists()
+    assert newest.exists()
+    for key in (oldest_key, middle_key, newest_key):
+        # 供应商回执与账本行都留着:同一段口播不会因此再计费。
+        assert (root / f"{key}.json").exists()
+        assert _ledger_status(engine, key) == "succeeded"
+    # 被逐出的留下空标记(每日备份据此区分「有意逐出」与「音频丢了」),没动的没有。
+    assert (root / f"{oldest_key}.evicted").read_bytes() == b""
+    assert (root / f"{middle_key}.evicted").exists()
+    assert not (root / f"{newest_key}.evicted").exists()
+    assert any("逐出 2 个" in record.getMessage() for record in records)
+
+
+def test_eviction_is_all_or_nothing_when_it_cannot_cover_the_shortfall(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    _key, _c, evictable = _plant_episode(engine, cfg, "published")
+    _key, _c, unpublished = _plant_episode(engine, cfg, "pending", published="none")
+    # 可逐出的只有一份,缺口比它多 1 字节:逐出也不够,就一份都不动。
+    cfg = _cache_limit_short_by(cfg, len("hello"), evictable.stat().st_size + 1)
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert FakeTtsClient.calls == []
+    assert evictable.exists() and unpublished.exists()
+
+
+def test_unpublished_audio_is_never_evicted(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    _key, _c, unpublished = _plant_episode(engine, cfg, "pending", age_days=40, published="none")
+    _key, _c, evictable = _plant_episode(engine, cfg, "published", age_days=5)
+    cfg = _cache_limit_short_by(cfg, len("hello"), 1)
+    asyncio.run(provider(engine, cfg).synthesize("hello"))
+    # 没有成品的那一份更旧,但它删掉后同一份口播稿无法重放——逐出的是有成品的。
+    assert unpublished.exists() and not evictable.exists()
+
+
+@pytest.mark.parametrize("form", ["archive", "wav"])
+def test_audio_is_kept_once_the_narration_has_moved_on_from_the_published_one(tts_env, form):
+    """逐出依赖一条数据库不变量:「已发布」的导读音频一定属于当前口播稿。
+
+    口播稿换新时触发器会撤回旧音频,这期节目就不再算有成品——新口播稿合成完、还没
+    发布的那段时间里,它的重试要从这里重放。触发器若被拿掉,这条用例会先红。
+    """
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    _key, _c, path = _plant_episode(engine, cfg, "regenerating", form=form, published="moved_on")
+    with Session(engine) as session:
+        assert session.get(PodcastArtifactRecord, "audio-regenerating").status == "withdrawn"
+    cfg = _cache_limit_short_by(cfg, len("hello"), 1)
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert FakeTtsClient.calls == []
+    assert path.exists()
+
+
+def test_ready_article_listen_guide_audio_can_be_evicted(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    _key, _c, path = _plant_episode(engine, cfg, "article", published="listen")
+    cfg = _cache_limit_short_by(cfg, len("hello"), 1)
+    asyncio.run(provider(engine, cfg).synthesize("hello"))
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    ("status", "cost", "reclaimed"),
+    [
+        ("reserved", 0, True),     # 已解除占用的预留:从未发出,没有要保护的东西
+        ("reserved", 7, False),    # 还占着额度:这次合成还在进行
+        ("authorized", 7, False),  # 已发出、结果未知
+        ("generated", 7, False),   # 已计费、音频还没下载
+    ],
+)
+def test_only_calls_that_may_still_matter_keep_an_episode_in_flight(tts_env, status, cost, reclaimed):
+    """#322 之后被解除的预留仍是 ``reserved``,不能再让整期节目永远不被回收。"""
+
+    engine, cfg = tts_env
+    key, _c, path = _plant_episode(engine, cfg, "ep", form="wav", payload=b"\x00" * 8000)
+    with Session(engine) as session:
+        session.add(_stale_row("leftover", episode="episode-ep", status=status, cost=cost, period="2026-09"))
+        session.commit()
+    result = reclaim_completed_receipts(cfg, engine, now=NOW)
+    assert result["compressed_wavs"] == (1 if reclaimed else 0)
+    assert path.exists() is not reclaimed
+    # 逐出同理。
+    archive = Path(cfg.tts_receipt_root) / f"{key}.wav.zlib"
+    if not reclaimed:
+        path.unlink()
+        archive.write_bytes(zlib.compress(b"\x00" * 8000, 6))
+    FakeTtsClient.calls = []
+    short = _cache_limit_short_by(cfg, len("hello"), 1)
+    if reclaimed:
+        asyncio.run(provider(engine, short).synthesize("hello"))
+        assert not archive.exists()
+    else:
+        with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+            asyncio.run(provider(engine, short).synthesize("hello"))
+        assert archive.exists()
+
+
+def test_a_synthesis_never_reclaims_its_own_chunks(tts_env):
+    """正在合成的这一次,自己已有的分段不被它触发的回收动到——不靠账本状态推断。"""
+
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    text = "hello world!"
+    asyncio.run(provider(engine, cfg).synthesize(text))
+    first_text, second_text = FakeTtsClient.calls
+    root = Path(cfg.tts_receipt_root)
+    with Session(engine) as session:
+        rows = {row.request_id: row for row in session.exec(select(BailianTtsCallRecord)).all()}
+        first_key, second = rows["req-1"].id, rows["req-2"]
+        second_key = second.id
+        # 第二段退回「从未发出、占用已解除」:上一次合成在它之前中断了。
+        second.status, second.cost_minor, second.audio_hash = "reserved", 0, ""
+        second.actual_characters, second.request_id = 0, ""
+        session.add(second)
+        # 账本上这期节目已有成品——比如成品文件损坏后对同一份口播稿重新合成。
+        session.add(ArticleRecord(
+            id="episode-test", title="own", content_type="podcast_episode", source_id="test",
+            source_url="https://example.test/own", publish_date=NOW.isoformat(),
+            fetched_date=NOW.isoformat(), content="own",
+        ))
+        session.commit()
+        narration = PodcastTextArtifactRecord(
+            id="narration-own", episode_id="episode-test", kind="narration_script_zh",
+            version=1, content_hash="a" * 64, inline_text=text, language="zh-CN",
+            created_at=NOW.isoformat(),
+        )
+        session.add(narration)
+        session.commit()
+        session.add(PodcastTextPublicationRecord(
+            identity="episode-test:narration_script_zh", episode_id="episode-test",
+            kind="narration_script_zh", artifact_id=narration.id, status="published",
+            authority_id="", published_at=NOW.isoformat(), updated_at=NOW.isoformat(),
+        ))
+        session.commit()
+        session.add(PodcastArtifactRecord(
+            id="audio-own", episode_id="episode-test", kind="digest_audio_zh",
+            content_hash="b" * 64, mime="audio/wav", ext=".wav", size_bytes=1,
+            status="published", provenance="premium_guide_tts",
+            narration_artifact_id=narration.id, narration_content_hash=narration.content_hash,
+            created_at=NOW.isoformat(), updated_at=NOW.isoformat(),
+        ))
+        session.commit()
+    (root / f"{second_key}.wav").unlink()
+    (root / f"{second_key}.json").unlink()
+    own_wav = root / f"{first_key}.wav"
+    own_bytes = own_wav.read_bytes()
+    _key, _c, other = _plant_episode(engine, cfg, "other", age_days=1)
+    cfg = _cache_limit_short_by(cfg, len(second_text), 1)
+
+    audio = asyncio.run(provider(engine, cfg).synthesize(text))
+
+    assert audio.data and FakeTtsClient.calls == [first_text, second_text, second_text]
+    # 腾地方靠的是别的节目;自己的第一段原样留着(既没被压缩,也没被逐出)。
+    assert not other.exists()
+    assert own_wav.read_bytes() == own_bytes
+    assert not (root / f"{first_key}.wav.zlib").exists()
+
+
+def test_download_shortfall_evicts_before_writing_the_new_wav(tts_env):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    _key, content, path = _plant_episode(
+        engine, cfg, "old", payload=_incompressible(68_000), on_disk=False,
+    )
+    # 预检时归档还没落盘,估算放得下;下载回调把它写出来,实字节加上新 WAV 越过上限。
+    cfg = replace(cfg, tts_cache_max_bytes=70_000)
+
+    async def download(*_args, **_kwargs):
+        path.write_bytes(content)
+        return wav()
+
+    audio = asyncio.run(provider(engine, cfg, downloader=download).synthesize("hello"))
+    assert audio.data and FakeTtsClient.calls == ["hello"]
+    assert not path.exists()
+
+
+def test_disk_shortfall_is_also_covered_by_eviction(tts_env, monkeypatch):
+    engine, cfg = tts_env
+    FakeTtsClient.calls = []
+    key, _c, path = _plant_episode(engine, cfg, "old")
+    root = Path(cfg.tts_receipt_root)
+    from services import bailian_tts
+
+    # 磁盘余量随目录占用变化:逐出前比「预留 + 1GiB」少 1 字节。
+    capacity = (
+        sum(item.stat().st_size for item in root.iterdir() if item.is_file())
+        + len("hello") * 12_000 + 44 + 1024**3 - 1
+    )
+    monkeypatch.setattr(bailian_tts.shutil, "disk_usage", lambda _root: SimpleNamespace(
+        free=capacity - sum(item.stat().st_size for item in root.iterdir() if item.is_file()),
+    ))
+    # 唯一可逐出的那一份被保护着时,磁盘缺口无从弥补。
+    with pytest.raises(BailianSpeechError, match="tts_receipt_disk_full"):
+        provider(engine, cfg)._ensure_capacity_locked(len("hello"), frozenset({key}))
+    assert path.exists()
+    snapshot = provider(engine, cfg).ensure_capacity(len("hello"))
+    assert snapshot["disk_shortfall_bytes"] == 0
+    assert not path.exists()
+
+
+def test_receipt_overview_reports_the_shortfall_left_after_eviction(tts_env):
+    engine, cfg = tts_env
+    _key, _c, evictable = _plant_episode(engine, cfg, "published")
+    _key, _c, pending = _plant_episode(engine, cfg, "pending", published="none")
+    root = Path(cfg.tts_receipt_root)
+    used = sum(item.stat().st_size for item in root.iterdir() if item.is_file())
+    reservation = 200_000
+    size = evictable.stat().st_size
+    # 逐出那一份刚好够:页面上不该再显示缺口。
+    fits = replace(cfg, tts_cache_max_bytes=used + reservation - size)
+    overview = receipt_cache_overview(fits, engine, max_audio_bytes=reservation)
+    assert overview["used_bytes"] == used
+    assert overview["evictable_bytes"] == size
+    assert overview["cache_shortfall_bytes"] == 0
+    short = replace(cfg, tts_cache_max_bytes=used + reservation - size - 1)
+    assert receipt_cache_overview(short, engine, max_audio_bytes=reservation)[
+        "cache_shortfall_bytes"
+    ] == 1
+    assert pending.exists() and evictable.exists()  # 概览只读
 
 
 def test_asr_admission_is_independent_of_tts_and_secret():

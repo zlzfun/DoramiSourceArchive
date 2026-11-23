@@ -126,7 +126,7 @@ def _integrity(connection):
 def _safe_name(name):
     if name == "database.sqlite3":
         return True
-    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav|wav\.zlib)", name):
+    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav|wav\.zlib|evicted)", name):
         return True
     match = re.fullmatch(r"(?:media|podcast)/([0-9a-f]{2})/([0-9a-f]{64})\.[a-z0-9]{1,8}", name)
     return bool(match and match[1] == match[2][:2])
@@ -142,6 +142,8 @@ _EXTERNAL_OBJECT_FIELDS = ("namespace", "content_hash", "ext", "size_bytes", "bu
 # 付费 WAV 在回执目录里有两种形态:原始 `<id>.wav`,或被 TTS 缓存回收压成的 `<id>.wav.zlib`(issue #143 起,
 # 压缩后原文件删除;生产 2026-10-13 升 v3.63.0 后全部 `succeeded` 都是后者,备份因此连续失败——issue #231)。
 # 两种都原样收进归档;校验口径与 `bailian_tts` 读取侧一致:解压后的字节 sha256 == `audio_hash`。
+# 第三种是没有音频、只有空的 `<id>.evicted`:这期节目已有成品、回执缓存满时这段音频被有意逐出(issue #326,
+# `bailian_tts._drop_audio` 先落标记再删音频)。标记随归档保存;没有音频也没有标记的 `succeeded` 仍按缺失失败。
 _PAID_AUDIO_INFLATE_LIMIT = 1024 ** 3
 
 
@@ -364,15 +366,17 @@ class BackupService:
                 if self._receipt_directory(snapshot) != receipt_root:
                     raise BackupError("backup_receipt_root_changed")
                 for path in sorted(receipt_root.iterdir()):
-                    if re.fullmatch(r"[0-9a-f]{64}\.(json|wav|wav\.zlib)", path.name):
+                    if re.fullmatch(r"[0-9a-f]{64}\.(json|wav|wav\.zlib|evicted)", path.name):
                         name = "receipts/" + path.name
                         self._copy(path, staging / name, files, name, root=receipt_root)
                 if _has_table(snapshot, "bailian_tts_calls"):
                     for row in snapshot.execute("SELECT id,status,audio_hash FROM bailian_tts_calls"):
                         if row["status"] in {"generated", "succeeded"} and f"receipts/{row['id']}.json" not in files:
                             raise BackupError("backup_paid_receipt_missing")
-                        if row["status"] == "succeeded" and not _paid_audio_verified(
-                            staging, files, row["id"], row["audio_hash"],
+                        if (
+                            row["status"] == "succeeded"
+                            and f"receipts/{row['id']}.evicted" not in files
+                            and not _paid_audio_verified(staging, files, row["id"], row["audio_hash"])
                         ):
                             raise BackupError("backup_paid_audio_missing_or_corrupt")
         checksum, size = _hash(staging / "database.sqlite3")

@@ -9,7 +9,7 @@
 | 内容 | 保存方式 |
 |---|---|
 | SQLite，包括账户、发布状态、对象位置索引和付费任务账本 | `sqlite3.Connection.backup` 在线一致性快照；包含 WAL 中已提交的记录 |
-| 百炼 TTS 原始 JSON 回执与已经付费下载的 WAV（原始 `.wav`，或缓存回收后的 `.wav.zlib`，原样打包） | 与 TTS 共用 `receipt_root/.lock`；快照与复制期间不会有该目录的新付费任务写入 |
+| 百炼 TTS 原始 JSON 回执与已经付费下载的 WAV（原始 `.wav`，或缓存回收后的 `.wav.zlib`，原样打包；缓存满时被有意逐出的音频只留空的 `.evicted` 标记） | 与 TTS 共用 `receipt_root/.lock`；快照与复制期间不会有该目录的新付费任务写入 |
 | 快照引用、尚无 OSS 索引的图片和生成音频 | 完整打包，逐文件 SHA-256 和大小校验；缺失或损坏即整次备份失败 |
 | 快照引用、已有 OSS 索引的图片和生成音频 | 写入明确的 `external_objects` 依赖清单；文件继续保留在媒体桶 |
 | 配置文件、环境变量、程序版本 | 不打包；按原部署方式保管并记录对应发布 tag |
@@ -17,7 +17,8 @@
 每次新建备份归档前（已持 `.backup.lock`；重传待上传归档的重试不经过这一步）先清掉上次进程被杀 / 容器重启残留的 `.backup-*` 暂存目录。
 每个归档以 `manifest.json` 开头，记录其余文件的 SHA-256 和字节数；外部对象清单每条只带恢复需要的七个字段（命名空间、内容哈希、扩展名、字节数、桶、区域、对象键，约 270 字节），清单原始 JSON 上限 64 MiB（创建与恢复同一常量，约可容 24 万个对象；issue #236）。数据库读取结构完整性检查必须通过。
 回执目录取当前生效的运行时覆盖；快照再次核对目录一致。`generated` / `succeeded` 任务缺少回执，
-或 `succeeded` WAV 哈希不符（`.wav.zlib` 按解压后字节比对，与 TTS 读取侧同一口径），备份会失败。TTS 已在执行时，备份跳过这次尝试并按失败重试间隔再试；
+或 `succeeded` WAV 哈希不符（`.wav.zlib` 按解压后字节比对，与 TTS 读取侧同一口径），备份会失败。
+例外是带 `<id>.evicted` 标记的 `succeeded`：这期节目已有成品、回执缓存满时这段音频被有意逐出（issue #326），不再要求音频；没有音频也没有标记仍然失败。TTS 已在执行时，备份跳过这次尝试并按失败重试间隔再试；
 备份已经持锁时，新 TTS 调用会短暂等待快照和回执复制完成。普通媒体复制使用读取租约，避免与缓存回收冲突。
 
 数据库复制在专用只读连接的固定读事务中分步进行，包含该快照建立时已经提交的记录；
@@ -114,7 +115,7 @@ python scripts/storage_backup.py restore --offline \
 ```text
 restored/
   database.sqlite3
-  receipts/<paid-call-id>.json|wav|wav.zlib
+  receipts/<paid-call-id>.json|wav|wav.zlib|evicted
   media/<hash-prefix>/<hash>.<ext>
   podcast/<hash-prefix>/<hash>.<ext>
   manifest.json

@@ -44,6 +44,19 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 排查入口:`bailian_tts_calls` 按 `budget_period, status` 汇总 `cost_minor`(`reserved` 的合计长期不为 0 说明又有预留被丢下);日志搜 `因语音预算等待重试` / `未发出的预留没能解除`。
 
+## 精品导读语音的回执缓存(issue #326)
+
+回执目录(`tts_receipt_root`)每段一组文件:供应商回执 `<id>.json`(永久保留)、音频 `<id>.wav` 或压缩后的 `<id>.wav.zlib`。它的作用是「同一份口播稿不重复付费」:合成中断后重试、成品入库失败后重试,都从这里重放。目录总量受 `tts_cache_max_bytes` 约束,合成前按口播稿长度预留、下载后按实际字节再查一次。
+
+- **已有成品的节目,回执音频是多余的。** 播客导读有 `published` 的 `digest_audio_zh`(数据库保证它只属于当前口播稿:指针一换,触发器把旧音频撤回),导读流程此时直接复用成品、不调合成;文章朗读 `listen_guide` 就绪后每次都重新写旁白。判据在 `_reclaim_scope`。
+- **在途的节目不动。** `_in_flight`:`authorized`、`generated`,以及仍占着额度的 `reserved`。占用额为 0 的 `reserved` 是已解除的预留,不算。
+- **每日回收只压缩**(七天前、已有成品、哈希相符的 WAV → `.wav.zlib`),不丢任何东西。
+- **放不下时才逐出。** 容量路径先压缩(不看年龄);仍不够,按账本创建时间从旧到新删除已有成品的节目的回执音频,删到够用为止。可逐出的总量盖不住缺口(缓存缺口与磁盘缺口取大)时一份不删。正在合成的这一次,自己的分段明确排除。
+- **有意删除要留痕。** 删音频统一走 `_drop_audio`:先写空的 `<id>.evicted`,再删。每日备份要求每条 `succeeded` 有哈希相符的音频**或**这个标记;没有音频也没有标记按缺失失败。所以回执目录不能手工清理。
+- **没有成品的音频不逐出**:删掉后同一份口播稿只能靠供应商的临时地址重放,过期即 `tts_cached_audio_missing`,不会重新付费合成。
+
+管理面「TTS 回执缓存」的两个缺口是逐出之后仍然不够的部分(`evictable_bytes` 已减去)。日志搜 `已逐出`。
+
 ## 全文分析的租约路径(issue #318)
 
 `run_full_analysis_worker_step` 的顺序与三条约束:
