@@ -1459,11 +1459,17 @@ def _resolve_podcast_landing_candidate(
             and selected.artifact_id == analysis.transcript_artifact_id
         ):
             return None
-        if podcast_processing_admin_service.transcript_is_owned_by_live_processing(
-            session, episode_id=article_id, artifact_id=selected.artifact_id
+        if (
+            not locator_revision
+            and podcast_processing_admin_service.transcript_is_owned_by_live_processing(
+                session, episode_id=article_id, artifact_id=selected.artifact_id
+            )
         ):
             # 在途的那一单会自己分析这份转写;等它落定后上面那条判断自然成立。
             # 它若最终失败,下一轮巡检再把这份转写当作候选。
+            # 有待刷新的发布方逐字稿(locator_revision)时不拦:此刻选中的还是旧
+            # 转写,新文本要等入队流程把它取回来才成为输入;正式入队处会对最终
+            # 选定的输入再判一次。
             return None
         revision = (locator_revision or selected.content_hash)[:16]
     return PodcastLandingCandidate(

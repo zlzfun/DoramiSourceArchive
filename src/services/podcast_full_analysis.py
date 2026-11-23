@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, TypeVar
 
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from config import LLMConfig, PodcastConfig
@@ -44,6 +45,7 @@ from services.podcast_processing import (
     resolve_claim_before_attempt,
     settle_attempt_cost,
     _evaluate_full_analysis_authority,
+    _fenced_where,
 )
 from services.podcast_processing_admin import AdmissionEstimate
 from services.podcast_publisher_transcripts import (
@@ -656,6 +658,18 @@ def _finalize_result(
 
     current = now or dt.datetime.now(dt.timezone.utc)
     stamp = current.isoformat(timespec="microseconds")
+    # 落定事务的第一条语句必须是带完整 fence 的条件 UPDATE(issue #318 检视):它既
+    # 校验「此刻租约仍是我们的」,又让本事务从这里起持有写锁。下面那些读出来再在
+    # Python 里比对的检查不带锁——读完到写入之间别的执行者可以重领,而随后的 ORM
+    # UPDATE 只按主键写,会把新执行者的租约连同它的结果一起覆盖掉。
+    guarded = session.exec(
+        update(PodcastProcessingRecord)
+        .where(_fenced_where(claim, stamp))
+        .values(updated_at=stamp)
+    )
+    if guarded.rowcount != 1:
+        session.rollback()
+        raise PodcastLeaseLost("processing lease is expired or fenced")
     process = session.get(PodcastProcessingRecord, claim.processing_id)
     attempt = session.get(PodcastStageAttemptRecord, attempt_id)
     reservation = session.exec(
@@ -720,7 +734,7 @@ async def run_under_lease(
     work: Awaitable[_T],
     *,
     renew: Callable[[], Awaitable[None]],
-    heartbeat_seconds: int,
+    heartbeat_seconds: float,
 ) -> _T:
     """在续租保护下跑完一段工作;租约确实失效时立刻取消它(issue #318)。
 
@@ -734,7 +748,7 @@ async def run_under_lease(
 
     async def keep_lease() -> None:
         while True:
-            await asyncio.sleep(max(1, heartbeat_seconds))
+            await asyncio.sleep(max(0.01, heartbeat_seconds))
             try:
                 await renew()
             except PodcastLeaseLost:
@@ -747,9 +761,11 @@ async def run_under_lease(
     keeper = asyncio.create_task(keep_lease())
     try:
         await asyncio.wait({work_task, keeper}, return_when=asyncio.FIRST_COMPLETED)
-        if not work_task.done():
-            # keeper 只会以异常收场。
-            work_task.cancel()
+        if keeper.done():
+            # keeper 只会以异常收场(失租)。哪怕工作恰好在同一拍跑完也以它为准:
+            # 结果已经提交不了,不能当成功交出去。
+            if not work_task.done():
+                work_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await work_task
             keeper.result()

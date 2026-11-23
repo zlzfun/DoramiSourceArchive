@@ -1539,44 +1539,63 @@ def _attempts(engine, processing_id: str) -> list[PodcastStageAttemptRecord]:
         ).all())
 
 
+def _fast_heartbeat(monkeypatch, seconds: float = 0.02) -> None:
+    """把续租节拍压到几十毫秒:用例靠事件对齐,不靠墙钟上的租约长短。"""
+
+    from services import podcast_full_analysis
+
+    real = podcast_full_analysis.run_under_lease
+
+    async def fast(work, *, renew, heartbeat_seconds):
+        return await real(work, renew=renew, heartbeat_seconds=seconds)
+
+    monkeypatch.setattr(podcast_full_analysis, "run_under_lease", fast)
+
+
 def test_slow_input_preparation_stays_inside_the_lease(engine, monkeypatch):
-    """准备输入比租约还长也能跑完:它在 attempt 之内、续租照常进行。"""
+    """准备输入在 attempt 之内、续租照常进行:准备期间能看到租约被续上。"""
 
-    import time
+    import threading
 
-    from services import article_analysis
+    from services import article_analysis, podcast_full_analysis
 
     process = _request(engine, "episode-50", override=False, key="slow-prepare")
-    real = article_analysis.load_relevant_active_tags
-    loop_was_free: list[bool] = []
+    _fast_heartbeat(monkeypatch)
+    renewals = 0
+    renewed_twice = threading.Event()
+    real_renew = podcast_full_analysis.heartbeat_processing
+
+    def counting(*args, **kwargs):
+        nonlocal renewals
+        claim = real_renew(*args, **kwargs)
+        renewals += 1
+        if renewals >= 2:
+            renewed_twice.set()
+        return claim
+
+    monkeypatch.setattr(podcast_full_analysis, "heartbeat_processing", counting)
+    real_tags = article_analysis.load_relevant_active_tags
+    seen: list[bool] = []
 
     def slow(session, episode, **kwargs):
-        time.sleep(2.4)  # 租约 2 秒
-        return real(session, episode, **kwargs)
+        # 准备输入「很慢」:一直等到租约被续了两次才返回。它若留在事件循环里,
+        # 续租根本跑不起来,这里只会等到超时。
+        seen.append(renewed_twice.wait(timeout=20))
+        return real_tags(session, episode, **kwargs)
 
     monkeypatch.setattr(article_analysis, "load_relevant_active_tags", slow)
-
-    async def run():
-        async def probe():
-            # 准备输入期间事件循环没被堵住(否则续租也跑不起来)。
-            await asyncio.sleep(0.5)
-            loop_was_free.append(True)
-
-        watcher = asyncio.create_task(probe())
-        with Session(engine) as session:
-            step = await run_full_analysis_worker_step(
+    with Session(engine) as session:
+        step = asyncio.run(
+            run_full_analysis_worker_step(
                 session,
-                config=_worker_config(lease_seconds=2),
+                config=_worker_config(lease_seconds=600),
                 podcast_config=_config(),
                 policy=PodcastStagePolicy(_config()),
                 provider=_Provider(),
             )
-        await watcher
-        return step
-
-    step = asyncio.run(run())
+        )
+    assert seen == [True]
     assert step.action == "completed"
-    assert loop_was_free == [True]
     attempts = _attempts(engine, process.id)
     assert [a.submission_state for a in attempts] == ["succeeded"]
     with Session(engine) as session:
@@ -1593,7 +1612,8 @@ class _StallingProvider(_Provider):
     async def map_chunk(self, **kwargs):
         self.started += 1
         try:
-            await asyncio.sleep(30)
+            # 永远等不到:只有被取消才会结束(上限只为改坏时不至于挂死)。
+            await asyncio.wait_for(asyncio.Event().wait(), timeout=20)
         except asyncio.CancelledError:
             self.cancelled += 1
             raise
@@ -1608,31 +1628,29 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
     engine, monkeypatch, caplog
 ):
     import logging
-    import time
 
     from services import podcast_full_analysis
 
     process = _request(engine, "episode-50", override=False, key="lease-lost")
+    _fast_heartbeat(monkeypatch)
     provider = _StallingProvider()
 
     def fenced(*_args, **_kwargs):
         raise PodcastLeaseLost("processing lease is expired or fenced")
 
     monkeypatch.setattr(podcast_full_analysis, "heartbeat_processing", fenced)
-    started = time.monotonic()
     with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
         with Session(engine) as session:
             step = asyncio.run(
                 run_full_analysis_worker_step(
                     session,
-                    config=_worker_config(lease_seconds=3),
+                    config=_worker_config(lease_seconds=600),
                     podcast_config=_config(),
                     policy=PodcastStagePolicy(_config()),
                     provider=provider,
                 )
             )
-    # 第一次续租(1 秒后)发现失租,立刻中止;不是等 30 秒的分段调用跑完。
-    assert time.monotonic() - started < 10
+    # 第一次续租发现失租就中止:在途的分段调用被取消,而不是等它们跑完。
     assert step.action == "lease_lost"
     assert provider.started > 0 and provider.cancelled == provider.started
     assert provider.reduced is False
@@ -1649,7 +1667,7 @@ def test_losing_the_lease_cancels_model_calls_and_leaves_recovery_to_the_reclaim
             lease_seconds=30,
             policy=PodcastStagePolicy(_config()),
             requested_target="full_analysis",
-            now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=10),
+            now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
         )
     assert recovered is not None  # 第一次失租:立即重领
     [attempt] = _attempts(engine, process.id)
@@ -1664,6 +1682,7 @@ def test_a_transient_renewal_failure_does_not_abort_the_analysis(
     from services import podcast_full_analysis
 
     _request(engine, "episode-50", override=False, key="renew-hiccup")
+    _fast_heartbeat(monkeypatch)
     real = podcast_full_analysis.heartbeat_processing
     calls: list[str] = []
 
@@ -1677,7 +1696,11 @@ def test_a_transient_renewal_failure_does_not_abort_the_analysis(
 
     class Slow(_Provider):
         async def reduce(self, **kwargs):
-            await asyncio.sleep(1.6)  # 跨过第一次续租
+            # 等到第一次(失败的)续租之后又成功续上一次,再交结果。
+            for _ in range(2000):
+                if len(calls) >= 2:
+                    break
+                await asyncio.sleep(0.01)
             return await super().reduce(**kwargs)
 
     with caplog.at_level(logging.WARNING, logger="services.podcast_full_analysis"):
@@ -1685,13 +1708,13 @@ def test_a_transient_renewal_failure_does_not_abort_the_analysis(
             step = asyncio.run(
                 run_full_analysis_worker_step(
                     session,
-                    config=_worker_config(lease_seconds=5),
+                    config=_worker_config(lease_seconds=600),
                     podcast_config=_config(),
                     policy=PodcastStagePolicy(_config()),
                     provider=Slow(),
                 )
             )
-    assert calls and step.action == "completed"
+    assert len(calls) >= 2 and step.action == "completed"
     assert any("续租暂时失败" in record.getMessage() for record in caplog.records)
 
 
@@ -1944,3 +1967,312 @@ def test_live_run_ownership_is_specific_to_the_transcript_and_the_episode(engine
             session.add(row)
             session.commit()
         assert owned() is expected, status
+
+
+def test_run_under_lease_reports_a_lost_lease_even_if_the_work_finished_in_the_same_tick():
+    from services.podcast_full_analysis import run_under_lease
+
+    async def scenario():
+        gate = asyncio.Event()
+
+        async def work():
+            await gate.wait()
+            return "finished"
+
+        async def renew():
+            gate.set()  # 工作与失租在同一拍里结束
+            raise PodcastLeaseLost("fenced")
+
+        return await run_under_lease(work(), renew=renew, heartbeat_seconds=0.01)
+
+    # 结果已经提交不了,不能当成功交出去。
+    with pytest.raises(PodcastLeaseLost):
+        asyncio.run(scenario())
+
+
+def test_run_under_lease_passes_results_and_errors_through():
+    from services.podcast_full_analysis import run_under_lease
+
+    renewals: list[int] = []
+
+    async def renew():
+        renewals.append(1)
+
+    async def slow_ok():
+        while len(renewals) < 3:
+            await asyncio.sleep(0.005)
+        return 42
+
+    async def boom():
+        raise ValueError("model failed")
+
+    assert asyncio.run(run_under_lease(slow_ok(), renew=renew, heartbeat_seconds=0.01)) == 42
+    with pytest.raises(ValueError, match="model failed"):
+        asyncio.run(run_under_lease(boom(), renew=renew, heartbeat_seconds=0.01))
+
+
+def test_a_stale_executor_cannot_finalize_over_a_newer_lease(engine, monkeypatch):
+    """落定事务从第一条语句起就持有写锁并校验租约:旁人在此之后重领不了。
+
+    此前落定先把处理单读出来在 Python 里比对,再按主键写回——读完到写入之间别的
+    执行者可以重领,随后的写入会把新租约和新执行者的结果一起覆盖掉。
+    """
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    from services import podcast_full_analysis
+
+    process = _request(engine, "episode-50", override=False, key="stale-finalize")
+    # 另一个执行者:独立连接,等锁只等 0.2 秒。
+    intruder_engine = create_engine(
+        str(engine.url), connect_args={"timeout": 0.2, "check_same_thread": False}
+    )
+    outcome: list[str] = []
+    real_persist = podcast_full_analysis._persist_result
+
+    def persist_with_intruder(session, **kwargs):
+        # 此刻旧执行者已经通过了落定的租约检查、还没写结果。
+        try:
+            with Session(intruder_engine) as other:
+                stolen = claim_next_processing(
+                    other,
+                    worker_id="intruder",
+                    lease_seconds=30,
+                    policy=PodcastStagePolicy(_config()),
+                    requested_target="full_analysis",
+                    now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
+                )
+            outcome.append("reclaimed" if stolen is not None else "nothing-to-claim")
+        except OperationalError:
+            outcome.append("blocked")
+        return real_persist(session, **kwargs)
+
+    monkeypatch.setattr(podcast_full_analysis, "_persist_result", persist_with_intruder)
+    try:
+        with Session(engine) as session:
+            step = asyncio.run(
+                run_full_analysis_worker_step(
+                    session,
+                    config=_worker_config(lease_seconds=600),
+                    podcast_config=_config(),
+                    policy=PodcastStagePolicy(_config()),
+                    provider=_Provider(),
+                )
+            )
+    finally:
+        intruder_engine.dispose()
+    assert outcome == ["blocked"]
+    assert step.action == "completed"
+    with Session(engine) as session:
+        final = session.get(PodcastProcessingRecord, process.id)
+        assert final.processing_status == "ready" and final.lease_token is None
+
+
+def test_finalize_refuses_when_the_lease_already_moved_on(engine, monkeypatch):
+    from services import podcast_full_analysis
+
+    process = _request(engine, "episode-50", override=False, key="moved-on")
+    real_finalize = podcast_full_analysis._finalize_result
+
+    def finalize_after_reclaim(session, **kwargs):
+        # 落定之前租约已被别人重领(fencing 加一)。
+        with Session(engine) as other:
+            assert claim_next_processing(
+                other,
+                worker_id="intruder",
+                lease_seconds=30,
+                policy=PodcastStagePolicy(_config()),
+                requested_target="full_analysis",
+                now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
+            ) is not None
+        return real_finalize(session, **kwargs)
+
+    monkeypatch.setattr(podcast_full_analysis, "_finalize_result", finalize_after_reclaim)
+    with Session(engine) as session:
+        step = asyncio.run(
+            run_full_analysis_worker_step(
+                session,
+                config=_worker_config(lease_seconds=600),
+                podcast_config=_config(),
+                policy=PodcastStagePolicy(_config()),
+                provider=_Provider(),
+            )
+        )
+    assert step.action == "lease_lost"
+    with Session(engine) as session:
+        current = session.get(PodcastProcessingRecord, process.id)
+        assert current.processing_status == "running" and current.lease_owner == "intruder"
+        analysis = session.get(ArticleAnalysisRecord, "episode-50")
+        assert analysis is None or analysis.analysis_basis == "podcast_show_notes"
+
+
+def test_an_admin_retry_starts_a_fresh_lease_expiry_ladder(engine):
+    from services.podcast_processing import LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS
+    from services.podcast_processing_admin import retry_processing
+
+    process = _request(engine, "episode-50", override=False, key="ladder-then-retry")
+    config = _config()
+    policy = PodcastStagePolicy(config)
+    clock = (
+        dt.datetime.strptime(process.budget_period, "%Y-%m")
+        .replace(tzinfo=ZoneInfo(config.budget_timezone))
+        .astimezone(dt.timezone.utc)
+    )
+
+    def claim_at(moment):
+        with Session(engine) as session:
+            claim = claim_next_processing(
+                session, worker_id="ladder", lease_seconds=1, policy=policy,
+                requested_target="full_analysis", now=moment,
+            )
+            if claim is not None:
+                _begin_local_attempt(session, claim, now=moment, tag=moment.isoformat())
+            return claim
+
+    def status():
+        with Session(engine) as session:
+            row = session.get(PodcastProcessingRecord, process.id)
+            return row.processing_status, row.attempt_count
+
+    def exhaust(moment):
+        assert claim_at(moment) is not None
+        for delay in LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS:
+            moment += dt.timedelta(seconds=2)
+            if delay:
+                assert claim_at(moment) is None
+                moment += dt.timedelta(seconds=delay)
+            assert claim_at(moment) is not None
+        moment += dt.timedelta(seconds=2)
+        assert claim_at(moment) is None
+        return moment
+
+    clock = exhaust(clock)
+    state, attempt_count = status()
+    assert state == "failed" and attempt_count == len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS) + 1
+
+    retried = retry_processing(
+        engine, _registry(), config, processing_id=process.id,
+        idempotency_key="ladder-retry", expected_attempt_count=attempt_count,
+        reason="再给一轮机会", actor="admin",
+    )
+    assert retried.processing_status == "queued"
+    # 重试之后是完整的新一轮:第一次失租立即重领,之后逐级退避,再用完才失败。
+    clock = exhaust(clock + dt.timedelta(seconds=5))
+    state, second_count = status()
+    assert state == "failed"
+    assert second_count == 2 * (len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS) + 1)
+
+
+def test_claim_rolls_back_when_it_fails_midway(engine, monkeypatch):
+    """认领函数带着事务边界:中途出错不留下半个事务。"""
+
+    from services import podcast_processing
+
+    _request(engine, "episode-50", override=False, key="claim-rollback")
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("boom after the claim UPDATE")
+
+    monkeypatch.setattr(podcast_processing, "_latest_active_attempt", broken)
+    with Session(engine) as session:
+        with pytest.raises(RuntimeError, match="boom"):
+            claim_next_processing(
+                session, worker_id="w", lease_seconds=30,
+                policy=PodcastStagePolicy(_config()),
+                requested_target="full_analysis", now=NOW,
+            )
+        assert not session.in_transaction()
+    with Session(engine) as session:
+        row = session.exec(select(PodcastProcessingRecord)).first()
+        assert row.processing_status == "queued" and row.lease_token is None
+
+
+def test_auto_landing_still_surfaces_a_pending_publisher_transcript(engine, monkeypatch):
+    """在途处理单拥有当前转写时,待取回的发布方逐字稿仍然要成为候选。"""
+
+    import api.app as app_module
+
+    _seed_completed_asr(engine)
+    monkeypatch.setattr(app_module, "db_sink", SimpleNamespace(engine=engine))
+    monkeypatch.setattr(
+        app_module.podcast_publisher_transcript_service,
+        "publisher_transcript_refresh_revision",
+        lambda _engine, *, episode_id: "new-locator-0123456789",
+    )
+    with Session(engine) as session:
+        candidate = app_module._resolve_podcast_landing_candidate(session, "episode-asr")
+    assert candidate is not None
+    assert candidate.revision == "new-locator-0123"
+
+
+def test_auto_enqueue_reuses_the_live_run_that_owns_the_selected_transcript(engine):
+    """巡检时 ASR 还没完成、入队时刚好完成:正式入队处要复用在途的那一单。"""
+
+    owner = _seed_completed_asr(engine)
+
+    def enqueue(**keys):
+        return request_processing(
+            engine, _registry(), _config(), episode_id="episode-asr",
+            target="full_analysis", selection_override=False,
+            reason="简介初评达到全文处理线", actor="system", **keys,
+        )
+
+    reused = enqueue(idempotency_key_prefix="full-analysis:auto:episode-asr")
+    assert reused.id == owner.id
+    with Session(engine) as session:
+        rows = session.exec(
+            select(PodcastProcessingRecord).where(
+                PodcastProcessingRecord.episode_id == "episode-asr"
+            )
+        ).all()
+    assert [row.id for row in rows] == [owner.id]
+    # 那一单终态失败后,自动请求才为这份转写建新的一单。
+    with Session(engine) as session:
+        row = session.get(PodcastProcessingRecord, owner.id)
+        row.processing_status = "failed"
+        row.finished_at = NOW.isoformat()
+        session.add(row)
+        session.commit()
+    fresh = enqueue(idempotency_key_prefix="full-analysis:auto:episode-asr")
+    assert fresh.id != owner.id and fresh.input_artifact_id == "complete-asr"
+
+
+def test_a_rejected_retry_does_not_reset_the_lease_expiry_streak(engine):
+    from models.db import PodcastProcessingCommandRecord
+
+    process = _request(engine, "episode-50", override=False, key="rejected-retry")
+    config = _config()
+    policy = PodcastStagePolicy(config)
+    clock = (
+        dt.datetime.strptime(process.budget_period, "%Y-%m")
+        .replace(tzinfo=ZoneInfo(config.budget_timezone))
+        .astimezone(dt.timezone.utc)
+    )
+
+    def claim_at(moment):
+        with Session(engine) as session:
+            claim = claim_next_processing(
+                session, worker_id="w", lease_seconds=1, policy=policy,
+                requested_target="full_analysis", now=moment,
+            )
+            if claim is not None:
+                _begin_local_attempt(session, claim, now=moment, tag=moment.isoformat())
+            return claim
+
+    assert claim_at(clock) is not None
+    clock += dt.timedelta(seconds=2)
+    assert claim_at(clock) is not None  # 第 1 次失租:立即重领
+    # 一条被拒绝的重试命令(例如 attempt 数对不上)不算「再给一轮机会」。
+    with Session(engine) as session:
+        session.add(PodcastProcessingCommandRecord(
+            id="rejected-command", processing_id=process.id, command_type="manual_retry",
+            idempotency_key="rejected-retry-key", expected_attempt_count=2,
+            requested_by="admin", reason="stale retry", outcome="rejected",
+            error_code="podcast_processing_conflict", created_at=clock.isoformat(),
+        ))
+        session.commit()
+    clock += dt.timedelta(seconds=2)
+    assert claim_at(clock) is None  # 第 2 次失租:照常退避,而不是又当成第 1 次
+    with Session(engine) as session:
+        assert session.get(PodcastProcessingRecord, process.id).processing_status == "retry_wait"

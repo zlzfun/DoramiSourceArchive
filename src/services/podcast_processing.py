@@ -898,12 +898,24 @@ def _drainable_provider_attempt(
     return attempt
 
 
-@_transaction_boundary
 def _local_lease_expiry_streak(
     session: Session, processing_id: str, stage: str, *, excluding: str
 ) -> int:
-    """此前连续多少个本地 attempt 以租约到期收场(不含正被回收的那一个)。"""
+    """此前连续多少个本地 attempt 以租约到期收场(不含正被回收的那一个)。
 
+    只数最近一次被接受的管理员重试之后的 attempt:重试是「再给一轮机会」,不该
+    带着上一轮已经用完的次数——否则重试后第一次失租就会被立刻判为用完。
+    ``expected_attempt_count`` 是重试当时已有的 attempt 数,之后的 ``attempt_no``
+    都比它大。
+    """
+
+    retried_after = session.exec(
+        select(func.max(PodcastProcessingCommandRecord.expected_attempt_count)).where(
+            PodcastProcessingCommandRecord.processing_id == processing_id,
+            PodcastProcessingCommandRecord.command_type == "manual_retry",
+            PodcastProcessingCommandRecord.outcome == "accepted",
+        )
+    ).one()
     streak = 0
     for error_code in session.exec(
         select(PodcastStageAttemptRecord.error_code)
@@ -911,6 +923,7 @@ def _local_lease_expiry_streak(
             PodcastStageAttemptRecord.processing_id == processing_id,
             PodcastStageAttemptRecord.stage == stage,
             PodcastStageAttemptRecord.id != excluding,
+            PodcastStageAttemptRecord.attempt_no > int(retried_after or 0),
         )
         .order_by(PodcastStageAttemptRecord.attempt_no.desc())
         .limit(len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS) + 1)
@@ -921,6 +934,7 @@ def _local_lease_expiry_streak(
     return streak
 
 
+@_transaction_boundary
 def claim_next_processing(
     session: Session,
     *,

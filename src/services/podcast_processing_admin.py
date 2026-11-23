@@ -591,18 +591,18 @@ def _select_external_input(
 _LIVE_PROCESSING_STATUSES = ("queued", "running", "retry_wait")
 
 
-def transcript_is_owned_by_live_processing(
+def live_owner_of_transcript(
     session: Session, *, episode_id: str, artifact_id: str, target: str = "full_analysis"
-) -> bool:
-    """这份转写是否出自一个仍在途的处理单自己的 ASR(issue #318)。
+) -> PodcastProcessingRecord | None:
+    """仍在途、且这份转写正是它自己的 ASR 产出的那个处理单(issue #318)。
 
     从源音频起步的处理单,ASR 成功后会自己接着分析这份转写。自动入队若把它当成
     「新出现的输入」再建一单,第二单排在第一单后面,把同一份转写再分析一遍
-    (输入指纹含产物种类,所以两单的幂等键不同,去重拦不住)。
+    (输入指纹含产物种类,所以两单的幂等键不同,键去重拦不住)。
     """
 
     return session.exec(
-        select(PodcastProcessingRecord.id)
+        select(PodcastProcessingRecord)
         .join(
             PodcastStageAttemptRecord,
             PodcastStageAttemptRecord.processing_id == PodcastProcessingRecord.id,
@@ -615,8 +615,17 @@ def transcript_is_owned_by_live_processing(
             PodcastStageAttemptRecord.submission_state == "succeeded",
             PodcastStageAttemptRecord.output_artifact_id == artifact_id,
         )
+        .order_by(PodcastProcessingRecord.queued_at, PodcastProcessingRecord.id)
         .limit(1)
-    ).first() is not None
+    ).first()
+
+
+def transcript_is_owned_by_live_processing(
+    session: Session, *, episode_id: str, artifact_id: str, target: str = "full_analysis"
+) -> bool:
+    return live_owner_of_transcript(
+        session, episode_id=episode_id, artifact_id=artifact_id, target=target
+    ) is not None
 
 
 def select_full_analysis_input(
@@ -929,6 +938,20 @@ def request_processing(
                     session.expunge(replay)
                     session.commit()
                     return replay
+                # 自动请求:最终选中的若是某个在途处理单自己产出的转写,就复用那
+                # 一单,不另建。必须在这里(持锁、输入已最终选定)判断——巡检侧的
+                # 同类判断只是省一次入队,它看的是更早的状态:巡检时 ASR 还没完成、
+                # 入队时刚好完成,选中的输入就从源音频变成了转写。
+                owner = live_owner_of_transcript(
+                    session,
+                    episode_id=episode_id,
+                    artifact_id=selected.artifact_id,
+                    target=target,
+                )
+                if owner is not None:
+                    session.expunge(owner)
+                    session.commit()
+                    return owner
             selection_source = "editor" if selection_override else "policy"
             if not selection_override:
                 analysis = session.get(ArticleAnalysisRecord, episode_id)

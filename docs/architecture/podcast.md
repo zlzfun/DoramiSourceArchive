@@ -31,9 +31,10 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 1. **认领后立刻建 attempt,用当下的时间校验租约。** 此后的一切耗时都记在这次 attempt 名下。到这一步已失租 → 记日志、返回 `lease_lost`,不发模型调用。
 2. **重活在续租保护之内。** 准备输入(召回标签、话题热度)放进工作线程、用自己的 `Session`,与分段 / 汇总调用一起包在 `run_under_lease` 里。续租得到 `PodcastLeaseLost` → 立刻取消在途工作,失租的执行者不做任何回写;别的续租异常(写锁)只记日志、下一拍再续。
-3. **连续失租有界。** 重领路径按「此前连续多少个本地 attempt 以租约到期收场」退避:第 1 次立即重领,之后 60 秒 / 5 分钟 / 15 分钟 / 60 分钟(`LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS`),第 6 次处理单转 `failed`(`lease_expired_retry_exhausted`)等管理员重试。记账的是持有新租约的重领方。
+3. **连续失租有界。** 重领路径按「此前连续多少个本地 attempt 以租约到期收场」退避:第 1 次立即重领,之后 60 秒 / 5 分钟 / 15 分钟 / 60 分钟(`LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS`),第 6 次处理单转 `failed`(`lease_expired_retry_exhausted`)等管理员重试。记账的是持有新租约的重领方;只数最近一次被接受的管理员重试之后的 attempt。
+4. **落定先过 fence。** `_finalize_result` 的第一条语句是带完整 fence 的条件 UPDATE:校验租约,并让事务从这里起持有写锁;不成立抛 `PodcastLeaseLost`。先读后写、在 Python 里比对租约是拦不住读写之间的重领的。
 
-自动入队(`_resolve_podcast_landing_candidate`)不为在途处理单自己的 ASR 产出的转写再建一单(`transcript_is_owned_by_live_processing`):那一单会自己接着分析。
+自动入队不为在途处理单自己的 ASR 产出的转写再建一单(`live_owner_of_transcript`):那一单会自己接着分析。保证在正式入队处(`request_processing` 持锁、输入最终选定之后复用拥有者);巡检侧(`_resolve_podcast_landing_candidate`)的同类判断只是省一次入队,且有待刷新的发布方逐字稿时不拦。
 
 排查入口:`podcast_stage_attempts` 按 `error_code` 计数(`lease_expired_local_attempt` 是单次租约到期,偶发属正常——进程重启就会有);日志里 `Podcast 全文分析失去租约` / `连续 N 次租约到期` 带耗时与处理单 id。
 
