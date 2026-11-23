@@ -2950,7 +2950,11 @@ def generate_personal_digest(
 
             try:
                 stats = titles.localize_edition_titles(
-                    session, edition, items=item_records, persist=False
+                    session,
+                    edition,
+                    items=item_records,
+                    persist=False,
+                    include_failure_count=True,
                 )
                 if stats.get("translation_failed"):
                     final_values["degraded_reason"] = ";".join(
