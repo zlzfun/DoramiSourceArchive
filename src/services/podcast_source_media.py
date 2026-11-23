@@ -58,6 +58,18 @@ class SourceMediaFetchFailed(SourceMediaError):
     pass
 
 
+class _DeclaredSizeExceeded(Exception):
+    """The file is larger than the feed said, but may still fit the configured cap.
+
+    Deliberately not a ``SourceMediaError``: it never leaves this module.
+    ``actual_bytes`` is the response's ``Content-Length`` when it was known.
+    """
+
+    def __init__(self, actual_bytes: int | None) -> None:
+        super().__init__("declared enclosure length exceeded")
+        self.actual_bytes = actual_bytes
+
+
 @dataclass(frozen=True)
 class EnclosureSnapshot:
     url: str
@@ -98,8 +110,10 @@ def download_snapshot_media(
 
     if enclosure.locator_hash != expected.locator_hash:
         raise SourceMediaConflict("Podcast enclosure 元数据已变化，请重试")
-    download_limit = enclosure.declared_bytes or store.max_bytes
-    if download_limit > store.max_bytes:
+    # 这份快照是校验过的:字节数必须与它一致,所以按它预留。订阅源声明的 length
+    # 不可靠(issue #323),不能再拿来当上限。
+    download_limit = int(expected.size_bytes)
+    if download_limit <= 0 or download_limit > store.max_bytes:
         raise SourceMediaTooLarge("Podcast enclosure 超过配置的音频大小上限")
     with store.reserve_validation_download(download_limit):
         fd, path = store.create_upload_temp()
@@ -118,11 +132,12 @@ def download_snapshot_media(
                     )
                 except http_safety.PublicDownloadTimeout:
                     raise SourceMediaTimeout("Podcast enclosure 下载超时") from None
-                except http_safety.PublicDownloadError as exc:
-                    if "大小上限" in str(exc):
-                        raise SourceMediaTooLarge(
-                            "Podcast enclosure 超过配置的音频大小上限"
-                        ) from None
+                except http_safety.PublicDownloadTooLarge:
+                    # 比校验时的快照还大:内容变了,不是「超过配置上限」。
+                    raise SourceMediaConflict(
+                        "Podcast enclosure 内容已变化，请重新校验"
+                    ) from None
+                except http_safety.PublicDownloadError:
                     raise SourceMediaFetchFailed("Podcast enclosure 下载失败") from None
                 destination.flush()
                 os.fsync(destination.fileno())
@@ -243,102 +258,79 @@ async def validate_source_media(
         raise SourceMediaTooLarge("Podcast enclosure 超过配置的音频大小上限")
 
     policy.require_stage("fetch", boundary="provider_submit")
+    # 订阅源声明的 ``length`` 只是预留的参考,不是上限(issue #323):它经常不准——
+    # 实测有的源真实文件是声明值的 1.5 倍——此前流一超过声明值就被判成「超过配置的
+    # 音频大小上限」,而真正的上限是 ``store.max_bytes``。先按声明值预留;文件比它
+    # 大而仍在上限之内时,换一个够用的预留额重新下载。每一轮的预留额严格变大,到
+    # ``store.max_bytes`` 为止,所以最多三轮(声明值 → 响应自报的长度 → 配置上限)。
     download_limit = enclosure.declared_bytes or store.max_bytes
-    with store.reserve_validation_download(download_limit):
-        fd, path = store.create_upload_temp()
+    while True:
         try:
-            with os.fdopen(fd, "wb", closefd=False) as destination:
+            with store.reserve_validation_download(download_limit):
+                fd, path = store.create_upload_temp()
                 try:
-                    result = await http_safety.stream_public_url_to_file(
-                        enclosure.url,
-                        destination,
-                        max_bytes=download_limit,
-                        max_redirects=storage_config.download_max_redirects,
-                        timeout_seconds=storage_config.download_timeout_seconds,
-                        client_factory=client_factory,
-                    )
-                except http_safety.PublicDownloadTimeout:
-                    raise SourceMediaTimeout("Podcast enclosure 下载超时") from None
-                except http_safety.PublicDownloadError as exc:
-                    if "大小上限" in str(exc):
-                        raise SourceMediaTooLarge(
-                            "Podcast enclosure 超过配置的音频大小上限"
-                        ) from None
-                    raise SourceMediaFetchFailed("Podcast enclosure 下载失败") from None
-                destination.flush()
-                os.fsync(destination.fileno())
-            if result.size <= 0:
-                raise SourceMediaFetchFailed("Podcast enclosure 返回空内容")
+                    with os.fdopen(fd, "wb", closefd=False) as destination:
+                        try:
+                            result = await http_safety.stream_public_url_to_file(
+                                enclosure.url,
+                                destination,
+                                max_bytes=download_limit,
+                                max_redirects=storage_config.download_max_redirects,
+                                timeout_seconds=storage_config.download_timeout_seconds,
+                                client_factory=client_factory,
+                            )
+                        except http_safety.PublicDownloadTimeout:
+                            raise SourceMediaTimeout("Podcast enclosure 下载超时") from None
+                        except http_safety.PublicDownloadTooLarge as exc:
+                            if download_limit >= store.max_bytes:
+                                raise SourceMediaTooLarge(
+                                    "Podcast enclosure 超过配置的音频大小上限"
+                                ) from None
+                            raise _DeclaredSizeExceeded(exc.declared_length) from None
+                        except http_safety.PublicDownloadError:
+                            raise SourceMediaFetchFailed("Podcast enclosure 下载失败") from None
+                        destination.flush()
+                        os.fsync(destination.fileno())
+                    if result.size <= 0:
+                        raise SourceMediaFetchFailed("Podcast enclosure 返回空内容")
 
-            declared_mime = _download_mime(result.content_type, enclosure.mime)
-            with Path(path).open("rb") as source:
-                mime = store.validate_audio(source.read(64), declared_mime)
-            # ffprobe is a blocking subprocess: keep it off the event loop.
-            duration = await asyncio.to_thread(store.probe_audio, Path(path))
-            if duration is None or duration <= 0:
-                raise PodcastArtifactUnsupportedMedia("音频时长不可用")
-            if (
-                isinstance(max_audio_seconds_per_file, bool)
-                or not isinstance(max_audio_seconds_per_file, int)
-                or max_audio_seconds_per_file <= 0
-            ):
-                raise SourceMediaConflict("ASR 单集音频时长上限配置无效")
-            if float(duration) > max_audio_seconds_per_file:
-                raise SourceMediaTooLong(
-                    "Podcast enclosure 超过 ASR 单任务音频时长上限"
-                )
+                    declared_mime = _download_mime(result.content_type, enclosure.mime)
+                    with Path(path).open("rb") as source:
+                        mime = store.validate_audio(source.read(64), declared_mime)
+                    # ffprobe is a blocking subprocess: keep it off the event loop.
+                    duration = await asyncio.to_thread(store.probe_audio, Path(path))
+                    if duration is None or duration <= 0:
+                        raise PodcastArtifactUnsupportedMedia("音频时长不可用")
+                    if (
+                        isinstance(max_audio_seconds_per_file, bool)
+                        or not isinstance(max_audio_seconds_per_file, int)
+                        or max_audio_seconds_per_file <= 0
+                    ):
+                        raise SourceMediaConflict("ASR 单集音频时长上限配置无效")
+                    if float(duration) > max_audio_seconds_per_file:
+                        raise SourceMediaTooLong(
+                            "Podcast enclosure 超过 ASR 单任务音频时长上限"
+                        )
 
-            policy.require_stage("fetch", boundary="commit")
-            stamp = dt.datetime.now(dt.timezone.utc).isoformat(
-                timespec="microseconds"
-            )
-            with Session(engine) as session:
-                if engine.dialect.name == "sqlite":
-                    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-                episode, current = _episode_and_enclosure(session, episode_id)
-                if current != enclosure:
-                    raise SourceMediaConflict("Podcast enclosure 元数据已变化，请重试")
-                if engine.dialect.name == "postgresql":
-                    session.expire_all()
-                    locked = session.exec(
-                        select(ArticleRecord)
-                        .where(ArticleRecord.id == episode_id)
-                        .with_for_update()
-                    ).first()
-                    if locked is None or enclosure_snapshot(locked) != enclosure:
-                        raise SourceMediaConflict("Podcast enclosure 元数据已变化，请重试")
-                existing = session.exec(
-                    select(PodcastSourceMediaSnapshotRecord).where(
-                        PodcastSourceMediaSnapshotRecord.episode_id == episode_id,
-                        PodcastSourceMediaSnapshotRecord.locator_hash
-                        == enclosure.locator_hash,
-                        PodcastSourceMediaSnapshotRecord.content_hash == result.sha256,
+                    policy.require_stage("fetch", boundary="commit")
+                    stamp = dt.datetime.now(dt.timezone.utc).isoformat(
+                        timespec="microseconds"
                     )
-                ).first()
-                if existing is not None and (
-                    existing.mime != mime
-                    or existing.size_bytes != result.size
-                    or existing.duration_seconds != float(duration)
-                ):
-                    raise SourceMediaConflict(
-                        "Podcast 来源媒体快照与重复校验结果冲突"
-                    )
-                if existing is None:
-                    existing = PodcastSourceMediaSnapshotRecord(
-                        id=f"podcast-source-media-{uuid.uuid4().hex}",
-                        episode_id=episode.id,
-                        locator_hash=enclosure.locator_hash,
-                        content_hash=result.sha256,
-                        mime=mime,
-                        size_bytes=result.size,
-                        duration_seconds=float(duration),
-                        created_at=stamp,
-                    )
-                    session.add(existing)
-                    try:
-                        session.commit()
-                    except IntegrityError:
-                        session.rollback()
+                    with Session(engine) as session:
+                        if engine.dialect.name == "sqlite":
+                            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                        episode, current = _episode_and_enclosure(session, episode_id)
+                        if current != enclosure:
+                            raise SourceMediaConflict("Podcast enclosure 元数据已变化，请重试")
+                        if engine.dialect.name == "postgresql":
+                            session.expire_all()
+                            locked = session.exec(
+                                select(ArticleRecord)
+                                .where(ArticleRecord.id == episode_id)
+                                .with_for_update()
+                            ).first()
+                            if locked is None or enclosure_snapshot(locked) != enclosure:
+                                raise SourceMediaConflict("Podcast enclosure 元数据已变化，请重试")
                         existing = session.exec(
                             select(PodcastSourceMediaSnapshotRecord).where(
                                 PodcastSourceMediaSnapshotRecord.episode_id == episode_id,
@@ -346,26 +338,68 @@ async def validate_source_media(
                                 == enclosure.locator_hash,
                                 PodcastSourceMediaSnapshotRecord.content_hash == result.sha256,
                             )
-                        ).one()
-                        payload = serialize_snapshot(existing)
-                        session.rollback()
+                        ).first()
+                        if existing is not None and (
+                            existing.mime != mime
+                            or existing.size_bytes != result.size
+                            or existing.duration_seconds != float(duration)
+                        ):
+                            raise SourceMediaConflict(
+                                "Podcast 来源媒体快照与重复校验结果冲突"
+                            )
+                        if existing is None:
+                            existing = PodcastSourceMediaSnapshotRecord(
+                                id=f"podcast-source-media-{uuid.uuid4().hex}",
+                                episode_id=episode.id,
+                                locator_hash=enclosure.locator_hash,
+                                content_hash=result.sha256,
+                                mime=mime,
+                                size_bytes=result.size,
+                                duration_seconds=float(duration),
+                                created_at=stamp,
+                            )
+                            session.add(existing)
+                            try:
+                                session.commit()
+                            except IntegrityError:
+                                session.rollback()
+                                existing = session.exec(
+                                    select(PodcastSourceMediaSnapshotRecord).where(
+                                        PodcastSourceMediaSnapshotRecord.episode_id == episode_id,
+                                        PodcastSourceMediaSnapshotRecord.locator_hash
+                                        == enclosure.locator_hash,
+                                        PodcastSourceMediaSnapshotRecord.content_hash == result.sha256,
+                                    )
+                                ).one()
+                                payload = serialize_snapshot(existing)
+                                session.rollback()
+                                return payload
+                            session.refresh(existing)
+                            payload = serialize_snapshot(existing)
+                        else:
+                            payload = serialize_snapshot(existing)
+                            session.rollback()
                         return payload
-                    session.refresh(existing)
-                    payload = serialize_snapshot(existing)
-                else:
-                    payload = serialize_snapshot(existing)
-                    session.rollback()
-                return payload
-        except PodcastArtifactTooLarge as exc:
-            raise SourceMediaTooLarge(str(exc)) from None
-        except (
-            PodcastArtifactProbeUnavailable,
-            PodcastArtifactStorageFull,
-            PodcastArtifactUnsupportedMedia,
-        ):
-            raise
-        except PodcastArtifactError:
-            raise
-        finally:
-            os.close(fd)
-            Path(path).unlink(missing_ok=True)
+                except PodcastArtifactTooLarge as exc:
+                    raise SourceMediaTooLarge(str(exc)) from None
+                except (
+                    PodcastArtifactProbeUnavailable,
+                    PodcastArtifactStorageFull,
+                    PodcastArtifactUnsupportedMedia,
+                ):
+                    raise
+                except PodcastArtifactError:
+                    raise
+                finally:
+                    os.close(fd)
+                    Path(path).unlink(missing_ok=True)
+        except _DeclaredSizeExceeded as grown:
+            actual = grown.actual_bytes
+            if actual is not None and actual > store.max_bytes:
+                raise SourceMediaTooLarge(
+                    "Podcast enclosure 超过配置的音频大小上限"
+                ) from None
+            download_limit = (
+                actual if actual is not None and actual > download_limit
+                else store.max_bytes
+            )

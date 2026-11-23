@@ -74,6 +74,20 @@ DETERMINISTIC_ADMIN_CODES = frozenset(
         "podcast_selection_required",
     }
 )
+# 「过大 / 过长」只取决于音频文件本身与两个上限(``max_audio_mb``、单集转写时长
+# 上限)。修订号没变、上限没变,再下载一遍也是同一个结论——而「过长」要把整个文件
+# 下载下来才量得出(issue #323:生产上 21 期节目每天被完整下载一遍再拒绝一次)。
+# 所以这两类判定连同当时的上限一起记住,不再按天复查;两种写法(管理端错误码 /
+# 直接抛出的异常类名)都算。
+MEDIA_LIMIT_CODES = frozenset(
+    {
+        "podcast_source_media_too_long",
+        "podcast_source_media_too_large",
+        "SourceMediaTooLong",
+        "SourceMediaTooLarge",
+        "PodcastArtifactTooLarge",
+    }
+)
 # 配置 / 容量类:随运维动作改变,按守门节奏回访而非长停。
 GATE_ADMIN_CODES = frozenset(
     {
@@ -345,14 +359,27 @@ def due_retries(state: dict[str, dict], now: dt.datetime) -> list[str]:
     return due
 
 
+def media_limits_fingerprint(max_bytes: int, max_audio_seconds: int) -> str:
+    """The two limits a too-large / too-long verdict depends on, as one comparable value."""
+
+    return f"{int(max_bytes)}:{int(max_audio_seconds)}"
+
+
 def is_allowed(
-    state: dict[str, dict], episode_id: str, revision: str, now: dt.datetime
+    state: dict[str, dict],
+    episode_id: str,
+    revision: str,
+    now: dt.datetime,
+    *,
+    media_limits: str = "",
 ) -> bool:
     """Whether an eligible episode may be attempted now.
 
-    Unknown episodes and revision changes are always allowed. For the recorded
-    revision the ``retry_at`` decides; ``None`` (an ``enqueued`` entry) means
-    never until the revision moves.
+    Unknown episodes and revision changes are always allowed. A too-large /
+    too-long verdict that recorded its limits is allowed again only when the
+    current ``media_limits`` differ. For every other recorded revision the
+    ``retry_at`` decides; ``None`` (an ``enqueued`` entry) means never until the
+    revision moves.
     """
 
     entry = state.get(episode_id)
@@ -360,6 +387,9 @@ def is_allowed(
         return True
     if str(entry.get("revision") or "") != revision:
         return True
+    held_limits = str(entry.get("limits") or "")
+    if held_limits:
+        return held_limits != media_limits
     retry_at = _parse_iso(entry.get("retry_at"))
     return retry_at is not None and retry_at <= now
 
@@ -381,11 +411,38 @@ def record_failure(
     revision: str,
     failure: FailureClass,
     now: dt.datetime,
+    *,
+    media_limits: str = "",
 ) -> dict:
+    """Remember one failed enqueue.
+
+    ``media_limits`` is the caller's current :func:`media_limits_fingerprint`.
+    A too-large / too-long verdict keeps it and gets no ``retry_at``: the entry
+    is not retried on a timer, only when the revision or the limits change (see
+    :func:`is_allowed`). It still ages out with the retention window, so such an
+    episode is verified again about once a month rather than every day.
+    """
+
     prior = state.get(episode_id) or {}
     if failure.kind == KIND_GATED:
         return record_gated(state, episode_id, revision, failure.code, now)
     attempts = _prior_attempts(prior, revision) + 1
+    if (
+        failure.kind == KIND_DETERMINISTIC
+        and failure.code in MEDIA_LIMIT_CODES
+        and media_limits
+    ):
+        entry = {
+            "revision": revision,
+            "attempts": attempts,
+            "kind": KIND_DETERMINISTIC,
+            "code": failure.code,
+            "last_at": _now_iso(now),
+            "retry_at": None,
+            "limits": media_limits,
+        }
+        state[episode_id] = entry
+        return entry
     if failure.kind == KIND_DETERMINISTIC:
         kind = KIND_DETERMINISTIC
         delay = HALT_RECHECK_SECONDS

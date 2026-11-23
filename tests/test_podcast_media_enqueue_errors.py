@@ -42,7 +42,7 @@ def test_full_analysis_input_preparation_errors_are_safe_domain_responses(
         if scenario == "timeout":
             raise http_safety.PublicDownloadTimeout("signed-url-secret")
         if scenario == "too_large":
-            raise http_safety.PublicDownloadError("下载响应超过大小上限 signed-url-secret")
+            raise http_safety.PublicDownloadTooLarge()
         raise http_safety.PublicDownloadError("下载服务器返回异常状态码 403 signed-url-secret")
 
     monkeypatch.setattr(http_safety, "stream_public_url_to_file", fail_download)

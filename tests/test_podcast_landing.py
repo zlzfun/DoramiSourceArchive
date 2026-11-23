@@ -149,6 +149,72 @@ def test_record_failure_deterministic_halts_until_recheck_or_revision_change():
     assert entry["attempts"] == 1
 
 
+@pytest.mark.parametrize("code", sorted(landing.MEDIA_LIMIT_CODES))
+def test_media_limit_verdict_is_remembered_with_its_limits_not_rechecked_daily(code):
+    """「过大 / 过长」只取决于文件与两个上限:修订号、上限都没变就不再试(issue #323)。"""
+
+    state: dict = {}
+    limits = landing.media_limits_fingerprint(512 * 1024 * 1024, 7200)
+    entry = landing.record_failure(
+        state, "ep", "prepare:abc", landing.FailureClass("deterministic", code), NOW,
+        media_limits=limits,
+    )
+    assert (entry["kind"], entry["attempts"], entry["retry_at"], entry["limits"]) == (
+        "deterministic", 1, None, limits,
+    )
+    much_later = NOW + dt.timedelta(days=20)
+    assert not landing.is_allowed(state, "ep", "prepare:abc", much_later, media_limits=limits)
+    assert landing.due_retries(state, much_later) == []
+    # 订阅源换了音频地址,或者任一上限调了:再试一次。
+    assert landing.is_allowed(state, "ep", "prepare:def", NOW, media_limits=limits)
+    for changed in (
+        landing.media_limits_fingerprint(1024 * 1024 * 1024, 7200),
+        landing.media_limits_fingerprint(512 * 1024 * 1024, 10800),
+    ):
+        assert landing.is_allowed(state, "ep", "prepare:abc", NOW, media_limits=changed)
+    # 不按天复查,但仍随记忆的保留期过期——大约一个月核一次,而不是每天。
+    landing.prune_state(state, NOW + dt.timedelta(seconds=landing.STATE_RETENTION_SECONDS + 1))
+    assert state == {}
+
+
+def test_only_media_limit_verdicts_with_known_limits_skip_the_daily_recheck():
+    limits = landing.media_limits_fingerprint(512 * 1024 * 1024, 7200)
+    day = dt.timedelta(seconds=landing.HALT_RECHECK_SECONDS)
+    state: dict = {}
+    # 别的确定性失败(比如还没选定输入)取决于会变的数据,照旧 24 小时复查。
+    landing.record_failure(
+        state, "other", "r",
+        landing.FailureClass("deterministic", "podcast_selection_required"), NOW,
+        media_limits=limits,
+    )
+    assert "limits" not in state["other"]
+    assert landing.is_allowed(state, "other", "r", NOW + day, media_limits=limits)
+    # 本轮没取到上限:不敢永久记住,退回按天复查。
+    landing.record_failure(
+        state, "unknown-limits", "r",
+        landing.FailureClass("deterministic", "podcast_source_media_too_long"), NOW,
+    )
+    assert "limits" not in state["unknown-limits"]
+    assert landing.is_allowed(state, "unknown-limits", "r", NOW + day, media_limits=limits)
+    # 旧版本留下的记忆没有 limits:到点复查一次,那一次的结论会带上 limits。
+    state["legacy"] = {
+        "revision": "r", "attempts": 68, "kind": "deterministic",
+        "code": "podcast_source_media_too_long", "last_at": NOW.isoformat(),
+        "retry_at": (NOW + day).isoformat(),
+    }
+    assert not landing.is_allowed(state, "legacy", "r", NOW, media_limits=limits)
+    assert landing.is_allowed(state, "legacy", "r", NOW + day, media_limits=limits)
+    entry = landing.record_failure(
+        state, "legacy", "r",
+        landing.FailureClass("deterministic", "podcast_source_media_too_long"), NOW + day,
+        media_limits=limits,
+    )
+    assert (entry["attempts"], entry["limits"], entry["retry_at"]) == (69, limits, None)
+    # 之后若被闸门挡下,记忆换成闸门那一类,按闸门节奏回访。
+    landing.record_gated(state, "legacy", "r", "artifact_store_capacity", NOW + day)
+    assert "limits" not in state["legacy"]
+
+
 def test_gated_failure_uses_gate_cadence_and_keeps_attempts_per_revision():
     """P2-5:revision 切换后先遇 gate,再失败时计数必须从 1 开始。"""
 
@@ -520,6 +586,41 @@ def test_gate_holds_back_source_media_downloads(landing_env):
     env.holder["gate"] = app_module.PodcastLandingGate(None, True, 1000)
     stats = _run()
     assert sorted(env.calls) == ["ep-high", "ep-mid"] and stats["succeeded"] == 2
+
+
+def test_round_does_not_redownload_a_too_long_episode_until_a_limit_changes(
+    landing_env, monkeypatch
+):
+    """过长要把整个文件下载下来才量得出;条件没变时每天重来一遍只是白下载(issue #323)。"""
+
+    limit = {"seconds": 7200}
+    monkeypatch.setattr(
+        app_module.podcast_speech_config_service, "resolve_config",
+        lambda _session: SimpleNamespace(asr_max_audio_seconds_per_file=limit["seconds"]),
+    )
+    landing_env.outcomes["ep-high"] = PodcastAdminError(
+        "podcast_source_media_too_long", status_code=422
+    )
+    _run()
+    assert landing_env.calls.count("ep-high") == 1
+    entry = _state(landing_env.sink)["ep-high"]
+    assert entry["kind"] == "deterministic" and entry["retry_at"] is None
+    assert entry["limits"] == landing.media_limits_fingerprint(
+        app_module.podcast_artifact_store.max_bytes, 7200
+    )
+
+    # 之后的每一天、每一轮轮转巡检都不再碰它。
+    for days in (1, 2, 9):
+        landing_env.holder["now"] = NOW + dt.timedelta(days=days)
+        _run()
+    assert landing_env.calls.count("ep-high") == 1
+
+    # 运维把单集转写时长上限调高:自动再试一次。
+    limit["seconds"] = 10800
+    landing_env.outcomes.pop("ep-high")
+    _run()
+    assert landing_env.calls.count("ep-high") == 2
+    assert _state(landing_env.sink)["ep-high"]["kind"] == "enqueued"
 
 
 def test_gated_enqueue_failure_is_recorded_on_gate_cadence(landing_env):
