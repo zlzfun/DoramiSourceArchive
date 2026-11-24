@@ -97,7 +97,7 @@ from services.digest_selection import (
     value_lane_accepts,
 )
 from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE
-from services.source_naming import friendly_source_name, source_role
+from services.source_naming import friendly_source_name
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -970,9 +970,10 @@ def _query_candidate_rows(
 def _source_role_and_shape(
     session: Session, sources: Mapping[str, str] | Iterable[str]
 ) -> dict[str, tuple[str, str]]:
-    """source_id → (role, content_shape); config metadata first, registry second, then the
-    article's own ``content_type``(``sources`` 可以是 source_id → content_type 的映射;codex 检视:
-    无配置也无注册类的社交源不能退成 article,否则代表规则把推文当成非社交稿)。"""
+    """source_id → (role, content_shape),经源目录读服务(issue #262 R1a):源行 / 预设源目录给
+    角色与形态,两者都没有才看条目自己的 ``content_type``(``sources`` 可以是 source_id →
+    content_type 的映射;codex 检视:无配置也无注册类的社交源不能退成 article,否则代表规则把
+    推文当成非社交稿)。"""
 
     content_types: dict[str, str] = (
         {str(k): str(v or "") for k, v in sources.items()} if isinstance(sources, Mapping)
@@ -981,53 +982,11 @@ def _source_role_and_shape(
     wanted = sorted(sid for sid in content_types if sid)
     if not wanted:
         return {}
-    configs = {
-        row.source_id: row for row in session.exec(
-            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(wanted))
-        ).all()
+    views = source_catalog.describe(session, wanted, content_types=content_types)
+    return {
+        source_id: (source_catalog.info_role(view), view.shape)
+        for source_id, view in views.items()
     }
-    try:
-        from fetchers.registry import fetcher_registry
-    except Exception:  # noqa: BLE001 - registry is optional for the digest
-        fetcher_registry = None  # type: ignore[assignment]
-    result: dict[str, tuple[str, str]] = {}
-    for source_id in wanted:
-        config = configs.get(source_id)
-        fetcher_class = None
-        if fetcher_registry is not None:
-            try:
-                fetcher_class = fetcher_registry.get_class(source_id)
-            except Exception:  # noqa: BLE001
-                fetcher_class = None
-        if config is not None:
-            role = source_role(
-                source_id,
-                source_scope=config.source_scope or "",
-                provenance_tier=config.provenance_tier or "",
-            )
-            from api.sources import row_shape
-
-            # 显式形态列 > 绑定的抓取器类 > source_type(issue #262 R1c:预设镜像行的
-            # source_type 是 preset,只看类型会把 X 预设判成 article)。
-            shape = row_shape(config)
-        elif fetcher_class is not None:
-            role = source_role(source_id)
-            shape = str(getattr(fetcher_class, "content_shape", "article") or "article")
-        else:
-            role = source_role(source_id)
-            shape = _shape_from_content_type(content_types.get(source_id, ""))
-        result[source_id] = (role, shape)
-    return result
-
-
-def _shape_from_content_type(content_type: str) -> str:
-    """文章数据形状 → 内容形态(与 ``api.sources.source_shape`` 的回退同口径)。"""
-
-    if content_type == "social_post":
-        return "social"
-    if content_type == PODCAST_CONTENT_TYPE:
-        return PODCAST_SHAPE
-    return "article"
 
 
 def _reader_visible_rows(

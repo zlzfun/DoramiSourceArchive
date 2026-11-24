@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项、R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 在分支 `feat/issue-262-source-catalog-consumers` 实现,记录见 §12 末;R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -379,3 +379,21 @@ shape = "article"
 | B | `kind` 不校验目标源形态:显式 id 往 X 源推文章、往博客源推社交帖照收;`x.com/<账号>/…` 的文章按前缀落进 X 源 | 显式 id / 身份键 / 已有同名 id 命中后比对形态(`article→article`、`social_post→social`、`podcast_episode→podcast`),不符拒收;feed 与前缀匹配跳过形态不同的源、继续往下解析 |
 | C | 沙箱端到端发现:策展源登记的是分类页或 feed 地址(`rss_openai_news` → `openai.com/news/rss.xml`、`rss_nvidia_genai` → `blogs.nvidia.com/blog/category/generative-ai/`),只给文章链接的推送认不回,另建临时源,抓取器随后把同一篇收进策展源,落成跨源两行 | 前缀不中时按主机兜底:该主机上恰好一个形态相同、链接即条目身份的已有源就认它;多个候选、多租户主机、单页文档 / `docs_*` / `github_*` 不兜底(`developers.openai.com` 只有 Codex changelog,仍建临时源) |
 
+
+**R1a 余项:消费方只经源目录读身份(2026-11-24,分支 `feat/issue-262-source-catalog-consumers`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §5「注册表被当成源目录」一行里除执行层以外的全部读点。纯重构:不改数据、无迁移、不动任何同步流。
+
+- **读服务补齐**(`services/source_catalog.py`):`preset_views`(预设源视图,按注册顺序)、`preset_binding`(预设源的采集绑定事实——feed 地址 / 列表页 / 主页 / X 账号;今天在类属性上,R2 / R3 搬进目录文件与行上的绑定参数后只改这里)、`preset_metadata`(注册元数据字典)、`preset_default_kinds`、`template_ids`、`fetcher_class`、`podcast_catalog_source`、`info_role`(评分 / 早报 / 事件层用的四种角色,不含阅读器的 custom);`row_shape` / `binding_shape` / `binding_content_type` / `binding_platform` 成为形态 / 类型 / 平台的唯一实现(`api.sources` 的同名函数委托过来);`describe` 可复用调用方已取的行(`rows=`),事件榜不必为同一批 id 查两遍。
+- **迁移的消费方**:取名与角色(`source_naming`)、路由层门面(`api/sources.py`)、早报(`personal_digest._source_role_and_shape`)、事件榜(`event_board._source_infos`)、事件归并(`event_assignment.load_source_meta`)、内容类型先验(`content_classification.source_default_kinds`)、MCP `list_sources`、OPML 导出、X 配额探针、系统源撞库检测、source-builder 的已有 id 集合、收录的保留 id / 站点索引 / X 身份解析 / 镜像行身份键 / 判重资格 / 条目链接身份、每日采集任务脚本。
+- **留在注册表上的**(守卫名单,逐个登记理由):注册表本身、`source_catalog`、`collection_nodes`(绑定解析与参数表)、`api/app.py`(采集执行)、两个要实例化抓取器的脚本。`monitoring` 与 MCP 按 `SourceStateRecord.fetcher_id` 关联状态属 R3a,不在本波。
+- **类与行并存时的取舍**(compat):名称 / 简介 / 图标 / 类型 / 平台 / 内容类型先验 / 准入取类;形态、策展范围、信源层级取行;发布主体取类、类上为空才取行——这是改前早报、事件榜、阅读器目录的口径。此前 `_merge` 的 compat 分支一律取类,但没有任何读角色 / 形态的消费方用过它。
+- **视图缓存**:按类缓存,每次取用对照类上的当前属性(没变就复用同一对象)。原先的进程级一次性缓存若恰好建在类属性被临时改写的那一刻,后面的调用全被带偏;既有用例 `test_promoting_one_inherited_incubating_source_only_admits_that_source` 改写类的准入状态后即撞上。
+- **守卫** `tests/test_source_catalog_boundary.py`:`src/` 与 `scripts/` 里引用 `fetcher_registry` 的文件必须在名单里,名单里已不引用的要划掉;放到改前代码上是红的。
+- **口径测试** `tests/test_source_catalog_consumers.py`:前半用「照改前算法直接读注册表与源行」的对照实现,在空源表与各来路齐全两种库上,对注册表全部 69 个 id 与各来路的源逐个比较早报 / 事件榜 / 事件归并的角色、形态、主体,另钉取名、OPML、撞库、身份键、站点索引、保留 id、每日任务、X 探针;这一半(9 条)放到改前代码上同样全过。后半是读服务的新接口。
+- **对拍**(脚本在会话草稿区,未入库):基线 `01ffaa11` 与分支各跑一遍,同一份库,比较 46 组函数级输出与 35 个只读接口 × 管理员 / 读者 / 匿名三种身份的响应。本机开发库副本(迁到最新并跑过启动对账:114 个源行、7194 篇文章、74 个来源 id):零差异。空源表合成库:消费方零差异。各来路齐全的合成库:只有下面第 1 条。阅读器目录(99 个源)、源管理(107)、源健康(121)、文章列表、内容看板这些接口两边都有实际内容;开发库的文章停在 2026-09-17、没有事件数据,事件榜与精选两边都是空板(榜单只有「历史高分」一栏有条目),这几处的比较说明不了多少——依据是上面的口径测试与既有的 `test_event_board` / `test_event_assignment` / `test_digest_selection`。
+- **与改前不同的两处**(真实数据里都不出现):
+  1. `source_type=social`、没有显式形态、没有采集绑定的源行,源管理 / 源健康里的形态由 article 改判 social(类型由 web_article 改判 social_post)——与阅读器目录、早报、事件榜一直以来的判法一致。对账、收录、回填建的行都带显式形态,不受影响。
+  2. 事件归并的形态,类与行并存且两者不同时由「取类」改为「取行」,与早报、事件榜一致。本机对账维护的镜像行与类逐字段相等;只有行来自上游同步、上游与本机版本不同、且该预设的形态在两个版本间改过时才分得出先后。
+- **部署顺序与混版本**:不触及同步流的字段、枚举、导出范围或删除语义,两端任意顺序。有上游的节点上,预设源的镜像行来自上游、对账不碰;这类行与本机类不一致时,角色与形态以行为准(早报 / 事件榜改前已是如此,事件归并的形态是新对齐的),名称仍取本机类。
+- **没做**:信任兜底(`user_sources.source_content_may_leave_deployment`、`article_analysis` 里的「无配置行 = 平台源」)与前端 `sourceTaxonomy.js` 的角色兜底——等「缺行即错」的严格不变量启用(`[sources] model = full`)时一起收;`friendly_source_name` / `source_role` 在 `full` 模式下仍先取预设源目录,R2 目录文件落地时改为取行。

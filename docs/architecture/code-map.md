@@ -18,6 +18,7 @@ src/
 │   ├── daily_brief.py       # Daily-brief map-reduce orchestration + same-event dedup_clusters + paper_cap + cursor dedup + in-memory progress; usage attributed to triggered_by (manual admin) else "system"
 │   ├── reader_ai.py         # 用户面 AI Beta: translate_article (cached zh translation) + answer_question (multi-turn QA); shares resolve_llm_config; 核心层「文章名单→编号上下文+sources」(v3.32,[n] 即引用锚) + assemble_reader_context 范围四档(article/articles 显式名单,subscription/all 经 search_fetch 闭包注入)
 │   ├── reader_search.py     # 订阅域问答检索(v3.30 检索扶正波): LLM 规划(中英关键词+日期窗+意图分流)→ FTS5 召回 → LLM 选篇 → 全文注入; 降级链自持; 日报即索引
+│   ├── source_catalog.py    # 源目录读服务(issue #262): describe → SourceView(行与预设类合并), preset_views / preset_binding(预设源身份与绑定事实), row_shape 等形态判定的唯一实现; 业务代码读注册表身份的唯一入口(守卫 tests/test_source_catalog_boundary.py)
 │   ├── source_naming.py     # 来源取名与角色运行时单点(v3.31 自 vector_storage 迁出): friendly_source_name + SOURCE_FRIENDLY_NAMES 兜底表; v3.35 增 source_role(前端 sourceRoleOf 的后端镜像,scope 集合两侧须逐字同步,日报权威机械层消费)
 │   ├── accounts.py          # Account CRUD + PBKDF2 + last-active-admin guard (v3.19 多管理员:可建/提升/降级 admin,末位活跃管理员不可降级/停用/删除) + seed_root_admin_if_empty(空库首启自动生成 admin/admin) + default_surface 偏好; login/AI-usage 埋点 (touch_login writes LoginEventRecord + last_login_at; record_ai_usage) + login aggregation (logins_by_user/summarize_user_logins) + AI Beta global master switch
 │   ├── admin_audit.py       # 管理操作审计(v3.19): should_audit 前缀×方法判定 + record_audit(语义摘要注册表,吞异常不阻断) — 挂在 require_admin_session 中间件尾部

@@ -24,7 +24,6 @@ from sqlalchemy import delete, update
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
-from api.sources import normalize_shape, row_shape, source_shape
 from models.db import (
     ArticleAnalysisRecord,
     ArticleRecord,
@@ -36,7 +35,7 @@ from models.db import (
     EventRedirectRecord,
     SourceConfigRecord,
 )
-from services import source_visibility, user_sources
+from services import source_catalog, source_visibility, user_sources
 from services.article_time import SHANGHAI, parse_article_time
 from services.reader_ai import (
     TRANSLATION_TITLE_FP_KEY,
@@ -45,7 +44,7 @@ from services.reader_ai import (
     _cache_valid,
     looks_chinese,
 )
-from services.source_naming import friendly_source_names, source_role
+from services.source_naming import friendly_source_names
 
 
 logger = logging.getLogger("dorami.event_board")
@@ -126,9 +125,9 @@ def _source_infos(
     *,
     reader_scope: bool,
 ) -> dict[str, _SourceInfo]:
-    """source_id → (名称 / 角色 / 形态 / 读者可见性);配置行优先、注册表其次。
+    """source_id → (名称 / 角色 / 形态 / 读者可见性),角色与形态经源目录读服务(issue #262 R1a)。
 
-    ``sources`` 是 source_id → 该源任一文章的 content_type(无配置也无注册表时据此推形态)。
+    ``sources`` 是 source_id → 该源任一文章的 content_type(既无源行也无预设源时据此推形态)。
     ``reader_scope`` 为假(管理员重算)时不做可见性判定,所有成员一视同仁。
     """
 
@@ -144,32 +143,19 @@ def _source_infos(
     hidden = source_visibility.reader_unavailable_source_ids(session) if reader_scope else set()
     private = user_sources.user_source_ids(session) if reader_scope else set()
     names = friendly_source_names(wanted, session)
-    try:
-        from fetchers.registry import fetcher_registry
-    except Exception:  # noqa: BLE001 - 注册表不可用时退化为配置 / 内容类型推断
-        fetcher_registry = None  # type: ignore[assignment]
+    # 行已经取了(下面的凭证 / 私有判定要用),交给源目录复用,不再查一遍。
+    views = source_catalog.describe(
+        session,
+        wanted,
+        content_types={sid: sources.get(sid) or "" for sid in wanted},
+        rows=configs,
+    )
     infos: dict[str, _SourceInfo] = {}
     for source_id in wanted:
         config = configs.get(source_id)
-        fetcher_class = None
-        if fetcher_registry is not None:
-            try:
-                fetcher_class = fetcher_registry.get_class(source_id)
-            except Exception:  # noqa: BLE001
-                fetcher_class = None
-        if config is not None:
-            role = source_role(
-                source_id,
-                source_scope=config.source_scope or "",
-                provenance_tier=config.provenance_tier or "",
-            )
-            shape = row_shape(config)
-        elif fetcher_class is not None:
-            role = source_role(source_id)
-            shape = normalize_shape(str(getattr(fetcher_class, "content_shape", "article") or "")) or "article"
-        else:
-            role = source_role(source_id)
-            shape = source_shape(source_id, sources.get(source_id) or "", {})
+        view = views[source_id]
+        role = source_catalog.info_role(view)
+        shape = view.shape
         visible = True
         if reader_scope:
             visible = not (

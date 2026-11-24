@@ -137,17 +137,14 @@ def _register_identity_keys(session: Session, source_id: str, keys: Iterable[str
 
 
 def _preset_identity_keys(source_id: str) -> list[str]:
-    try:
-        from fetchers.registry import fetcher_registry
-    except Exception:  # noqa: BLE001
+    view = source_catalog.registry_view(source_id)
+    if view is None or view.platform != "x":
         return []
-    cls = fetcher_registry.get_class(source_id)
-    if cls is None or str(getattr(cls, "platform", "") or "").strip().lower() != "x":
-        return []
+    binding = source_catalog.preset_binding(source_id)
     return source_identity.social_identity_keys(
         "x",
-        handle=str(getattr(cls, "handle", "") or ""),
-        user_id=str(getattr(cls, "user_id", "") or ""),
+        handle=binding.get("handle", ""),
+        user_id=binding.get("user_id", ""),
     )
 
 

@@ -268,14 +268,14 @@ def daily_brief_classification_for_genre(genre: Optional[str]) -> str:
 def source_default_kinds() -> dict[str, str]:
     """source_id → 来源先验内容类型(抓取器 ``default_kind`` + 特殊源)。
 
-    只读注册表类属性;注册表在导入期扫描完毕后不再变化。SourceConfig 源(播客、自定 RSS、
-    配置化网页 / X 源)没有来源先验,由数据结构、链接形状与体裁判定。
+    只读预设源目录(经 ``source_catalog``,issue #262 R1a);目录在导入期扫描完毕后不再变化。
+    SourceConfig 源(播客、自定 RSS、配置化网页 / X 源)没有来源先验,由数据结构、链接形状与体裁判定。
     """
-    from fetchers.registry import fetcher_registry
+    from services import source_catalog
 
     result: dict[str, str] = {}
-    for source_id, fetcher_class in fetcher_registry._fetchers.items():
-        kind = str(getattr(fetcher_class, "default_kind", "") or "").strip().lower()
+    for source_id, default_kind in source_catalog.preset_default_kinds().items():
+        kind = default_kind.strip().lower()
         if kind in ITEM_KIND_LABELS:
             result[source_id] = kind
     result.update(SPECIAL_SOURCE_KINDS)

@@ -13,7 +13,7 @@ from storage.fts import fts_search_ids
 from storage.impl.db_storage import DatabaseStorage
 from services.source_naming import friendly_source_name
 from services.paper_content import delivery_body
-from fetchers.registry import fetcher_registry
+from services import source_catalog
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def _resolve_scope(resolver, token: Optional[str], *, require_token: bool = True
 
 
 def _list_sources_impl(db_sink: DatabaseStorage) -> list[dict]:
-    fetchers = fetcher_registry.get_all_metadata()
+    fetchers = source_catalog.preset_metadata()
     with Session(db_sink.engine) as session:
         states = {s.fetcher_id: s for s in session.exec(select(SourceStateRecord)).all()}
     result = []
