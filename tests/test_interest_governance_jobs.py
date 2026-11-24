@@ -1,6 +1,8 @@
 """The workflow keeps operating when article analysis is disabled."""
 
 from dataclasses import replace
+import datetime as dt
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -11,6 +13,8 @@ import api.app as app_module
 
 @pytest.mark.parametrize("disabled_gate", ["review_enabled", "feishu_config_path"])
 def test_reload_is_independent_and_preserves_unrelated_jobs(monkeypatch, disabled_gate):
+    # Scheduler timezone does not override a separately constructed CronTrigger.
+    monkeypatch.setattr("apscheduler.triggers.cron.get_localzone", lambda: ZoneInfo("UTC"))
     scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
     scheduler.start(paused=True)
     monkeypatch.setattr(app_module, "scheduler", scheduler)
@@ -30,6 +34,8 @@ def test_reload_is_independent_and_preserves_unrelated_jobs(monkeypatch, disable
         digest = scheduler.get_job("taxonomy_review_digest")
         assert digest.coalesce and digest.misfire_grace_time == 300
         assert str(digest.trigger.timezone) == "Asia/Shanghai"
+        before = dt.datetime(2026, 1, 1, 9, 0, tzinfo=dt.timezone.utc)
+        assert digest.trigger.get_next_fire_time(None, before).astimezone(dt.timezone.utc).hour == 10
         retry = scheduler.get_job("taxonomy_review_digest_retry")
         assert retry.id != digest.id and retry.func is digest.func
         assert retry.trigger.interval.total_seconds() == 300
@@ -47,6 +53,27 @@ def test_reload_is_independent_and_preserves_unrelated_jobs(monkeypatch, disable
         assert scheduler.get_job("candidate_governance") is None
         assert scheduler.get_job("taxonomy_review_digest") is None
         assert scheduler.get_job("taxonomy_review_digest_retry") is None
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+def test_reload_repairs_previous_host_timezone_registration(monkeypatch):
+    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.start(paused=True)
+    monkeypatch.setattr(app_module, "scheduler", scheduler)
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings,
+        taxonomy=replace(app_module.settings.taxonomy, review_enabled=True,
+                         feishu_config_path="/private/not-read.ini")))
+    try:
+        app_module.add_cron_job("taxonomy_review_digest", app_module.execute_taxonomy_review_digest_job,
+                                "0 18 * * *", [], timezone="UTC")
+        app_module.reload_interest_governance_schedule()
+        repaired = scheduler.get_job("taxonomy_review_digest")
+        assert str(repaired.trigger.timezone) == "Asia/Shanghai"
+        due = repaired.next_run_time
+        app_module.reload_interest_governance_schedule()
+        assert scheduler.get_job("taxonomy_review_digest") is repaired
+        assert repaired.next_run_time == due
     finally:
         scheduler.shutdown(wait=False)
 

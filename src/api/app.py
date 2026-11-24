@@ -2987,19 +2987,20 @@ async def execute_collection_job(job_id: int):
 CRON_MISFIRE_GRACE_SECONDS = 300
 
 
-def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool:
+def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any], *, timezone: str | None = None) -> bool:
     """注册 / 覆盖一个 cron 类任务;表达式非法(非 5 段或字段越界)返回 False、不抛,调用方据此摘除旧注册。
 
     幂等:同 id 已注册且 trigger 与 args 都未变时原样保留——replace 会把 next_run_time 重置为「现在起算」,
     采集任务 CRUD 每次热重载都替换一遍会让无关任务在触发边界漏掉当次执行(PR-0 检视 F2)。
     """
-    trigger = parse_cron_expr(cron_expr)
+    trigger = parse_cron_expr(cron_expr, timezone=timezone)
     if trigger is None:
         return False
     existing = scheduler.get_job(job_id)
     if (
         existing is not None
         and str(getattr(existing, "trigger", None)) == str(trigger)
+        and str(getattr(existing.trigger, "timezone", None)) == str(trigger.timezone)
         and tuple(getattr(existing, "args", ()) or ()) == tuple(args)
     ):
         return True
@@ -3172,7 +3173,7 @@ def reload_interest_governance_schedule():
     digest_id = "taxonomy_review_digest"
     digest_retry_id = "taxonomy_review_digest_retry"
     if settings.taxonomy.review_enabled and settings.taxonomy.feishu_config_path:
-        add_cron_job(digest_id, execute_taxonomy_review_digest_job, "0 18 * * *", [])
+        add_cron_job(digest_id, execute_taxonomy_review_digest_job, "0 18 * * *", [], timezone="Asia/Shanghai")
         _ensure_interval_job(
             digest_retry_id, execute_taxonomy_review_digest_job,
             minutes=5, max_instances=1, coalesce=True,
