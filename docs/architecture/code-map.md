@@ -57,6 +57,7 @@ src/
 │       ├── playwright_renderer.py       # PlaywrightRenderer: headless-Chromium detail rendering for Cloudflare-challenged sources (used by OpenAINewsRssFetcher)
 │       └── webhook_trigger.py           # Outbound Dify workflow trigger (not an inbound content source)
 ├── fetchers/web_content/    # Optional crawl4ai Web Content backend: backend.py (WebContentBackend ABC + DetailResult), legacy_backend.py (httpx baseline), crawl4ai_backend.py (browser, opt-in extra), profiles.py (per-site CrawlProfile), compare.py (bypass A/B)
+├── sources/                 # 策展源目录文件(issue #262 R2): catalog/<前缀>.toml 一条一个预设源的身份(名称 / 准入 / 策展维度); __init__.py 加载与结构校验(CatalogError), 注册表在注册时回投到类属性
 ├── mcp_server.py            # build_mcp_app(): FastMCP streamable-HTTP server, registered at /mcp and /mcp/ by app.py
 ├── pipeline/
 │   ├── core.py              # DataPipeline: drives fetcher → broadcasts to registered storages

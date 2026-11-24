@@ -42,8 +42,9 @@ class BaseFetcher(abc.ABC):
 
     # 准入状态(issue #178 自原 category 拆出):admitted 正式 | incubating 观察期。
     # 观察期节点默认可见、可订阅、可手动抓取,但不进每日自动采集(scripts/ensure_daily_collection_job.py),
-    # 管理面挂「观察」徽记。验收转正 = 让该类的有效值成为 admitted:类上自己声明观察期的删掉那一行,
-    # 观察期继承自父类的(如 X 预设)在具体类上写 admission_status = "admitted"。来源角色(官方 / 媒体 / 个人 / 榜单)
+    # 管理面挂「观察」徽记。预设源的准入写在策展源目录文件里(src/sources/catalog/*.toml 的 admission,
+    # 每个源必填),注册时回投到这个属性;验收转正 = 把那一条改成 admitted。这里的缺省值只对没有目录
+    # 条目的类(模板、测试里的假类)生效。来源角色(官方 / 媒体 / 个人 / 榜单)
     # 由 services/source_naming.source_role 推导,模板节点看 is_template,都不再挤在这个字段里。
     admission_status: str = "admitted"
 
@@ -63,6 +64,9 @@ class BaseFetcher(abc.ABC):
 
     # 新一代数据源准入元数据。用于区分来源身份、准入层级与抓取可靠性(源级 content_tags 已于 issue #178 退役:
     # 条目的类型与主题由内容类型推导和入库分析给出)。
+    # 预设源的这一组值(连同下面的 name / icon / description)来自策展源目录文件
+    # src/sources/catalog/*.toml,注册时回投(issue #262 R2);预设类上不要再写,守卫
+    # tests/test_source_catalog_files.py 会拦。
     source_owner: str = ""
     source_brand: str = ""
     source_scope: str = ""
@@ -84,7 +88,7 @@ class BaseFetcher(abc.ABC):
     web_backend_enabled: bool = False
 
     # ==========================================
-    # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
+    # 2. 前端 UI 渲染元数据 (模板类自己写;预设源写在目录文件里)
     # ==========================================
     name: str = "未命名抓取器"
     icon: str = "📦"

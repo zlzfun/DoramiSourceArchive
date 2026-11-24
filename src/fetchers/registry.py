@@ -2,13 +2,18 @@
 动态抓取器注册中心 (src/fetchers/registry.py)
 
 利用 Python 反射与包扫描机制，实现抓取器的零配置热插拔。
-只要在 impl 目录下继承了 BaseFetcher 并填写了必要的类属性，即会自动在此注册。
+只要在 impl 目录下继承了 BaseFetcher 并填写了 source_id，即会自动在此注册。
+
+预设源的身份(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)不写在类上,写在策展源目录文件
+src/sources/catalog/*.toml 里,注册时回投到类属性(issue #262 R2,见 project_catalog_identity)。
 """
 
 import importlib
 import pkgutil
 import inspect
 from typing import Type, Dict, List, Any, Optional
+
+import sources as catalog_files
 from fetchers.base import BaseFetcher
 
 
@@ -105,7 +110,7 @@ DECOMMISSIONED_FETCHER_IDS = frozenset({
     # 它们的抓取器类已从 impl/ 移除，但历史归档文章仍留在库里——若不在此登记，
     # 这些 source_id 会经由"归档来源"并集重新回流到读者层订阅目录，造成订阅分发
     # 与节点管理不同步。读者目录据此排除它们（已订阅者除外，以便退订）。
-    # 删除一个节点时，除了删类 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id，
+    # 删除一个节点时，除了删类 + 删目录文件(src/sources/catalog)里那一条 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id，
     # 并清理指向它的孤儿订阅（reader_subscriptions 中 source_ids 命中该 id 的行）——
     # 否则 GET /api/reader/sources 的“已订阅者除外，以便退订”口子会让被订阅的下线源
     # 仍出现在发现页/源栏（2026-07-21 删 x_ai_at_meta/x_openrouter 时踩到，已清理）。
@@ -166,6 +171,27 @@ def focused_curation_for(source_id: str, *, is_template: bool = False) -> Dict[s
     }
 
 
+def project_catalog_identity(fetcher_class: Type[BaseFetcher]) -> bool:
+    """把策展源目录文件里的身份回投到抓取器类属性上(issue #262 R2);类不在目录里返回 False。
+
+    预设源「是谁」(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)写在 ``src/sources/catalog/*.toml``,
+    类上不再声明;执行路径、注册元数据、源目录读服务照旧读类属性,所以在注册这一刻把目录值放上去。
+
+    只在类上当前生效的值与目录不同才写:继承来的值本来就对的(如形态继承自所属的抓取器家族)
+    不在子类上重复落一份。这条的前提是「目录里的类不继承自另一个目录里的类」,否则结果会依赖
+    注册先后——``tests/test_source_catalog_files.py`` 守着这个前提。模板(``is_template``)不在目录里。
+    """
+    if getattr(fetcher_class, "is_template", False):
+        return False
+    entry = catalog_files.catalog().get(str(getattr(fetcher_class, "source_id", "") or ""))
+    if entry is None:
+        return False
+    for attribute, value in catalog_files.identity_attributes(entry, BaseFetcher).items():
+        if getattr(fetcher_class, attribute, None) != value:
+            setattr(fetcher_class, attribute, value)
+    return True
+
+
 class FetcherRegistry:
     def __init__(self):
         # 内部维护的映射表： { "source_id": FetcherClass }
@@ -180,6 +206,7 @@ class FetcherRegistry:
         if source_id == "unknown_source" or source_id == "unknown":
             return  # 跳过没有正确定义源ID的中间抽象类
 
+        project_catalog_identity(fetcher_class)
         self._fetchers[source_id] = fetcher_class
 
     def discover(self, package_name: str = "fetchers.impl"):

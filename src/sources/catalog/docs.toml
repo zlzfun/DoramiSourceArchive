@@ -1,0 +1,131 @@
+# 策展源目录:文档站与更新日志(docs_*)。
+#
+# 每个 [[source]] 是一个策展源的身份;怎么抓在 src/fetchers/impl/ 里同 id 的抓取器类上。
+# 必填:id / name / description / shape / admission。其余键没写就是空(图标缺省 📦)。
+# 转正 = 把 admission 从 incubating 改成 admitted。键的含义与取值见 docs/sources/curation_policy.md。
+
+[[source]]
+id = "docs_arena_leaderboard_changelog"
+name = "Arena 排行榜更新"
+icon = "🏟️"
+description = "Arena 各类排行榜新增模型、分数修订与方法变更。"
+shape = "article"
+default_kind = "release"  # 榜单维护记录:按版本更新呈现
+admission = "incubating"  # 观察期:不进每日自动采集;验收转正后改为 admitted
+owner = "arena_intelligence"
+brand = "Arena"
+scope = "ai_benchmark_platform"
+channel = "leaderboard_changelog"
+homepage = "https://arena.ai/blog/leaderboard-changelog"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "low_noise"
+reliability = "stable_public_ssr_page"
+
+[[source]]
+id = "docs_claude_code_changelog"
+name = "Claude Code Changelog"
+icon = "🟧"
+description = "Claude Code 官方 Changelog 中的版本级工具更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "anthropic"
+brand = "claude_code"
+scope = "developer_tool"
+channel = "changelog"
+homepage = "https://code.claude.com/docs/en/changelog"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "medium_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "docs_deepseek_api_changelog"
+name = "DeepSeek API Changelog"
+icon = "🧠"
+description = "DeepSeek API 官方 Changelog 中的模型、API 与平台更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "deepseek"
+brand = "deepseek"
+scope = "api_platform"
+channel = "docs_changelog"
+homepage = "https://api-docs.deepseek.com/updates/"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "low_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "docs_gemma_release_notes"
+name = "Gemma Release Notes"
+icon = "💎"
+description = "Gemma 官方 Release Notes 中的开放模型发布与更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "google"
+brand = "gemma"
+scope = "open_model_family"
+channel = "docs_release_notes"
+homepage = "https://ai.google.dev/gemma/docs/releases"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "low_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "docs_openai_codex_changelog"
+name = "Codex Changelog"
+icon = "🟢"
+description = "OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "openai"
+brand = "codex"
+scope = "developer_tool"
+channel = "docs_changelog"
+homepage = "https://developers.openai.com/codex/changelog"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "medium_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "docs_xai_release_notes"
+name = "xAI Release Notes"
+icon = "𝕏"
+description = "xAI 官方 Release Notes 中的 Grok 模型、API 与产品更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "xai"
+brand = "xai_api"
+scope = "api_platform"
+channel = "docs_changelog"
+homepage = "https://docs.x.ai/developers/release-notes"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "medium_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "docs_zai_new_released"
+name = "Z.ai 更新公告"
+icon = "🧩"
+description = "Z.ai 官方发布页的 GLM 模型、API、Agent 与产品更新。"
+shape = "article"
+default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
+admission = "admitted"
+owner = "zai"
+brand = "glm"
+scope = "model_family"
+channel = "docs_release_notes"
+homepage = "https://docs.z.ai/release-notes/new-released"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "low_noise"
+reliability = "stable_public"

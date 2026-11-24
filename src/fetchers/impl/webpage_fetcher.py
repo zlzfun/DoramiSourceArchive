@@ -534,9 +534,6 @@ class BaseWebPageListFetcher(BaseFetcher):
 class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_anthropic_news"
-    name = "Anthropic 新闻"
-    description = "Anthropic 官网的产品、研究、企业与安全动态。"
-    icon = "🟫"
     listing_url = "https://www.anthropic.com/news"
     site_name = "Anthropic"
     source_section = "News"
@@ -545,15 +542,6 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
     default_limit = 10
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.97，已迁移（装了 crawl4ai 时走浏览器后端，否则回退）
     web_backend_enabled = True
-    source_owner = "anthropic"
-    source_brand = "anthropic"
-    source_scope = "company"
-    source_channel = "newsroom"
-    source_url = listing_url
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
 
     @staticmethod
     def _clean_anthropic_detail_text(text: str) -> str:
@@ -707,9 +695,6 @@ class AnthropicNewsWebFetcher(BaseWebPageListFetcher):
 class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_claude_blog"
-    name = "Claude 博客"
-    description = "Claude 官方博客的 Claude、Claude Code、Agent 与企业 AI 更新。"
-    icon = "🟧"
     listing_url = "https://claude.com/blog"
     site_name = "Claude"
     source_section = "Blog"
@@ -718,15 +703,6 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
     default_limit = 10
     # 旁路验收：crawl4ai(main 容器) 与生产路径相似度 0.855，已迁移；未装 crawl4ai 时回退通用提取器
     web_backend_enabled = True
-    source_owner = "anthropic"
-    source_brand = "claude"
-    source_scope = "product_family"
-    source_channel = "blog"
-    source_url = listing_url
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
     @staticmethod
     def _clean_claude_blog_detail_text(text: str) -> str:
@@ -771,9 +747,6 @@ class ClaudeBlogWebFetcher(BaseWebPageListFetcher):
 class IThomeAiWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_ithome_ai"
-    name = "IT之家 AI"
-    description = "IT之家智能时代频道的 AI 模型、产品、智能体和产业资讯。"
-    icon = "📰"
     listing_url = "https://next.ithome.com/ai"
     site_name = "IT之家"
     source_section = "人工智能"
@@ -790,15 +763,6 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     # 旁路验收：crawl4ai 详情与生产路径相似度 0.81（≥0.8 门槛），已迁移；未装 crawl4ai 时回退专用提取器
     web_backend_enabled = True
     default_limit = 18
-    source_owner = "ithome"
-    source_brand = "IT之家"
-    source_scope = "tech_media"
-    source_channel = "website_category"
-    source_url = listing_url
-    provenance_tier = "tier1_curated"
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public_website_category"
 
     def _parse_listing_datetime(self, raw_value: str) -> str:
         raw_value = (raw_value or "").strip()
@@ -1013,24 +977,12 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
 class QwenBlogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_qwen_blog"
-    name = "Qwen 博客"
-    description = "Qwen 官方博客的模型、产品、多模态与 Agent 动态。"
-    icon = "🟦"
     listing_url = "https://qwen.ai/api/v2/article/retrieval"
     site_name = "Qwen"
     source_section = "Blog"
     article_url_patterns = ["qwen.ai/blog", "docs.qwenlm.ai/"]
     exclude_url_patterns = ["qwen.ai/blog#"]
     default_limit = 10
-    source_owner = "alibaba"
-    source_brand = "qwen"
-    source_scope = "model_family"
-    source_channel = "blog_api"
-    source_url = listing_url
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_api"
 
     def _extract_qwen_inline_html(
         self, html_content: str, max_chars: int, base_url: str
@@ -1308,28 +1260,15 @@ class _ScopedArticleBodyFetcher(BaseWebPageListFetcher):
 
 class ArtificialAnalysisArticlesWebFetcher(_ScopedArticleBodyFetcher):
     source_id = "web_artificial_analysis"
-    name = "Artificial Analysis"
-    description = "前沿 AI 模型的独立基准结果、成本速度比较与发布解读。"
-    icon = "📊"
     listing_url = "https://artificialanalysis.ai/articles"
-    source_url = listing_url
     site_name = "Artificial Analysis"
     source_section = "Articles"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["artificialanalysis.ai/articles/"]
     max_listing_pages = 7
     default_limit = 12
     body_selectors = (".prose.prose-sm.max-w-none", ".prose.max-w-none")
     detail_method = "artificial_analysis_prose"
     drop_leading_title = True
-    source_owner = "artificial_analysis"
-    source_brand = "Artificial Analysis"
-    source_scope = "ai_benchmark_analysis"
-    source_channel = "articles"
-    provenance_tier = "tier1_curated"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_website"
 
     def _matches_article_url(self, url: str) -> bool:
         return bool(re.fullmatch(r"https://artificialanalysis\.ai/articles/[^/?#]+/?", url))
@@ -1345,27 +1284,14 @@ class ArtificialAnalysisArticlesWebFetcher(_ScopedArticleBodyFetcher):
 
 class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
     source_id = "web_meta_ai_blog"
-    name = "Meta AI 博客"
-    description = "Meta AI 的模型、开源研究、多模态与智能体进展。"
-    icon = "♾️"
     listing_url = "https://ai.meta.com/blog/?page=1"
-    source_url = "https://ai.meta.com/blog/"
     site_name = "Meta AI"
     source_section = "Blog"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["ai.meta.com/blog/"]
     max_listing_pages = 5
     default_limit = 12
     body_selectors = ("._amgj",)
     detail_method = "meta_ai_article_body"
-    source_owner = "meta"
-    source_brand = "Meta AI"
-    source_scope = "ai_lab"
-    source_channel = "official_blog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_website_obfuscated_css"
     # Meta 官方列表的标题/日期是权威元数据；解析器修正后允许再抓
     # 只回填存量元数据（正文仍不覆盖），修复生产已存的抓取时间伪日期。
     refresh_existing_metadata = True
@@ -1533,27 +1459,14 @@ class MetaAiBlogWebFetcher(_ScopedArticleBodyFetcher):
 
 class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_id = "web_kimi_research"
-    name = "Kimi Research"
-    description = "Kimi 模型、智能体、多模态与训练方法的研究和技术文章。"
-    icon = "🌙"
     listing_url = "https://www.kimi.com/blog/"
-    source_url = listing_url
     site_name = "Kimi"
     source_section = "Research"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["kimi.com/blog/"]
     default_limit = 12
     body_selectors = (".blog-v2-main .markdown", ".blog-v2-main", "main .markdown")
     detail_method = "kimi_research_markdown_body"
     drop_leading_title = True
-    source_owner = "moonshot_ai"
-    source_brand = "Kimi"
-    source_scope = "model_family"
-    source_channel = "research_blog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_website"
     # Kimi 的列表 JSON 是官方元数据；允许下一次采集只刷新同 ID 的
     # 标题/日期/原文 URL，以修复存量被中文栏目名“研究”污染的记录。
     refresh_existing_metadata = True
@@ -1668,26 +1581,13 @@ class KimiResearchWebFetcher(_ScopedArticleBodyFetcher):
 
 class MiniMaxResearchWebFetcher(_ScopedArticleBodyFetcher):
     source_id = "web_minimax_research"
-    name = "MiniMax Research"
-    description = "MiniMax 模型、Agent、长上下文与强化学习的研究和技术文章。"
-    icon = "🧬"
     listing_url = "https://www.minimax.io/blog"
-    source_url = listing_url
     site_name = "MiniMax"
     source_section = "Research"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     article_url_patterns = ["minimax.io/blog/"]
     default_limit = 10
     body_selectors = ("article .prose.max-w-none", "article .prose")
     detail_method = "minimax_research_prose"
-    source_owner = "minimax"
-    source_brand = "MiniMax"
-    source_scope = "ai_lab"
-    source_channel = "research_blog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_website"
 
     def _matches_article_url(self, url: str) -> bool:
         return bool(re.fullmatch(r"https://www\.minimax\.io/blog/[^/?#]+/?", url))

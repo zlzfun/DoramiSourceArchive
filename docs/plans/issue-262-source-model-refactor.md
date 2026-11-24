@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2 首块(预设源的身份搬进目录文件 + 注册时回投)2026-11-24 在分支 `feat/issue-262-catalog-files` 实现,记录见 §12 末;R2 余下部分与 R3a / R3b 未开工;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -408,3 +408,17 @@ shape = "article"
 | 6 | P3 | 形态对照实现没有复刻基线的归一与非法值兜底 | 完整复刻;用假抓取器类补空值 / 别名 / 大小写与空白 / 非法值 |
 
 **复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `0cc02969`。六条逐条判「够」;未发现修订新引入的 P1,无新增 P2 / P3。检视方另做的核对:语法树比较确认 `source_catalog` 相对 `01ffaa11` 被改动的既有定义只有 `_registry_views` / `registry_view` / `clear_registry_cache`(缓存实现)与 `role_from_metadata`(委托 `source_naming` 的单一实现),其余既有函数与 `SourceView` 一致;基线函数与分支同库对拍三个消费方(空源表 128 个 id、各来路齐全 136 个 id,加上同步冲突行,compat / full 两种读法)一致;形态判法 192 组输入一致。保留的前提:预设类的 `content_shape` 必须是合法值(69 个类现状如此,口径测试里有断言)。检视方的 pytest 因只读沙箱建不了日志文件未能启动,全量套件由实现方本机跑(4080 条通过)。
+
+**R2 首块:预设源的身份搬进目录文件(2026-11-24,分支 `feat/issue-262-catalog-files`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §6 R2 行里的「只迁描述性身份,类上的 `source_id` 作为注册键保留,注册时把目录值回投到类属性,输出逐条对拍不变」。R2 的其余部分——镜像行改由文件直接对账、收编 §2.3 的常量(`ESSENTIAL_FETCHER_IDS` / 墓碑 / 合集 / 默认订阅)、`daily` 显式、播客目录并入、管理面目录字段只读——不在本块。纯后端:不改数据、无迁移、不动同步流、对外行为无变化。
+
+- **目录文件**:`src/sources/catalog/<id 前缀>.toml`,六个文件 62 条(rss 28 / web 13 / docs 7 / x 7 / github 5 / hf 2),每个 `[[source]]` 是一个预设源的身份。键:`id`、`name`、`icon`、`description`、`shape`、`platform`、`default_kind`、`admission`、`owner`、`brand`、`scope`、`channel`、`homepage`、`tier`、`signal`、`noise`、`reliability`(对应类属性见 `sources.FIELD_TO_ATTR`)。必填 `id` / `name` / `description` / `shape` / `admission`——**准入必须每条写明**,漏写不能等于转正;其余没写就是 `BaseFetcher` 上的缺省(空串,图标 📦)。
+- **加载与校验**(`src/sources/__init__.py`,只依赖标准库 `tomllib`):缺必填键、未知键、非字符串、`shape` / `admission` 取值不合法、id 重复、id 前缀与文件名不符、顶层出现 `[[source]]` 以外的表、目录下没有文件,一律抛 `CatalogError`。注册表导入期加载,所以目录坏了服务起不来,而不是带着半份身份跑。
+- **回投**(`fetchers.registry.project_catalog_identity`,`register` 时调用):把目录条目对应的全部身份属性放到类上;没写的键取 `BaseFetcher` 的缺省,不让中间父类的值漏下来;只在类上当前生效的值与目标不同才 `setattr`——形态继承自抓取器家族且本来就对的,不在每个子类上各落一份。这条与注册先后无关的前提是「目录里的类不继承自另一个目录里的类」,现状成立并有守卫。模板(`is_template`)不在目录里,名称等仍是它自己的。
+- **搬迁**:一次性脚本(未入库)按类上的生效值生成目录文件,并删掉六个 impl 文件里预设类体内的 744 行身份属性;身份行的行尾注释带进目录(31 处「观察期…删掉这一行」改写为「…改为 admitted」,10 处内容类型先验的说明原样)。`PresetXTimelineFetcher` 上「整批观察期」的准入默认值一并删除——X 预设的准入各自写在 `x.toml`。
+- **相对 §3.1 的差别**:没有 `daily`、`identity_keys`、`binding` 三个键——`daily` 仍由「非模板 ∧ 正式」推出(等 R2 余下部分),身份键与绑定参数(feed 地址、handle、user_id)仍在类上(R3);按 id 前缀分文件,所以 `hf.toml` 单列;`podcasts` / `collections` / `system`(含墓碑)三个文件未建。
+- **守卫** `tests/test_source_catalog_files.py`:目录 id 与注册表里的非模板类一一对应;每个类上生效的身份属性等于目录值;预设类体里出现身份属性即红(语法树扫描 `src/fetchers/impl/`,未注册的中间父类只许声明形态 / 平台 / 内容类型先验这三样家族事实);目录里的类不互相继承;加载器对 12 种结构错误逐一报错;目录文件已入库、镜像 `COPY src ./src`、`.dockerignore` 不排除它们。反向对照:往 `x_sama` 的类体里写回一行 `name`,守卫变红。
+- **验证**:改动前后给注册表里全部 69 个类各拍一份快照(26 个身份 / 绑定属性、注册顺序、`get_all_metadata()` 全量)——逐字相同。R1a 的对拍工具在基线 `0a4d5015` 与分支上各跑一遍(46 组函数级输出、35 个只读接口 × 三种身份,开发库副本与两份合成库):三份都是零差异。
+- **部署顺序与混版本**:目录文件是运行时必需的数据,镜像整目录拷 `src`、裸机走 `git archive`,两种形态都带;缺失时启动即失败。不触及同步流;镜像行对账读的还是类属性,值不变;两端任意顺序。
+- **流程变化**:加策展源 = 目录里加一条 + 一个带 `source_id` 的抓取器类;转正 = 把那一条的 `admission` 改成 `admitted`(此前是删类上的一行,X 预设是在子类上覆盖父类默认值)。`AGENTS.md` 抓取器一行、`docs/sources/curation_policy.md`、`node_audit_playbook.md`、`docs/architecture/fetchers-and-sources.md` 已同步。`tests/test_rss_fetcher.py` 的准入快照、`ESSENTIAL_FETCHER_IDS` 的断言照旧(它们读的是回投后的类属性)。

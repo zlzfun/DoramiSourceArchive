@@ -179,7 +179,7 @@ Do not confuse "no new posts" with an outage: `web_anthropic_news` returned `fet
 
 ## When to remove a node instead of fixing it
 
-Delete the node (delete the class, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**
+Delete the node (delete the class and its entry in `src/sources/catalog/*.toml`, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**
 add its id to `DECOMMISSIONED_FETCHER_IDS`) when either trigger fires:
 
 - **Structural unfitness** — it can't produce correct chronological records with a reasonable fetcher: a static catalog with no dates/chronology, the same blob every fetch, or an entry point now hard-gated (WAF/SPA) with no cheap recovery.

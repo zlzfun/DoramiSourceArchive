@@ -198,40 +198,16 @@ class PresetGitHubReleasesFetcher(GenericGitHubReleasesFetcher):
 
 class OpenCodeGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_opencode_releases"
-    name = "OpenCode Releases"
-    description = "OpenCode 的版本发布与更新说明。"
-    icon = "⌨️"
     # 原 opencode-ai/opencode 自 2025-06(v0.0.55)起停更，项目已迁移；活跃仓库现为
     # anomalyco/opencode（前 sst/opencode，持续发布 v1.x）。指向活跃仓库以恢复有效信号。
     owner = "anomalyco"
     repo = "opencode"
-    source_owner = "opencode"
-    source_brand = "opencode"
-    source_scope = "developer_tool"
-    source_channel = "github_release"
-    source_url = "https://github.com/anomalyco/opencode/releases"
-    provenance_tier = "tier0_primary"
-    signal_strength = "medium_signal"
-    noise_risk = "high_noise"
-    fetch_reliability = "stable_public"
 
 
 class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_openclaw_releases"
-    name = "OpenClaw Releases"
-    description = "OpenClaw 的正式版本发布（默认跳过 beta 预发布）。"
-    icon = "🧰"
     owner = "openclaw"
     repo = "openclaw"
-    source_owner = "openclaw"
-    source_brand = "openclaw"
-    source_scope = "developer_tool"
-    source_channel = "github_release"
-    source_url = "https://github.com/openclaw/openclaw/releases"
-    provenance_tier = "tier0_primary"
-    signal_strength = "medium_signal"
-    noise_risk = "high_noise"
-    fetch_reliability = "stable_public"
     # OpenClaw 每天发多个 -beta 预发布（最近 12 个 release 有 11 个是 beta、同日多条重复），
     # 噪声极高。默认只保留正式 release；需要 beta 时可在参数里打开 include_prereleases。
     default_include_prereleases = False
@@ -239,17 +215,5 @@ class OpenClawGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
 
 class HermesAgentGitHubReleasesFetcher(PresetGitHubReleasesFetcher):
     source_id = "github_hermes_agent_releases"
-    name = "Hermes Agent Releases"
-    description = "NousResearch Hermes Agent 的版本发布与更新说明。"
-    icon = "🪽"
     owner = "NousResearch"
     repo = "hermes-agent"
-    source_owner = "nousresearch"
-    source_brand = "hermes_agent"
-    source_scope = "developer_tool"
-    source_channel = "github_release"
-    source_url = "https://github.com/NousResearch/hermes-agent/releases"
-    provenance_tier = "tier0_primary"
-    signal_strength = "medium_signal"
-    noise_risk = "high_noise"
-    fetch_reliability = "stable_public"
