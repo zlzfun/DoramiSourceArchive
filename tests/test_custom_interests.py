@@ -19,6 +19,13 @@ NOW = dt.datetime.now(dt.timezone.utc)
 AST = {'all_of':[{'any_of':['enterprise','企业']},{'any_of':['agent','智能体']},{'any_of':['on-premise','内网']}], 'exclude':['gaming']}
 
 
+@pytest.fixture(autouse=True)
+def fresh_case_clock(monkeypatch):
+    # A CI shard may queue this module for minutes after collection. Keep the
+    # test cutoff relative to its rows, not earlier than newly enqueued work.
+    monkeypatch.setattr(sys.modules[__name__], 'NOW', dt.datetime.now(dt.timezone.utc))
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     from config import LLMConfig
