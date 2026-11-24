@@ -9,12 +9,27 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.70.2` / main `23a4590c2bd17b72b66f0462f33f8c93202cd710`(2026-11-23 正式发布,自动同步合入,见下) |
-| 本清单最近核对 | 2026-11-23(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
+| `UPSTREAM_BASE` | `v3.70.3` / main `1784cfa7aaeaa90cd60675336f5d973659267760`(2026-11-24 正式发布,自动同步合入,见下) |
+| 本清单最近核对 | 2026-11-24(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-24 正式版 `v3.70.3` 已自动无冲突合入(`053c6883`)。本版三件事:
+W3 个人日报机对机接口(PR #329,契约 `docs/contracts/admin_reader_briefs.md`,冻结基线 `contracts/briefs-v1/shared/`)——新增管理员 Cookie 鉴权的 `GET /api/admin/reader/briefs/today` 与 `POST /api/admin/reader/briefs/today/ensure`,按 `users.w3_uid` 精确唯一映射账号;首版日报的创建经共享互斥门,由新的进程内运行器 `BriefRuntime` 带租约执行;原有的个人早报待处理任务 `personal_digest_pending` 从每分钟改为每 30 秒,并兼做卡住版本的租约恢复;
+精品导读语音的回执缓存(issue #326,PR #327,方案 `docs/archive/issue-326-tts-receipt-eviction.md`)——缓存满时在压缩之后按从旧到新逐出已有成品的节目的回执音频,留空的 `<id>.evicted` 标记,每日备份认标记;被逐出后同一份口播稿再出音频时改用完好的成品;
+每日备份的空间判定与重试间隔(issue #330,PR #331,方案 `docs/archive/issue-330-backup-space-preflight.md`)——做库快照之前先算清这一轮要暂存多少,空间不够直接失败、不拷任何文件;连续失败的重试间隔从十分钟翻倍到最长 6 小时;失败与成功各写一行日志(`dorami.backup`)。
+后端新增 `src/api/routers/admin_reader_briefs.py`、`src/services/briefs_contract.py`、`src/services/briefs_runtime.py`,改动 `src/api/app.py`、`src/api/serializers.py`、`src/models/db.py`、`src/api/routers/` 下 `accounts` / `personal_briefs` / `podcasts`、`src/services/` 下 `accounts` / `personal_digest` / `personal_digest_titles` / `bailian_tts` / `podcast_premium_guides` / `storage_backup`,不涉 §2.1 的 8 个适配文件,没有新增 httpx client;
+**本版带两条迁移**(`3cfd474ffd83` → `9b7e2c4d1f60` → `b8d4107c2f61`):`users` 加可空列 `w3_uid` 与唯一索引 `uq_users_w3_uid`;`personal_digest_editions` 加 `generation_attempt_count`(非空,默认 0)与四个可空文本列。都是加列,外网 1GB 的库上启动时几秒跑完。Archive Sync 的流、字段、枚举、导出范围与接收端进度都没动,部署脚本未动;相对上一版,内网源码差异(8 个适配文件 + `scripts/repair_intranet_briefs.py`)逐行对拍一致。
+内网接手注意:① 带迁移,要回上一版须恢复升级前的库备份(旧代码不认识新的迁移版本号,起不来);
+② `9b7e2c4d1f60` 在库里已有 `users.w3_uid` 列时不重复加列,但会先把空白值置空、再查重复——有重复就抛错、不建唯一索引。内网托管仓若已自带这一列,升级前先跑一遍 `SELECT w3_uid, COUNT(*) FROM users WHERE w3_uid IS NOT NULL AND w3_uid != '' GROUP BY 1 HAVING COUNT(*) > 1` 并清掉重复;
+③ 新接口只按 `users.w3_uid`(带首字母的 W3 账号,如 `l00976966`)匹配,**不**匹配内网 SSO 的纯数字工号列 `w3_employee_number`,也不回退到 `username`。内网托管仓合并时不要把它改绑到工号列;SSO 建号流程要把 `w3_uid` 写上(管理面创建 / 修改账号的接口已带这个字段),否则 bot 来取时是 `404 / ACCOUNT_NOT_FOUND`;
+④ 个人早报的后台节奏变了,**内网有真实读者,升级后留意**:`personal_digest_pending`(只在开了读者面的节点)从每分钟一次改为每 30 秒一次,语义从「立即生成待处理版本」变为「带租约与宽限地恢复卡住的 pending / generating 版本」;首版的生成改由 `BriefRuntime` 受监督执行(240 秒预算、300 秒租约、60 秒续租)。`BriefRuntime` 在每个节点启动时都会创建(不看运行角色),应用关闭时等它收尾;
+⑤ 回执缓存与每日备份两处修复只在跑语音合成 / 开了 `[backup]` 的节点上生效。开了备份的内网节点升级后:`status.json` 多两个键 `consecutive_failures`、`retry_seconds`(旧版本读到会忽略);余盘不够时不再先拷后败,日志每十分钟一行 `备份失败: backup_insufficient_space`;其余原因连续失败时重试会变稀,修好后可手动 `python scripts/storage_backup.py create` 立刻试一次。门槛算法见 `docs/ops/storage-backups.md`「余盘门槛与重试间隔」;
+⑥ 导读状态随文章同步(`extensions_json.premium_guide`):本版新增一个 `error_code` 取值 `tts_cached_audio_evicted`(状态仍是既有的 `failed`)。读者面只按状态判断、不看错误码,内网旧版本显示为普通的生成失败;
+⑦ 发生过逐出的外网节点,其每日备份归档里会有 `receipts/<id>.evicted`,旧版本的恢复工具不认。内网若要拿外网的归档做恢复演练,用本版的 `scripts/storage_backup.py`;
+⑧ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-23 正式版 `v3.70.2` 已自动无冲突合入(`454d2807`)。本版两件事,都在播客的付费处理路径上:
 精品导读语音的预算记账(issue #322,PR #324,方案 `docs/archive/issue-322-tts-reservations.md`)——一次合成里没发出去的分段不再占着月度预算(账本行保留、占用额记 0,再合成同一份口播稿时重新计价),授权一步自己失败关闭,月度预算满时由候选巡检拉起的运行等待后重试;
