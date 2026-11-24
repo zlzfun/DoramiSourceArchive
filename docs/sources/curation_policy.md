@@ -26,7 +26,7 @@ Historical concrete preset nodes, workflow trigger nodes, broad firehoses, frame
 
 ## Incubation (观察期)
 
-Every newly admitted source batch starts with `admission = "incubating"` in its entry in the curated source catalog (`src/sources/catalog/<prefix>.toml`; since issue #262 R2 a preset's identity — name, icon, description, shape, admission, curation dimensions — lives there and is projected onto the fetcher class's attributes at registration, so the class itself only says how to fetch; `admission` is a required key on every entry and becomes the class's `admission_status`) (issue #178 split this out of the retired `category` attribute; the information role 官方 / 媒体 / 个人 / 榜单 is derived by `services/source_naming.source_role`, template nodes are marked by `is_template`). Public `SourceConfig` rows carry the same field as a column; the podcast catalog creates its rows as `incubating`. While incubating:
+Every newly admitted source batch starts with `admission = "incubating"` in its entry in the curated source catalog (`src/sources/catalog/<prefix>.toml`; since issue #262 R2 a preset's identity — name, icon, description, shape, admission, curation dimensions — lives there and is projected onto the fetcher class's attributes when the class is defined, so the class itself only says how to fetch (a preset class under `src/fetchers/impl/` without a catalog entry fails at import); `admission` is a required key on every entry and becomes the class's `admission_status`) (issue #178 split this out of the retired `category` attribute; the information role 官方 / 媒体 / 个人 / 榜单 is derived by `services/source_naming.source_role`, template nodes are marked by `is_template`). Public `SourceConfig` rows carry the same field as a column; the podcast catalog creates its rows as `incubating`. While incubating:
 
 - The source is default-visible, subscribable, and manually fetchable — but **excluded from the daily auto-collection job** (`scripts/ensure_daily_collection_job.py` excludes `admission_status = "incubating"` nodes alongside `is_template` nodes).
 - The 源管理 board shows an 「观察」 badge on incubating sources for focused review.
@@ -35,7 +35,7 @@ Every newly admitted source batch starts with `admission = "incubating"` in its 
 
 ## Default Essential Sources
 
-The current default-visible catalog is the admitted first additive batch. Each source should keep the v1.0 dimensions in code metadata: source owner, brand, scope, channel, base URL, provenance tier, signal strength, noise risk, and fetch reliability. (Source-level content tags were retired in issue #178: item kinds come from `default_kind` priors and per-item classification, topics from article analysis.)
+The current default-visible catalog is the admitted first additive batch. Each source should keep the v1.0 dimensions in its catalog entry (`src/sources/catalog/*.toml` — `owner`, `brand`, `scope`, `channel`, `homepage`, `tier`, `signal`, `noise`, `reliability`; they are projected onto the fetcher class as its metadata, not written in code): source owner, brand, scope, channel, base URL, provenance tier, signal strength, noise risk, and fetch reliability. (Source-level content tags were retired in issue #178: item kinds come from `default_kind` priors and per-item classification, topics from article analysis.)
 
 | Source ID | Candidate Reason |
 | --- | --- |

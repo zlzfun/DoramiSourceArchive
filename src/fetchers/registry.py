@@ -5,7 +5,9 @@
 只要在 impl 目录下继承了 BaseFetcher 并填写了 source_id，即会自动在此注册。
 
 预设源的身份(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)不写在类上,写在策展源目录文件
-src/sources/catalog/*.toml 里,注册时回投到类属性(issue #262 R2,见 project_catalog_identity)。
+src/sources/catalog/*.toml 里,类定义时回投到类属性(issue #262 R2,见 fetchers.base.apply_catalog_identity)。
+目录有结构错误、或者 impl 里的预设类在目录里没有条目,discover() 直接抛 CatalogError——
+这类错误不走下面「单个模块加载失败只告警」的隔离。
 """
 
 import importlib
@@ -13,7 +15,7 @@ import pkgutil
 import inspect
 from typing import Type, Dict, List, Any, Optional
 
-import sources as catalog_files
+from fetchers import catalog_files
 from fetchers.base import BaseFetcher
 
 
@@ -171,27 +173,6 @@ def focused_curation_for(source_id: str, *, is_template: bool = False) -> Dict[s
     }
 
 
-def project_catalog_identity(fetcher_class: Type[BaseFetcher]) -> bool:
-    """把策展源目录文件里的身份回投到抓取器类属性上(issue #262 R2);类不在目录里返回 False。
-
-    预设源「是谁」(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)写在 ``src/sources/catalog/*.toml``,
-    类上不再声明;执行路径、注册元数据、源目录读服务照旧读类属性,所以在注册这一刻把目录值放上去。
-
-    只在类上当前生效的值与目录不同才写:继承来的值本来就对的(如形态继承自所属的抓取器家族)
-    不在子类上重复落一份。这条的前提是「目录里的类不继承自另一个目录里的类」,否则结果会依赖
-    注册先后——``tests/test_source_catalog_files.py`` 守着这个前提。模板(``is_template``)不在目录里。
-    """
-    if getattr(fetcher_class, "is_template", False):
-        return False
-    entry = catalog_files.catalog().get(str(getattr(fetcher_class, "source_id", "") or ""))
-    if entry is None:
-        return False
-    for attribute, value in catalog_files.identity_attributes(entry, BaseFetcher).items():
-        if getattr(fetcher_class, attribute, None) != value:
-            setattr(fetcher_class, attribute, value)
-    return True
-
-
 class FetcherRegistry:
     def __init__(self):
         # 内部维护的映射表： { "source_id": FetcherClass }
@@ -206,7 +187,6 @@ class FetcherRegistry:
         if source_id == "unknown_source" or source_id == "unknown":
             return  # 跳过没有正确定义源ID的中间抽象类
 
-        project_catalog_identity(fetcher_class)
         self._fetchers[source_id] = fetcher_class
 
     def discover(self, package_name: str = "fetchers.impl"):
@@ -214,6 +194,8 @@ class FetcherRegistry:
         动态扫描并注册指定包下的所有抓取器。
         默认扫描 src/fetchers/impl 文件夹。
         """
+        # 策展源目录先加载(在异常隔离之外):目录坏了就别扫了,不能只剩几个模板还照常启动。
+        catalog_files.catalog()
         try:
             # 导入包本身
             package = importlib.import_module(package_name)
@@ -229,6 +211,9 @@ class FetcherRegistry:
                         # 判断是否为 BaseFetcher 的子类（且排除自身）
                         if issubclass(obj, BaseFetcher) and obj is not BaseFetcher:
                             self.register(obj)
+                except catalog_files.CatalogError:
+                    # 预设类缺目录条目 / 目录结构错误:不是「某个模块坏了」,是身份来源坏了,必须起不来。
+                    raise
                 except Exception as module_err:
                     # ✨ 修复：隔离单个模块的加载错误，防止一颗老鼠屎坏了一锅粥
                     print(f"⚠️ 无法加载抓取器模块 [{full_module_name}]: {module_err}")

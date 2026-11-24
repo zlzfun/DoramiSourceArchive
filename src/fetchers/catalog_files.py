@@ -1,26 +1,34 @@
-"""策展源目录文件(issue #262 R2):预设源「是谁」的事实来源。
+"""策展源目录文件的加载与校验(issue #262 R2):预设源「是谁」的事实来源。
 
-``catalog/*.toml`` 里每个 ``[[source]]`` 是一个策展源的身份——名称、图标、简介、形态、准入、
-策展维度。抓取器类(``fetchers/impl/``)只写「怎么抓」,不再声明这些;注册时由
-``FetcherRegistry.register`` 把目录里的值回投到类属性上,所以读类属性的代码(执行路径里的
-``feed_name`` / ``site_name``、注册元数据、源目录读服务)看到的值与搬迁前逐字相同。
+``src/sources/catalog/*.toml`` 里每个 ``[[source]]`` 是一个策展源的身份——名称、图标、简介、形态、
+准入、策展维度。抓取器类(``fetchers/impl/``)只写「怎么抓」,不再声明这些;类定义的那一刻由
+``BaseFetcher.__init_subclass__`` 把目录里的值回投到类属性上(``fetchers.base.apply_catalog_identity``),
+所以读类属性的代码(执行路径里的 ``feed_name`` / ``site_name``、注册元数据、源目录读服务)看到的值
+与搬迁前逐字相同,直接 ``import`` 具体类的脚本也一样。
 
 加一个策展源 = 目录文件里加一条 + 一个带 ``source_id`` 的抓取器类;转正 = 把那一条的
 ``admission`` 从 ``incubating`` 改成 ``admitted``。都走 PR,``git`` 即审计。
 
-本模块只依赖标准库(``tomllib``),在抓取器注册表导入期加载;目录有任何结构错误都直接抛
-``CatalogError``——宁可起不来,也不带着半份目录跑。
+目录有任何结构错误、或者 ``fetchers/impl`` 里的预设类在目录里没有条目,都直接抛 ``CatalogError``
+——宁可起不来,也不带着半份目录跑(缺一个文件不能让观察期的源悄悄变成「未命名 + 正式」)。
+
+TOML 解析用标准库 ``tomllib``(Python 3.11+);3.10 上用 ``tomli``(``pyproject`` 里的条件依赖)。
 """
 
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping
 
-CATALOG_DIR = Path(__file__).resolve().parent / "catalog"
+try:
+    import tomllib
+except ImportError:  # Python 3.10:项目的 requires-python 仍是 >=3.10
+    import tomli as tomllib
+
+# 数据目录在 src/sources/catalog(不是 Python 包,只有 .toml);本模块在 src/fetchers/。
+CATALOG_DIR = Path(__file__).resolve().parent.parent / "sources" / "catalog"
 
 # 目录键 → 抓取器类属性。键名取短(目录是给人写的),类属性名是存量。
 FIELD_TO_ATTR: dict[str, str] = {
@@ -112,6 +120,8 @@ def load_catalog(directory: Path | str = CATALOG_DIR) -> dict[str, CatalogEntry]
         sources = document.get("source", [])
         if not isinstance(sources, list):
             raise CatalogError(f"{path.name}:source 必须写成 [[source]] 数组")
+        if not sources:
+            raise CatalogError(f"{path.name}:没有任何 [[source]](空文件多半是事故,不要的文件请删掉)")
         for index, raw in enumerate(sources):
             entry = _parse_entry(raw, path.name, index)
             if entry.id in entries:

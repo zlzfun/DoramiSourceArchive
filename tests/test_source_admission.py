@@ -256,7 +256,7 @@ def test_promoting_one_inherited_incubating_source_only_admits_that_source(monke
     此前观察期继承自父类 ``PresetXTimelineFetcher``,删父类那一行等于整批转正(codex R1 #3);现在父类不带
     准入,目录里每个账号各有一行必填的 ``admission``。
     """
-    import sources as catalog_files
+    from fetchers import catalog_files
     from ensure_daily_collection_job import selected_fetcher_ids
 
     before = set(selected_fetcher_ids())
