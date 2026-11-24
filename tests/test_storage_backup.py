@@ -6,6 +6,7 @@ from dataclasses import replace
 import hashlib
 import io
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -508,6 +509,159 @@ def test_unavailable_backup_directory_reports_failure_without_raising(service, t
     assert service.run_if_due()["last_attempt_at"] == state["last_attempt_at"]
     now[0] += 601
     assert service.run_if_due()["last_attempt_at"] != state["last_attempt_at"]
+
+
+def _unpaid_audio(service, call_id="f" * 64):
+    """一条已成功的语音调用只有回执、没有音频:库和回执目录都拷完之后才查得出来的那类失败。"""
+    with sqlite3.connect(service._database()) as connection:
+        connection.execute("INSERT INTO bailian_tts_calls VALUES (?,?,?)", (call_id, "succeeded", "e" * 64))
+    service.receipt_root.mkdir(exist_ok=True)
+    (service.receipt_root / f"{call_id}.json").write_text('{"paid":"receipt"}')
+    return service.receipt_root / f"{call_id}.evicted"
+
+
+def _count_attempts(service, now):
+    attempts, snapshot = [], service._snapshot
+    service._snapshot = lambda staging: (attempts.append(now[0]), snapshot(staging))[1]
+    return attempts
+
+
+def _gap_to_next_attempt(service, attempts, now, limit=8 * 3600):
+    last, seen = attempts[-1], len(attempts)
+    while len(attempts) == seen:
+        assert now[0] - last < limit, "没有再重试"
+        now[0] += 60
+        service.run_if_due()
+    return attempts[-1] - last
+
+
+def test_space_shortfall_is_settled_before_anything_is_staged(service, monkeypatch):
+    # issue #330:外网余盘比「暂存一份 + 归档一份 + 预留」少 0.3GB,旧实现每轮先把 1GB 的库和 1GB 的
+    # 回执目录拷进暂存区、最后才判空间不够,十分钟后原样重来(15 小时写盘 132GB)。
+    service.config = replace(service.config, minimum_free_mb=1)
+    paid, call_id = b"paid audio " * 3000, "a" * 64
+    service.receipt_root.mkdir()
+    receipt = service.receipt_root / f"{call_id}.json"
+    receipt.write_text('{"paid":"receipt"}')
+    (service.receipt_root / f"{call_id}.wav").write_bytes(paid)
+    (service.receipt_root / "notes.txt").write_bytes(b"x" * 500_000)   # 不进归档的文件不占份额
+    image, _ = add_local(service, "media", b"local image " * 2000, ".png")
+    cold = "c" * 64                                                     # 已在对象存储里的 blob 不拷,也不占份额
+    with sqlite3.connect(service._database()) as connection:
+        connection.execute("INSERT INTO bailian_tts_calls VALUES (?,?,?)",
+                           (call_id, "succeeded", hashlib.sha256(paid).hexdigest()))
+        connection.execute("INSERT INTO podcast_artifacts VALUES (?,?,?)", (cold, ".mp3", 10**9))
+        connection.execute("INSERT INTO object_blobs VALUES (?,?,?,?,?,?,?,?)",
+                           (f"podcast:{cold}.mp3", "podcast", cold, ".mp3", 10**9, "bucket", "region", "key"))
+    with sqlite3.connect(service._database()) as connection:
+        database_bytes = (connection.execute("PRAGMA page_count").fetchone()[0]
+                          * connection.execute("PRAGMA page_size").fetchone()[0])
+    staged = database_bytes + receipt.stat().st_size + len(paid) + image.stat().st_size
+    enough = 1024**2 + 2 * staged
+    free = [enough - 1]
+    monkeypatch.setattr(backup_module.shutil, "disk_usage", lambda _path: SimpleNamespace(free=free[0]))
+
+    class NoSnapshot(sqlite3.Connection):
+        def backup(self, *args, **kwargs):
+            pytest.fail("空间不够时不应开始做库快照")
+
+    def connect(path):
+        connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, factory=NoSnapshot)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    with monkeypatch.context() as refused:
+        refused.setattr(backup_module, "_connect", connect)
+        refused.setattr(service, "_copy", lambda *args, **kwargs: pytest.fail("空间不够时不应拷任何文件"))
+        state = service.run()
+    assert state["status"] == "failed" and state["error"] == "backup_insufficient_space", state
+    assert not state.get("consecutive_failures"), "拷贝前就判定的空间不足不拉长重试间隔"
+    assert not list(service.directory.glob(".backup-*")) and not list(service.directory.glob("*.tar.gz"))
+    free[0] = enough
+    state = service.run()
+    assert state["status"] == "succeeded", state
+    assert state["files"] == 4 and state["external_objects"] == 1
+
+
+def test_failures_in_a_row_widen_the_retry_gap_until_a_success(service):
+    # issue #330:拷完才失败的原因(回执音频缺失、清单过大、完整性检查不过…)每重试一次就是一整遍拷贝。
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    marker = _unpaid_audio(service)
+    attempts = _count_attempts(service, now)
+    state = service.run_if_due()
+    assert state["error"] == "backup_paid_audio_missing_or_corrupt" and state["consecutive_failures"] == 1
+    gaps = [_gap_to_next_attempt(service, attempts, now) for _ in range(8)]
+    assert gaps == [600, 1200, 2400, 4800, 9600, 19200, 21600, 21600]
+    assert service.status()["consecutive_failures"] == 9
+    # 进程重启后间隔照旧:计数落在状态文件里。
+    restarted = BackupService(service.config, service.database_url, service.receipt_root,
+                              media_root=service.roots["media"], podcast_root=service.roots["podcast"],
+                              clock=lambda: now[0])
+    again = _count_attempts(restarted, now)
+    now[0] += 21600 - 60
+    assert restarted.run_if_due()["status"] == "failed" and not again
+    # 原因修好后,下一次到点的重试成功,计数清零;之后再失败从十分钟重新起算。
+    marker.write_bytes(b"")
+    now[0] += 60
+    state = restarted.run_if_due()
+    assert state["status"] == "succeeded" and state["consecutive_failures"] == 0 and len(again) == 1
+    marker.unlink()
+    now[0] += 24 * 3600 + 1
+    assert restarted.run_if_due()["consecutive_failures"] == 1
+    assert _gap_to_next_attempt(restarted, again, now) == 600
+
+
+def test_retry_gap_never_exceeds_the_backup_interval(service):
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    service.config = replace(service.config, interval_hours=1)
+    _unpaid_audio(service)
+    attempts = _count_attempts(service, now)
+    assert service.run_if_due()["status"] == "failed"
+    assert [_gap_to_next_attempt(service, attempts, now) for _ in range(5)] == [600, 1200, 2400, 3600, 3600]
+
+
+def test_failures_that_cost_nothing_keep_the_ten_minute_retry(service, monkeypatch):
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    attempts = _count_attempts(service, now)
+    free = [0]
+    monkeypatch.setattr(backup_module.shutil, "disk_usage", lambda _path: SimpleNamespace(free=free[0]))
+    assert service.run_if_due()["error"] == "backup_insufficient_space"
+    assert [_gap_to_next_attempt(service, attempts, now) for _ in range(4)] == [600] * 4
+    with (service.receipt_root / ".lock").open("wb") as lock:   # 语音合成占着回执目录
+        flock(lock, LOCK_EX)
+        assert _gap_to_next_attempt(service, attempts, now) == 600
+        assert service.status()["last_error"] == "backup_busy"
+        assert [_gap_to_next_attempt(service, attempts, now) for _ in range(3)] == [600] * 3
+    assert not service.status().get("consecutive_failures")
+    free[0] = 10**12
+    assert _gap_to_next_attempt(service, attempts, now) == 600
+    assert service.status()["status"] == "succeeded"
+
+
+def test_outcomes_are_logged_with_fixed_codes_only(service, captured_log, monkeypatch):
+    # issue #330:备份连续失败 15 小时,后端日志里一行都没有。
+    marker = _unpaid_audio(service)
+    with captured_log("dorami.backup", level=logging.INFO) as records:
+        assert service.run()["status"] == "failed"
+        marker.write_bytes(b"")
+        assert service.run()["status"] == "succeeded"
+        with monkeypatch.context() as broken:
+            def unavailable(_staging):
+                raise OSError("/sensitive/path must not leak")
+            broken.setattr(service, "_snapshot", unavailable)
+            assert service.run()["error"] == "backup_storage_unavailable"
+        service.receipt_root.mkdir(exist_ok=True)
+        with (service.receipt_root / ".lock").open("wb") as lock:
+            flock(lock, LOCK_EX)
+            assert service.run()["error"] == "backup_busy"
+    lines = [(record.levelno, record.getMessage()) for record in records]
+    assert [level for level, _ in lines] == [logging.WARNING, logging.INFO, logging.WARNING], lines
+    assert "backup_paid_audio_missing_or_corrupt" in lines[0][1] and "10 分钟后重试" in lines[0][1]
+    assert "backup_storage_unavailable" in lines[2][1]
+    assert "sensitive" not in json.dumps(lines, ensure_ascii=False)
 
 
 def test_blob_parent_symlink_cannot_escape_configured_root(service, tmp_path):
