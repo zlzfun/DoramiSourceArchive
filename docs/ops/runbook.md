@@ -64,9 +64,17 @@
 - 「只读」的验证标准:主库 sha + `-wal` 文件操作前后不变,且能读到 WAL 里未 checkpoint 的数据——`PRAGMA query_only` 达不到。
 - 导出的数据拷回本机由运维者本人执行,临时文件用完即删。
 
+## 每日备份失败(issue #330 沉淀)
+
+- 先看 `data/backups/status.json`(或管理面「存储与备份」):`status`、`error`、`last_success_at`、`consecutive_failures`、`retry_seconds`(下一次重试不早于上次尝试之后这么多秒);日志搜 `备份失败`。**容器 healthy 不代表备份在成功**——2026-10 连续失败三周、2026-11 失败 15 小时,都是别的事顺带发现的。
+- `backup_insufficient_space`:余盘门槛见 [`storage-backups.md`](storage-backups.md)「余盘门槛与重试间隔」。能动的是构建缓存(`docker builder prune -f`)、`backups/` 里较旧的部署前库备份、`data/backups` 的每日归档数(`[backup] retain_local`)、日志,或扩盘。
+- 其余错误码连续出现时重试间隔会拉长到最长 6 小时。修好原因后在容器里跑 `python scripts/storage_backup.py create` 立刻试一次。
+- 判断「是不是备份在刷盘」:`/proc/<pid>/io` 的 `read_bytes` 与 `write_bytes` 同量级、`data/backups/` 下有修改时间很新的 `.backup-*` 目录。v3.70.2 及更早版本空间不足时每轮白拷约 2 ×(库 + 回执目录),十分钟一轮。
+
 ## 部署前后核对(Docker 路径)
 
 - **磁盘**:worker 先做库备份再进预检,预检按整数 GB 向下取整要求每个相关文件系统 ≥ `DORAMI_DEPLOY_MIN_FREE_GB`(conf,默认 5),所以实际要留 ≥ 阈值 + 库大小 + 余量。**不足时脚本先自行回收再复测**(issue #232):悬空镜像、构建缓存超 `DORAMI_DEPLOY_BUILD_CACHE_KEEP_GB` 的部分、超 `DORAMI_DEPLOY_BACKUP_KEEP` 的部署前备份(manifest 引用的不动;手工路径同样读 conf);仍不足才 fail 并打印 `docker system df` 与 backups / data 去向——那时人工能动的是旧回滚镜像(worker 按 manifest 管)、`data/backups` 每日归档(`[backup] retain_local`)、或扩盘。每次部署开头先把构建缓存压回上限(上一次部署留下的旧中间层在此回收;成功后那次通常为 0,因旧镜像要等 worker 清理)。
+- **部署后比一次余盘够不够每日备份**(issue #330):每次部署会在 `backups/` 留一份部署前库备份,预检只保证部署自己的门槛。每日备份要 `2 ×(库 + 回执目录 + 本地 blob)+ [backup] minimum_free_mb`,2026-11 外网约 5.2GB;不够时备份每十分钟报一次 `backup_insufficient_space`(日志 `dorami.backup`、`data/backups/status.json`),腾出空间后下一轮自己恢复。
 - 部署成功 ≠ 静态资源可读:**部署后 curl 公网 `/fonts/*.css`、`/manifest.webmanifest`、`/brand/pwa-*.png` 看 200**,不能只看 `/api/health`(#192:`umask 077` 检出的文件 0600 进 nginx 镜像,字体 / manifest / PWA 图标 403 了四周)。
 - 流水线失败在 `up` 之前时系统未动、事务保留;同 target 重试复用事务且不重做备份,`gh run rerun <release run> --failed` 再批准(`gh api -X POST …/pending_deployments -F "environment_ids[]=<id>" -f state=approved`)。`gh run watch` 会因网络断提前 exit 1,别当部署失败。
 - 新版 compose 的 `:?` 必填变量(`DORAMI_ARCHIVE_AUTHORITY_ID`、`DORAMI_PODCAST_INSTALLATION` / `DORAMI_PODCAST_AUTHORITY_ID`)缺了 build / config 直接拒绝;authority id 一旦设定**永不改**。
