@@ -9,12 +9,25 @@
 
 | 字段 | 值 |
 |---|---|
-| `UPSTREAM_BASE` | `v3.70.3` / main `1784cfa7aaeaa90cd60675336f5d973659267760`(2026-11-24 正式发布,自动同步合入,见下) |
+| `UPSTREAM_BASE` | `v3.70.4` / main `732e4e1db46aabb3a94e683e00ed2629ce8921d1`(2026-11-24 正式发布,自动同步合入,见下) |
 | 本清单最近核对 | 2026-11-24(GitHub 侧 master;内网托管仓独有差异仍待内网 Agent 补登,见 §4) |
 | 同步方式 | GitHub `Sync main → master` 工作流,**按 main 的版本 tag(`v*`)触发**,`--no-ff` 合并;冲突时任务失败、人工处理 |
 
 每次合入上游版本后:更新 `UPSTREAM_BASE`,逐条复核 §2/§3 里「冲突原则」栏是否仍成立,
 被上游吸收的条目移到 §5「已上游化」。
+
+2026-11-24 正式版 `v3.70.4` 已自动无冲突合入(`07f3c287`)。本版三个 PR、两件事:
+精品导读语音等回执锁时先排队(issue #334,PR #336,方案 `docs/archive/issue-334-tts-receipt-queue.md`)——同一进程里要拿回执目录锁的调用(容量预检、合成)先在协程层按到达顺序排队,轮到的那一个才进线程,语音这一段占用的共享线程固定为每个回执目录至多一个;此前多期导读同时到期会把默认线程池(2 核的机器只有 6 个线程)占满十几分钟,期间别的后台任务整片不跑;
+源的身份收口到源目录(issue #262 R1a 余项 PR #335、R2 首块 PR #337,方案 `docs/plans/issue-262-source-model-refactor.md` §12 末)——业务代码读源的名称 / 角色 / 形态统一经 `services/source_catalog`;62 个预设源的名称、图标、简介、形态、准入、策展维度从抓取器类属性搬进 `src/sources/catalog/<id 前缀>.toml` 六个文件,类定义时回投到类属性,读类属性的代码不变。对外接口与同步流在改动前后逐项对拍零差异。
+后端新增 `src/fetchers/catalog_files.py` 与 `src/sources/catalog/*.toml`,改动 `src/api/sources.py`、`src/api/routers/` 下 `ingest` / `x_api`、`src/fetchers/` 下 `base` / `registry` 与六个 `impl` 文件、`src/mcp_server.py`、`src/services/` 下源相关的十余个文件与 `bailian_tts` / `podcast_premium_guides`、`scripts/ensure_daily_collection_job.py`。**§2.1 的 8 个适配文件里有两个上游这次也改了**(`src/fetchers/base.py`、`src/api/routers/x_api.py`),自动合并无冲突,两处 `verify=settings.network.tls_verify` 都在;没有新增 httpx client;
+**本版无新迁移**,Archive Sync 的流、字段、枚举、导出范围与接收端进度都没动,部署脚本未动;相对上一版,内网源码差异(8 个适配文件 + `scripts/repair_intranet_briefs.py`)逐行对拍一致。
+内网接手注意:① 无迁移,要回上一版不需要恢复库;
+② **内网托管仓若自己加过预设源**(`src/fetchers/impl/` 下带 `source_id` 的抓取器类):本版起预设类的类体里不能再写名称 / 图标 / 简介 / 形态 / 准入这些身份属性,每个预设类要在 `src/sources/catalog/<id 前缀>.toml` 里有一条同 id 的 `[[source]]`,准入必填、没有整批默认值。目录结构有错或预设类缺条目,**进程启动即失败**(`CatalogError`),不会带着「未命名」的源起来。合并后先跑 `tests/test_source_catalog_files.py` 再部署;
+③ 内网托管仓若有代码直接 `import fetcher_registry` 读源的名称 / 角色 / 形态:守卫 `tests/test_source_catalog_boundary.py` 的名单只许减,名单外的文件引用注册表会红,改走 `services/source_catalog`(执行层只许 `get_class`);
+④ 目录文件在 `src/sources/catalog/`(只有 `.toml`,不是 Python 包),裸机部署随 `src/` 一起带上。自己打包或拷贝部署的,确认这个目录没有漏掉,漏了启动报「目录文件缺失」;
+⑤ 依赖:`pyproject.toml` 新增条件依赖 `tomli`(只在 Python 3.11 之前安装,3.11 起用标准库 `tomllib`);`docker/requirements*.txt` 只多了一处 `# via` 注释,包集合没变(`tomli` 原本就因 alembic 在清单里),裸机部署照常按清单装;
+⑥ 语音排队那处修复只在跑语音合成的节点上生效,内网不跑,行为不变。语音提供方协议 `PremiumGuideTtsProvider` 新增可选的协程 `check_capacity`,导读流程不再调用同步的 `ensure_capacity`——内网托管仓若有自写的语音提供方或在测试里给 `ensure_capacity` 打桩,改为提供 / 打桩协程 `check_capacity`;
+⑦ 内网手动部署(`./deploy.sh --here`);重启 PM2 仍会中断正在运行的同步,若需保留同一任务,应待其结束再切换。
 
 2026-11-24 正式版 `v3.70.3` 已自动无冲突合入(`053c6883`)。本版三件事:
 W3 个人日报机对机接口(PR #329,契约 `docs/contracts/admin_reader_briefs.md`,冻结基线 `contracts/briefs-v1/shared/`)——新增管理员 Cookie 鉴权的 `GET /api/admin/reader/briefs/today` 与 `POST /api/admin/reader/briefs/today/ensure`,按 `users.w3_uid` 精确唯一映射账号;首版日报的创建经共享互斥门,由新的进程内运行器 `BriefRuntime` 带租约执行;原有的个人早报待处理任务 `personal_digest_pending` 从每分钟改为每 30 秒,并兼做卡住版本的租约恢复;
