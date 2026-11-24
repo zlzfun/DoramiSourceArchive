@@ -4,8 +4,9 @@ v3.31 退役清仓波自 storage/impl/vector_storage.py 迁出(原模块随向�
 取名职责与向量存储本就无关)。v3.22.5 源命名核对波拍板的机制不变:
 
 现役源一律经 :func:`friendly_source_name` 从预设源目录现取(改名零维护);
-``SOURCE_FRIENDLY_NAMES`` 只登记目录查不到的 id——日报特殊源(非抓取器)与
-「删类下线但归档文章仍留库」的历史源(名单同步 ``registry.DECOMMISSIONED_FETCHER_IDS``)。
+没有抓取器类的内建 id——日报特殊源(非抓取器)与「删类下线但归档文章仍留库」的历史源——的名称
+登记在策展源目录文件 ``src/sources/catalog/system.toml``(系统源与墓碑,issue #262 R2;此前是本模块的
+``SOURCE_FRIENDLY_NAMES`` 常量,与注册表里的墓碑名单各写一份),经 :func:`builtin_source_name` 取。
 
 issue #262 R1a 余项:本模块不再直接读抓取器注册表,预设源的名称与策展元数据经
 ``services.source_catalog``(读注册表身份的唯一入口)。函数签名与取名 / 角色的优先级不变。
@@ -20,17 +21,18 @@ SourceConfig/注册表/内建目录元数据(source_scope / provenance_tier)判�
 
 from typing import Dict, Optional
 
-SOURCE_FRIENDLY_NAMES: Dict[str, str] = {
-    "dorami_daily_brief": "哆啦美·AI资讯日报",
-    # 已下线源(历史归档仍在,来源展示需要可读名)
-    "docs_gemini_api_changelog":               "Gemini API Changelog",
-    "docs_openai_api_changelog":               "OpenAI API Changelog",
-    "docs_alibaba_model_studio_announcements": "阿里云百炼公告",
-    "github_qwen_code_releases":               "Qwen Code Releases",
-    "web_bytedance_seed_models":               "ByteDance Seed Models",
-    "x_ai_at_meta":                            "X · AI at Meta",
-    "x_openrouter":                            "X · OpenRouter",
-}
+
+def builtin_source_name(source_id: str) -> str:
+    """没有抓取器类的内建 id(系统源、已下线源的墓碑)在目录文件里登记的名称;不是内建 id 返回空串。
+
+    源目录读服务在函数内延迟导入(同本模块其它函数:``models.db`` 导入本模块,顶层导入会成环)。
+    """
+    try:
+        from services import source_catalog
+
+        return source_catalog.builtin_name(source_id)
+    except Exception:  # noqa: BLE001 - 取名失败绝不阻断展示/检索主流程
+        return ""
 
 
 # ── 信息角色(官方/媒体/个人/榜单)──
@@ -129,7 +131,7 @@ def _static_source_name(source_id: str) -> str:
             return str(name)
     except Exception:  # noqa: BLE001 - 取名失败绝不阻断展示/检索主流程
         pass
-    return SOURCE_FRIENDLY_NAMES.get(source_id, "")
+    return builtin_source_name(source_id)
 
 
 def friendly_source_name(source_id: str) -> str:

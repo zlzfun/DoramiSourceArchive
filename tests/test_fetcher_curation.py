@@ -3,7 +3,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from fetchers.registry import ESSENTIAL_FETCHER_IDS, fetcher_registry, focused_curation_for
+from fetchers import catalog_files
+from fetchers.registry import fetcher_registry, focused_curation_for
+
+# 进过审阅的策展源 = 策展源目录(src/sources/catalog)里的条目。issue #262 R2 之前另有一份手写白名单
+# ESSENTIAL_FETCHER_IDS,内容恰好就是全部预设源;现在目录是唯一的名单。
+CATALOG_SOURCE_IDS = frozenset(catalog_files.catalog())
 
 
 GENERIC_ADVANCED_FETCHER_IDS = {
@@ -17,20 +22,20 @@ GENERIC_ADVANCED_FETCHER_IDS = {
 }
 
 
-def test_default_visible_fetchers_match_essential_whitelist():
+def test_default_visible_fetchers_match_the_catalog():
     metadata = fetcher_registry.get_all_metadata()
     visible_ids = {item["id"] for item in metadata if item.get("default_visible") is not False}
 
     registered_ids = {item["id"] for item in metadata}
-    assert ESSENTIAL_FETCHER_IDS <= registered_ids
-    assert visible_ids == ESSENTIAL_FETCHER_IDS
+    assert CATALOG_SOURCE_IDS <= registered_ids
+    assert visible_ids == CATALOG_SOURCE_IDS
 
 
 def test_registry_contains_only_recommended_sources_plus_generic_capabilities():
     metadata = fetcher_registry.get_all_metadata()
     registered_ids = {item["id"] for item in metadata}
 
-    assert registered_ids == ESSENTIAL_FETCHER_IDS | GENERIC_ADVANCED_FETCHER_IDS
+    assert registered_ids == CATALOG_SOURCE_IDS | GENERIC_ADVANCED_FETCHER_IDS
 
 
 def test_recommended_fetcher_metadata_has_source_dimensions():
@@ -80,7 +85,7 @@ def test_fourth_expansion_sources_are_visible_incubating_and_fully_classified():
         "fetch_reliability",
     )
 
-    assert source_ids <= ESSENTIAL_FETCHER_IDS
+    assert source_ids <= CATALOG_SOURCE_IDS
     for source_id in source_ids:
         item = metadata[source_id]
         assert item["admission_status"] == "incubating"
@@ -91,19 +96,31 @@ def test_fourth_expansion_sources_are_visible_incubating_and_fully_classified():
     assert all(metadata[source_id]["shape"] == "article" for source_id in source_ids)
 
 
-def test_non_whitelisted_source_cannot_become_default_visible(monkeypatch):
+def test_only_catalog_sources_are_default_visible():
+    """``default_visible`` 只看在不在策展源目录里:目录外的 id 不管叫什么、是不是模板,都不可见。"""
+    listed = focused_curation_for("rss_openai_news")
+    assert listed == {
+        "default_visible": True,
+        "curation_reason": "推荐审查源：已按 v1.0 维度完成书面化标注，进入从 0 做加法的当前批次。",
+    }
+    # 在目录里就可见,与调用方传不传 is_template 无关(与旧白名单同序:先看名单)
+    assert focused_curation_for("rss_openai_news", is_template=True) == listed
+
+    stranger = focused_curation_for("rss_huggingface_blog")          # 不在目录里的 id
+    assert stranger["default_visible"] is False
+    assert "弱相关" in stranger["curation_reason"]
+
+    template = focused_curation_for("generic_rss", is_template=True)
+    assert template["default_visible"] is False
+    assert "通用扩展能力" in template["curation_reason"]
+
+    # 墓碑、系统源不是「现役策展源」
+    assert focused_curation_for("x_openrouter")["default_visible"] is False
+    assert focused_curation_for("dorami_daily_brief")["default_visible"] is False
+
+
+def test_registry_module_no_longer_carries_hand_written_source_lists():
     import fetchers.registry as registry_module
 
-    monkeypatch.setitem(
-        registry_module.FOCUSED_FETCHER_CURATION,
-        "rss_huggingface_blog",
-        {
-            "default_visible": True,
-            "curation_reason": "temporary test value",
-        },
-    )
-
-    curation = focused_curation_for("rss_huggingface_blog")
-
-    assert curation["default_visible"] is False
-    assert "精品源白名单" in curation["curation_reason"]
+    for name in ("ESSENTIAL_FETCHER_IDS", "FOCUSED_FETCHER_CURATION", "DECOMMISSIONED_FETCHER_IDS"):
+        assert not hasattr(registry_module, name), name

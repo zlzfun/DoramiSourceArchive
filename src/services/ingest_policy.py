@@ -35,11 +35,10 @@ def _registry_template_ids() -> set[str]:
 
 
 def _decommissioned_ids() -> frozenset[str]:
-    try:
-        from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
-    except Exception:  # noqa: BLE001
-        return frozenset()
-    return DECOMMISSIONED_FETCHER_IDS
+    # 墓碑名单在策展源目录文件里;读不到就该报错,不能当成「没有墓碑」放行写入。
+    from services import source_catalog
+
+    return source_catalog.tombstone_ids()
 
 
 def reserved_source_id_reason(source_id: str, *, allow_daily_brief: bool = False) -> str | None:

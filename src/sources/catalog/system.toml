@@ -1,0 +1,82 @@
+# 系统级条目:不经抓取器产出的内建源、已下线源的墓碑、新账号默认订阅的缺省名单。
+# 加载与校验 src/fetchers/catalog_files.py;业务代码经 src/services/source_catalog.py 读。
+
+# ── 系统源 ──────────────────────────────────────────────────────────────────
+# 由本系统自己产出内容的源:没有抓取器,没有采集绑定。
+
+[[system]]
+id = "dorami_daily_brief"
+name = "哆啦美·AI资讯日报"
+shape = "article"
+owner = "dorami"
+scope = "aggregator"
+tier = "tier1_curated"
+
+# ── 墓碑 ────────────────────────────────────────────────────────────────────
+# 历次节点审计里下线的策展源(docs/sources/node_audit_playbook.md):抓取器类与目录条目已删,
+# 历史归档文章仍留在库里。登记在这里,它们才不会经「归档里出现过的来源」回流到读者的订阅目录
+# (已订阅者除外,保留退订入口),收录通道也不会往这些 id 里写。
+#
+# 下线一个源 = 删类 + 删它在 <前缀>.toml 里的那一条 + 在这里加一条(名称留给历史文章的来源展示),
+# 并清理指向它的孤儿订阅——否则「已订阅者除外」的口子会让被订阅的下线源仍出现在发现页 / 源栏
+# (2026-07-21 删 x_ai_at_meta / x_openrouter 时踩到)。
+# 墓碑只增不减:已下线的 id 不再当现役源用(加载时校验与现役源、系统源不重 id)。
+
+[[tombstone]]
+id = "docs_gemini_api_changelog"
+name = "Gemini API Changelog"
+shape = "article"
+
+[[tombstone]]
+id = "docs_openai_api_changelog"
+name = "OpenAI API Changelog"
+shape = "article"
+
+[[tombstone]]
+id = "github_qwen_code_releases"
+name = "Qwen Code Releases"
+shape = "article"
+
+[[tombstone]]
+id = "docs_alibaba_model_studio_announcements"
+name = "阿里云百炼公告"
+shape = "article"
+
+[[tombstone]]
+id = "web_bytedance_seed_models"
+name = "ByteDance Seed Models"
+shape = "article"
+
+# X 社交波压缩成本下线(2026-07-21,观察期内):x_ai_at_meta 低频零覆盖但增量小,
+# x_openrouter 高频哨兵、成本大头。
+
+[[tombstone]]
+id = "x_ai_at_meta"
+name = "X · AI at Meta"
+shape = "social"
+platform = "x"
+
+[[tombstone]]
+id = "x_openrouter"
+name = "X · OpenRouter"
+shape = "social"
+platform = "x"
+
+# ── 新账号默认订阅(缺省)─────────────────────────────────────────────────────
+# 读者账号首次登录时播种的订阅(issue #56)。这里是缺省;运维可以在管理面「运维 → 内容」写 KV
+# reader_default_source_ids 整体覆盖,删掉 KV 即回落到这份名单。只影响播种那一刻:存量账号不回填,
+# 退订过的不复活。
+# 2026-09-14 按生产近两周逐源 ≥ 6.0 产量与「中文 / 头部官方优先」重定;播客暂不进。
+
+[reader_defaults]
+subscriptions = [
+    "dorami_daily_brief",   # 哆啦美·AI资讯日报(全站聚合;不进早报候选池,是文章容器的主菜)
+    "web_qbitai",           # 量子位(中文媒体)
+    "web_ithome_ai",        # IT之家 AI(中文快讯)
+    "web_aiera",            # 新智元(中文媒体)
+    "rss_the_decoder",      # The Decoder(英文日更,早报供给压舱石)
+    "rss_openai_news",      # OpenAI 官方
+    "web_anthropic_news",   # Anthropic 官方
+    "rss_deepmind_blog",    # Google DeepMind 官方
+    "x_openai",             # X · OpenAI(社交容器)
+]

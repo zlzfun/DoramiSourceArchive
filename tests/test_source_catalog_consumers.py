@@ -19,9 +19,9 @@ from sqlmodel import Session, select
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from fetchers.registry import DECOMMISSIONED_FETCHER_IDS, fetcher_registry  # noqa: E402
+from fetchers.registry import fetcher_registry  # noqa: E402
 from models.db import ArticleRecord, ReaderSubscriptionRecord, SourceConfigRecord  # noqa: E402
-from services import source_naming  # noqa: E402
+from services import source_catalog, source_naming  # noqa: E402
 from services.podcast_catalog import catalog_by_id  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
@@ -188,7 +188,7 @@ def _universe(session):
     evidence.update(_EXTRA_EVIDENCE)
     ids = sorted(
         set(fetcher_registry._fetchers) | set(rows) | set(evidence) | set(catalog_by_id())
-        | set(DECOMMISSIONED_FETCHER_IDS) | {"dorami_daily_brief"}
+        | set(source_catalog.tombstone_ids()) | {"dorami_daily_brief"}
     )
     return ids, {sid: evidence.get(sid, "") for sid in ids}, rows
 
