@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import wave
+import weakref
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -949,20 +950,39 @@ def test_a_failed_call_ends_its_turn(tts_env, monkeypatch):
 
 
 def test_a_call_that_cannot_reach_a_thread_gives_its_turn_back(tts_env, monkeypatch):
+    """轮到了却交不进线程池(循环关闭中):排在后面的不能被它卡住,它也不留在队列的账上。"""
+    from services import bailian_tts
+
     engine, cfg = tts_env
-    _slow_synthesis(monkeypatch, blocked=set())
+    state = _slow_synthesis(monkeypatch, blocked={"first"})
+
+    class RefusesTheSecond(ThreadPoolExecutor):
+        submitted = 0
+
+        def submit(self, fn, /, *args, **kwargs):
+            self.submitted += 1
+            if self.submitted == 2:
+                raise RuntimeError("cannot schedule new futures after shutdown")
+            return super().submit(fn, *args, **kwargs)
 
     async def run():
         loop = asyncio.get_running_loop()
-        closed = ThreadPoolExecutor(max_workers=1)
-        closed.shutdown()
-        loop.set_default_executor(closed)
-        with pytest.raises(RuntimeError):
-            await provider(engine, cfg).synthesize("no thread")
-        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
-        return await asyncio.wait_for(provider(engine, cfg).synthesize("next"), 2)
+        loop.set_default_executor(RefusesTheSecond(max_workers=2))
+        first, refused, behind = (
+            asyncio.ensure_future(provider(engine, cfg).synthesize(name))
+            for name in ("first", "refused", "behind")
+        )
+        assert await _seen(state.entered_event("first"))
+        state.release.set()
+        assert await first == "first"
+        with pytest.raises(RuntimeError, match="cannot schedule"):
+            await refused
+        assert await asyncio.wait_for(behind, 2) == "behind"
+        await asyncio.sleep(0)  # 最后一个完成回调跑完
+        assert bailian_tts._RECEIPT_TURNS[loop] == {}
 
-    assert asyncio.run(run()) == "next"
+    asyncio.run(run())
+    assert state.finished == ["first", "behind"]
 
 
 def test_each_receipt_directory_has_its_own_queue(tts_env, monkeypatch, tmp_path):
@@ -1006,6 +1026,34 @@ def test_each_event_loop_has_its_own_queue(tts_env, monkeypatch):
     assert asyncio.run(run()) == "other loop"
 
 
+def test_a_closed_event_loop_is_not_kept_alive_by_its_queue(tts_env, monkeypatch):
+    """等待过的 asyncio.Lock 强引用事件循环:队列空了条目就得删,否则循环关闭后也回收不了。"""
+    from services import bailian_tts
+
+    engine, cfg = tts_env
+    state = _slow_synthesis(monkeypatch, blocked={"first"})
+    loops = []
+
+    async def run():
+        loops.append(weakref.ref(asyncio.get_running_loop()))
+        calls = [
+            asyncio.ensure_future(provider(engine, cfg).synthesize(name))
+            for name in ("first", "waits")
+        ]
+        assert await _seen(state.entered_event("first"))
+        gives_up = asyncio.ensure_future(provider(engine, cfg).synthesize("gives up"))
+        await asyncio.sleep(0)
+        gives_up.cancel()
+        state.release.set()
+        await asyncio.gather(*calls)
+        await asyncio.sleep(0)  # 最后一个完成回调跑完
+        assert bailian_tts._RECEIPT_TURNS[asyncio.get_running_loop()] == {}
+
+    asyncio.run(run())
+    gc.collect()
+    assert loops[0]() is None
+
+
 def test_a_cancelled_caller_keeps_its_turn_until_its_thread_ends(tts_env, monkeypatch):
     """线程停不下来:被取消的调用还占着锁,下一个不能再放一个线程进去等。"""
     engine, cfg = tts_env
@@ -1025,16 +1073,20 @@ def test_a_cancelled_caller_keeps_its_turn_until_its_thread_ends(tts_env, monkey
         running.cancel()
         with pytest.raises(asyncio.CancelledError):
             await running
-        # 「running」的线程还没结束:「last」此刻不该进线程。
+        # 有人退出排队之后才来的,排的仍是同一个队。
+        late = asyncio.ensure_future(provider(engine, cfg).synthesize("late"))
+        # 「running」的线程还没结束:后面的此刻都不该进线程。
         assert not await _seen(state.entered_event("last"), 0.3)
+        assert not state.entered_event("late").is_set()
         state.release.set()
         assert await asyncio.wait_for(last, 5) == "last"
+        assert await asyncio.wait_for(late, 5) == "late"
         assert gives_up.cancelled()
 
     asyncio.run(run())
     gc.collect()
     # 排队中被取消的那个从未执行;同一时刻线程里只有一个。
-    assert state.finished == ["running", "last"] and state.peak == 1
+    assert state.finished == ["running", "last", "late"] and state.peak == 1
     # 「running」在线程里抛出的异常没有人等,也不该变成事件循环的告警。
     assert unretrieved == []
 

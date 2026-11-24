@@ -458,7 +458,9 @@ def reclaim_completed_receipts(
         )
 
 
-# 每个事件循环一份 {回执目录: asyncio.Lock}:同一目录的调用按到达顺序轮流(issue #334)。
+# 事件循环 → {回执目录: [asyncio.Lock, 在排队或在执行的调用数]}:同一目录的调用按到达
+# 顺序轮流(issue #334)。没有调用时条目即删除——等待过的 asyncio.Lock 强引用它的
+# 事件循环,留着它,这张表的弱键就永远回收不了。
 _RECEIPT_TURNS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
@@ -485,10 +487,15 @@ async def _in_turn(receipt_root, call, *args):
     loop = asyncio.get_running_loop()
     turns = _RECEIPT_TURNS.setdefault(loop, {})
     key = os.path.realpath(receipt_root)
-    turn = turns.get(key)
-    if turn is None:
-        turn = turns[key] = asyncio.Lock()
-    await turn.acquire()
+    entry = turns.get(key)
+    if entry is None:
+        entry = turns[key] = [asyncio.Lock(), 0]
+    entry[1] += 1
+    try:
+        await entry[0].acquire()
+    except BaseException:  # 排队中被取消
+        _leave(turns, key, entry)
+        raise
     try:
         # ``asyncio.to_thread`` 做的事,只是不经它那层协程:这里当场把调用交给
         # 线程池,拿到轮次和「总有人归还轮次」之间没有空档。
@@ -496,14 +503,22 @@ async def _in_turn(receipt_root, call, *args):
             None, functools.partial(contextvars.copy_context().run, call, *args)
         )
     except BaseException:
-        turn.release()
+        entry[0].release()
+        _leave(turns, key, entry)
         raise
-    work.add_done_callback(functools.partial(_end_turn, turn))
+    work.add_done_callback(functools.partial(_end_turn, turns, key, entry))
     return await asyncio.shield(work)
 
 
-def _end_turn(turn, work):
-    turn.release()
+def _leave(turns, key, entry):
+    entry[1] -= 1
+    if not entry[1] and turns.get(key) is entry:
+        del turns[key]
+
+
+def _end_turn(turns, key, entry, work):
+    entry[0].release()
+    _leave(turns, key, entry)
     # 等结果的人可能已经被取消:异常在这里取走,免得事件循环报「从未被取回」。
     if not work.cancelled():
         work.exception()
