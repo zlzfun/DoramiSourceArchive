@@ -3,9 +3,11 @@
 > 状态:耐久参考
 > #298：投递适配器、持久审核/outbox、路由与调度已集成到 PR #333；尚未合入部署。本页不表示目标节点已启用正式每日清单。完整启用流程见[标签自动治理手册](taxonomy-governance.md)。
 
+**2026-11-24 当前决定：不接入飞书，不通知管理员审核。** 本页只保留未来灰度接入参考；主配置 `feishu_config_path` 留空，已有私密文件 `enabled=false`。自动治理与站内提案可独立使用，无需完成下面的机器人配置或试发步骤。
+
 ## 接收方式与配置
 
-使用目标群的**自定义机器人**，而非手机号寻址。用户已选择每天北京时间 18:00 发送新增或有重要变化的审核清单，没有变化不发送。机器人消息链接回 Dorami 的登录审核页；点击链接不直接批准公共标签。
+未来开启灰度时使用目标群的**自定义机器人**，而非手机号寻址。保留的发送机制是每天北京时间 18:00 汇总新增或有重要变化的审核清单，没有变化不发送；当前不开启。机器人消息链接回 Dorami 的登录审核页；点击链接不直接批准公共标签。
 
 按[飞书官方指南](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)在群设置添加自定义机器人，并开启签名校验。Webhook 和签名密钥均视为凭据，只放本机 private 配置或凭据服务，不放 Git、报告、截图或日志。配置文件权限设为 `600`：
 
@@ -30,6 +32,7 @@ allow_loopback_review_url = false
 
 主配置通过 `[taxonomy] feishu_config_path` 引用上述私密文件，`review_enabled=true`
 启用提案维护和每天 18:00 的发送调度；私密文件中的 `enabled` 是独立投递总闸。
+该总闸就是默认关闭的通知灰度开关；`review_enabled=true` 但路径留空时只维护站内提案，不注册发送任务。
 审核路径为 `/review/taxonomy` 及 `/review/taxonomy/<id>`，需要管理员登录，GET 不改变状态。
 `governance_enabled` 与 `exact_merge_enabled` 分别控制统计/队列维护和精确自动归并；
 精确归并还需在管理面打开同名开关（兼容存储键 `taxonomy_auto_activation_enabled`）。

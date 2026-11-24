@@ -46,10 +46,10 @@
 - [ops/oss-storage.md](./ops/oss-storage.md) / [ops/oss-local-fallback.md](./ops/oss-local-fallback.md) — OSS 持久媒体与 Archive Sync 路径、自动缓存回收与租约、迁移恢复 / 从 OSS 回退本地;策略样例 `ops/oss-*.example.json`。
 - [ops/storage-backups.md](./ops/storage-backups.md) — 自动备份与离线恢复(默认关闭)。
 - [ops/taxonomy-v1-deployment.md](./ops/taxonomy-v1-deployment.md) — Taxonomy v1 发布资产与 authority / replica 启动姿态。
-- [ops/taxonomy-governance.md](./ops/taxonomy-governance.md) — 标签自动治理启用开关、模型补标与飞书依赖、验收、停用及双节点边界。
+- [ops/taxonomy-governance.md](./ops/taxonomy-governance.md) — 标签自动治理启用开关、模型补标、验收、停用及双节点边界；通知灰度默认关闭。
 - [ops/aliyun-dual-node-deployment.md](./ops/aliyun-dual-node-deployment.md) — 阿里云外网 / 内网双节点上线:INI 替换清单、Secret / RAM / NLS / OSS、发布顺序、E2E 验收。
 - [ops/bailian-singapore-deployment.md](./ops/bailian-singapore-deployment.md) — 新加坡百炼 Fun-ASR / Qwen3-TTS 接入、预算与样本验证。
-- [ops/feishu-review-notifications.md](./ops/feishu-review-notifications.md) — #298 每日新概念审核通知、签名及投递状态。
+- [ops/feishu-review-notifications.md](./ops/feishu-review-notifications.md) — #298 通知未来灰度参考、签名及投递状态；当前不接入飞书。
 - [ops/issue-298-observation-runner.md](./ops/issue-298-observation-runner.md) — #298 本机独立 72h 运行器、LaunchAgent、就绪证据与停费核验。
 - [ops/full-analysis-backfill.md](./ops/full-analysis-backfill.md) — 历史文章 `full_analysis` 回填:边界、管理面操作、低优先级调度、恢复语义。
 - [ops/runbook.md](./ops/runbook.md) — 排查手法沉淀:日报漏报 / cron 缺席 / 分析回填 / 只读聚合统计 / 部署前后核对 / 源静默停产修补(不含主机信息)。

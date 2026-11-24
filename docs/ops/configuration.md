@@ -293,8 +293,9 @@ deployment = replica
 
 issue #298 的自动治理另需 `[taxonomy] governance_enabled`、`exact_merge_enabled`、
 `review_enabled`（均默认 false）；实际精确归并还需要管理台「精确归并」数据库开关，
-通知另需 `feishu_config_path` 与私密文件投递总闸。启用顺序、模型费用、Docker 路径及
-停用说明见[标签自动治理手册](taxonomy-governance.md)。不要仅因部署新版就把治理视为已开启。
+通知独立灰度且当前关闭：`feishu_config_path` 留空，已有私密文件 `[feishu_notifications] enabled=false`；
+不需要接入飞书或通知管理员才能启用自动治理。启用顺序、模型费用与停用说明见
+[标签自动治理手册](taxonomy-governance.md)。不要仅因部署新版就把治理视为已开启。
 
 issue #263 起没有 `remote_sync:v2_consumer_mode` 围栏：启用 v2 定时同步或手动拉取不会
 停掉本机的公共源采集与分析。同步建出来的源默认关「本机分析」且不进任何采集任务；想让本机
