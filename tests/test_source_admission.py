@@ -251,11 +251,20 @@ def test_daily_collection_job_excludes_templates_and_incubating_nodes():
 
 
 def test_promoting_one_inherited_incubating_source_only_admits_that_source(monkeypatch):
-    """X 预设的观察期继承自父类:单个账号转正要在具体类上覆盖,删父类那一行等于整批转正(codex R1 #3)。"""
+    """X 预设的准入各写在目录文件里(issue #262 R2),没有「整批」的父类默认值:转正一个账号只影响它自己。
+
+    此前观察期继承自父类 ``PresetXTimelineFetcher``,删父类那一行等于整批转正(codex R1 #3);现在父类不带
+    准入,目录里每个账号各有一行必填的 ``admission``。
+    """
+    from fetchers import catalog_files
     from ensure_daily_collection_job import selected_fetcher_ids
 
     before = set(selected_fetcher_ids())
     x_openai = fetcher_registry.get_class("x_openai")
-    assert "admission_status" not in vars(x_openai)  # 继承自 PresetXTimelineFetcher
+    preset_base = next(cls for cls in x_openai.__mro__ if cls.__name__ == "PresetXTimelineFetcher")
+    assert "admission_status" not in vars(preset_base)
+    x_entries = {sid: entry for sid, entry in catalog_files.catalog().items() if sid.startswith("x_")}
+    assert x_entries and all(entry.fields["admission"] == "incubating" for entry in x_entries.values())
+    assert not before & set(x_entries)
     monkeypatch.setattr(x_openai, "admission_status", "admitted", raising=False)
     assert set(selected_fetcher_ids()) - before == {"x_openai"}

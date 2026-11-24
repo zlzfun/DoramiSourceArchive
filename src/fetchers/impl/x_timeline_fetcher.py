@@ -368,9 +368,8 @@ class PresetXTimelineFetcher(XTimelineFetcher):
 
     is_template = False
     source_id = "unknown_source"
-    # 整批观察期:不进每日自动采集。单个账号转正 = 在该账号的子类上写 admission_status = "admitted";
-    # 删掉这一行等于全部 X 预设一起转正。
-    admission_status = "incubating"
+    # 各账号的名称、准入等身份在 src/sources/catalog/x.toml(每个账号各写一行 admission,
+    # 没有「整批」的默认值);这里只留抓取器家族的事实。
     content_type = "social_post"
     content_shape = "social"
     default_limit = 25
@@ -402,73 +401,36 @@ class DeepSeekXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_deepseek_ai"
     handle = "deepseek_ai"
     user_id = "1714580962569588736"
-    name = "X · DeepSeek"
-    description = "DeepSeek 官方模型、论文与服务动态。"
-    source_owner = "deepseek"
-    source_brand = "deepseek"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/deepseek_ai"
 
 
 class QwenXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_alibaba_qwen"
     handle = "Alibaba_Qwen"
     user_id = "1753339277386342400"
-    name = "X · Qwen"
-    description = "通义千问官方模型、开源与产品动态。"
-    source_owner = "alibaba"
-    source_brand = "qwen"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/Alibaba_Qwen"
 
 
 class MoonshotXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_moonshot_ai"
     handle = "Kimi_Moonshot"
     user_id = "1863959670169501696"
-    name = "X · Moonshot AI"
-    description = "Moonshot AI / Kimi 官方模型与开源动态。"
-    source_owner = "moonshot_ai"
-    source_brand = "kimi"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/Kimi_Moonshot"
 
 
 class KarpathyXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_karpathy"
     handle = "karpathy"
     user_id = "33836629"
-    name = "X · Andrej Karpathy"
-    description = "Andrej Karpathy 的模型训练、Agent 与工程观察。"
-    source_owner = "andrej_karpathy"
-    source_brand = "karpathy"
-    source_scope = "expert_commentary"
-    source_url = "https://x.com/karpathy"
 
 
 class SamAltmanXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_sama"
     handle = "sama"
     user_id = "1605"
-    name = "X · Sam Altman"
-    description = "Sam Altman 的 OpenAI 战略、发布口风与一手动态。"
-    source_owner = "sam_altman"
-    source_brand = "openai"
-    source_scope = "executive_commentary"
-    source_url = "https://x.com/sama"
-    noise_risk = "high_noise"
 
 
 class OpenAIXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_openai"
     handle = "OpenAI"
     user_id = "4398626122"
-    name = "X · OpenAI"
-    description = "OpenAI 官方账号；作为 X 与官网新闻时效/重复率对照组。"
-    source_owner = "openai"
-    source_brand = "openai"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/OpenAI"
 
 
 class ZaiXTimelineFetcher(PresetXTimelineFetcher):
@@ -480,9 +442,3 @@ class ZaiXTimelineFetcher(PresetXTimelineFetcher):
     source_id = "x_zai_org"
     handle = "Zai_org"
     user_id = ""
-    name = "X · Z.ai"
-    description = "智谱 Z.ai 官方 GLM 模型发布、开源与产品动态。"
-    source_owner = "zai"
-    source_brand = "glm"
-    source_scope = "frontier_ai_lab"
-    source_url = "https://x.com/Zai_org"

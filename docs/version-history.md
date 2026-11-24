@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **预设源的身份搬进目录文件(issue #262 R2 首块,PR #337,2026-11-24,开发版 3.70.4-alpha,纯后端)**:62 个预设源的名称 / 图标 / 简介 / 形态 / 准入 / 策展维度从抓取器类属性搬进 `src/sources/catalog/<前缀>.toml`(六个文件),抓取器类只写怎么抓;类定义时把目录值回投到类属性,读类属性的代码不变。准入每条必填、没有整批默认值;目录结构错误或预设类缺条目,启动即失败。加策展源 = 目录加一条 + 一个带 `source_id` 的类;转正 = 改那一条的 `admission`。无迁移、不动同步流;类属性快照与三份库对拍改动前后相同。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **精品导读语音:等回执锁不占线程(issue #334,2026-11-24,开发版 3.70.4-alpha,纯后端)**:#326 上线当天,13 期导读的容量等待同一分钟到期,外网后台任务停摆 17 分钟——文章分析、播客转写 worker、入队巡检、存储维护、个人早报待处理全部被跳过。根因:每期导读一个协程任务,拿回执目录锁的两步(容量预检、合成)各自先进线程再阻塞等锁,而合成全程持锁约 100 秒;2 核机器的共享线程池只有 6 个线程,被等锁的导读占满。现在同一进程里的调用先在协程层按到达顺序排队,轮到的那一个才进线程,语音这一段占用的共享线程固定为每个事件循环、每个回执目录至多一个;轮次到线程结束才交还,取消不会让下一个再放线程进去等。文件锁、回执、账本都不变,无迁移。方案 [`docs/archive/issue-334-tts-receipt-queue.md`](archive/issue-334-tts-receipt-queue.md)。
 - **业务代码读源的身份只经源目录(issue #262 R1a 余项,PR #335,2026-11-24,开发版 3.70.4-alpha,纯后端重构)**:取名与角色、路由层源元数据、早报 / 事件榜 / 事件归并的角色与形态、内容类型先验、MCP `list_sources`、OPML、X 配额探针、系统源撞库、收录的身份解析与站点索引、每日采集任务脚本,原先各自直接读抓取器注册表,现在统一经 `services/source_catalog`;直接引用 `fetcher_registry` 的文件由守卫名单登记(只许减)。无迁移、不动同步流;基线与分支在开发库副本上逐项对拍零差异。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **W3 内网个人日报 M2M 契约 v1.0 接口与租约恢复（2026-11-23，开发波）**：新增管理员 Cookie 鉴权的 `GET/POST /api/admin/reader/briefs/today` 接口，按 `users.w3_uid` 精确唯一映射（冲突 500 告警）；入口锁定上海日期，GET 零副作用只读，POST 经共享首版互斥门原子创建并由 `BriefRuntime`（240s 预算 / 300s 租约 / 60s 续租 / fencing token 原子发布 / 30s 扫描恢复）受监督执行，发布时固化 `briefs_payload_json` 与 7 种业务态。补齐两条迁移、冻结共享契约 `contracts/briefs-v1/shared/` 与 D01–D20 / C01–C12 全套测试。详见 [契约](contracts/admin_reader_briefs.md)。
@@ -116,6 +117,19 @@
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
 
+## issue #262 R2 首块:预设源的身份搬进目录文件(PR #337,分支 `feat/issue-262-catalog-files`,开发版 3.70.4-alpha,版本号以实际发版为准)
+
+起因:62 个预设源把「是谁」(名称、准入、策展维度)和「怎么抓」压在同一个 Python 类里;加一个纯 RSS 源也要写类,转正要删类上的一行,X 预设的观察期还挂在父类的默认值上(删那一行等于整批转正)。方案 R2 的第一步是只把描述性身份搬出代码。
+
+**做法**:`src/sources/catalog/<id 前缀>.toml` 六个文件 62 条 `[[source]]`;加载器 `src/fetchers/catalog_files.py`(标准库 `tomllib`,Python 3.10 用条件依赖 `tomli`)做结构校验,任何错误抛 `CatalogError`;`BaseFetcher.__init_subclass__` 在类定义时把目录值回投到类属性,只在与当前生效值不同才写;`fetchers/impl` 里的预设类缺目录条目当场抛错,`discover()` 不吞这类错误。六个 impl 文件里预设类体内的 744 行身份属性删除,行尾注释带进目录;`PresetXTimelineFetcher` 上整批观察期的默认值删除,X 预设的准入各写在 `x.toml`。
+
+**没搬的**:feed 地址、列表页、X 账号这些绑定事实仍在类上(R3);`daily` 仍由准入推出;`ESSENTIAL_FETCHER_IDS`、墓碑、合集、默认订阅、播客目录这些常量还在代码里(R2 余下部分)。
+
+**验证**:注册表全部 69 个类的属性快照(26 个属性 + 注册顺序 + 注册元数据)改动前后逐字相同;R1a 的对拍工具在基线 `0a4d5015` 与分支上比较 46 组函数级输出与 35 个只读接口 × 三种身份,开发库副本与两份合成库都是零差异;守卫 `tests/test_source_catalog_files.py`(目录与注册表一一对应、类属性等于目录值、预设类体里再写身份即红——做过反向对照、加载器 14 种结构错误、目录文件随两种部署形态发出)。
+
+**检视**:Codex(`gpt-6-astra` ultra)首轮 2 P1 + 1 P2 + 3 P3,全部接受。首稿把回投挂在注册表的 `register()` 上:目录出错时异常被扫描的隔离吞掉,注册表只剩 4 个模板照常启动;缺一个目录文件时那一族预设带着「未命名 + admitted」注册。改成类定义时回投、缺条目即报错之后两条都不成立;另补 Python 3.10 的 `tomli` 回退、更严的语法树守卫与三处文档。
+
+见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 ## issue #334 精品导读语音:等回执锁不占线程(分支 `feat/issue-334-tts-queue`,开发版 3.70.4-alpha,版本号以实际发版为准)
 
 - **来由**:2026-11-24 v3.70.3 上线后读库核对 #323 / #326。两条都生效,但日志里 14:06–14:23 有一片 `maximum number of running instances reached`:转写 worker 约 100 次,文章分析、论文全文、标签重打、入队巡检、存储维护各十七八次,个人早报待处理 35 次,另有两条 `was missed by 0:17:05`。健康检查与接口正常。起点是 13 期导读的回执容量等待同一分钟到期。

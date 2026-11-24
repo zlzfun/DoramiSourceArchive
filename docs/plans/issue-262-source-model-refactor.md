@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2 首块(预设源的身份搬进目录文件 + 类定义时回投)2026-11-24 实现(PR #337,分支 `feat/issue-262-catalog-files`),记录见 §12 末;R2 余下部分与 R3a / R3b 未开工;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -408,3 +408,33 @@ shape = "article"
 | 6 | P3 | 形态对照实现没有复刻基线的归一与非法值兜底 | 完整复刻;用假抓取器类补空值 / 别名 / 大小写与空白 / 非法值 |
 
 **复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `0cc02969`。六条逐条判「够」;未发现修订新引入的 P1,无新增 P2 / P3。检视方另做的核对:语法树比较确认 `source_catalog` 相对 `01ffaa11` 被改动的既有定义只有 `_registry_views` / `registry_view` / `clear_registry_cache`(缓存实现)与 `role_from_metadata`(委托 `source_naming` 的单一实现),其余既有函数与 `SourceView` 一致;基线函数与分支同库对拍三个消费方(空源表 128 个 id、各来路齐全 136 个 id,加上同步冲突行,compat / full 两种读法)一致;形态判法 192 组输入一致。保留的前提:预设类的 `content_shape` 必须是合法值(69 个类现状如此,口径测试里有断言)。检视方的 pytest 因只读沙箱建不了日志文件未能启动,全量套件由实现方本机跑(4080 条通过)。
+
+**R2 首块:预设源的身份搬进目录文件(2026-11-24,PR #337,分支 `feat/issue-262-catalog-files`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §6 R2 行里的「只迁描述性身份,类上的 `source_id` 作为注册键保留,注册时把目录值回投到类属性,输出逐条对拍不变」。R2 的其余部分——镜像行改由文件直接对账、收编 §2.3 的常量(`ESSENTIAL_FETCHER_IDS` / 墓碑 / 合集 / 默认订阅)、`daily` 显式、播客目录并入、管理面目录字段只读——不在本块。纯后端:不改数据、无迁移、不动同步流、对外行为无变化。
+
+- **目录文件**:`src/sources/catalog/<id 前缀>.toml`,六个文件 62 条(rss 28 / web 13 / docs 7 / x 7 / github 5 / hf 2),每个 `[[source]]` 是一个预设源的身份。键:`id`、`name`、`icon`、`description`、`shape`、`platform`、`default_kind`、`admission`、`owner`、`brand`、`scope`、`channel`、`homepage`、`tier`、`signal`、`noise`、`reliability`(对应类属性见 `sources.FIELD_TO_ATTR`)。必填 `id` / `name` / `description` / `shape` / `admission`——**准入必须每条写明**,漏写不能等于转正;其余没写就是 `BaseFetcher` 上的缺省(空串,图标 📦)。
+- **加载与校验**(`src/fetchers/catalog_files.py`;数据目录 `src/sources/` 不是 Python 包):缺必填键、未知键、非字符串、`shape` / `admission` 取值不合法、id 重复、id 前缀与文件名不符、顶层出现 `[[source]]` 以外的表、文件里一条 `[[source]]` 都没有、目录下没有文件,一律抛 `CatalogError`。TOML 解析用标准库 `tomllib`,Python 3.10 上用 `tomli`(`pyproject` 新增条件依赖 `tomli>=2.0; python_version < '3.11'`——项目的 `requires-python` 仍是 >=3.10;锁文件只多这一条依赖边,两份 `docker/requirements*.txt` 只变一行注释)。
+- **回投**(`fetchers.base.apply_catalog_identity`,`BaseFetcher.__init_subclass__` 在**类定义时**调用):类体里自己写了 `source_id` 的非模板类,把目录条目对应的全部身份属性放到类上;没写的键取 `BaseFetcher` 的缺省,不让中间父类的值漏下来;只在类上当前生效的值与目标不同才 `setattr`——形态继承自抓取器家族且本来就对的,不在每个子类上各落一份。这条与定义先后无关的前提是「目录里的类不继承自另一个目录里的类」,现状成立并有守卫。继承 `source_id` 的子类(测试替身)沿用父类已回投的值;模板(`is_template`)不在目录里,名称等仍是它自己的。因为挂在类定义上,不经注册表直接导入具体类的脚本拿到的也是目录里的身份。
+- **搬迁**:一次性脚本(未入库)按类上的生效值生成目录文件,并删掉六个 impl 文件里预设类体内的 744 行身份属性;身份行的行尾注释带进目录(31 处「观察期…删掉这一行」改写为「…改为 admitted」,10 处内容类型先验的说明原样)。`PresetXTimelineFetcher` 上「整批观察期」的准入默认值一并删除——X 预设的准入各自写在 `x.toml`。
+- **相对 §3.1 的差别**:没有 `daily`、`identity_keys`、`binding` 三个键——`daily` 仍由「非模板 ∧ 正式」推出(等 R2 余下部分),身份键与绑定参数(feed 地址、handle、user_id)仍在类上(R3);按 id 前缀分文件,所以 `hf.toml` 单列;`podcasts` / `collections` / `system`(含墓碑)三个文件未建。
+- **起不来而不是带病跑**:`fetchers/impl` 里的预设类在目录里没有条目 → 类定义时抛 `CatalogError`(缺一个目录文件 = 那一族预设类定义不出来);`discover()` 扫描前先加载目录,扫描中遇到 `CatalogError` 原样抛出,不走「单个模块加载失败只告警」的隔离。目录里有、代码里没有类的条目运行时不报错(R3 起会是常态),由测试守一一对应。
+- **守卫** `tests/test_source_catalog_files.py`:目录 id 与注册表里的非模板类一一对应;每个类上生效的身份属性等于目录值;在代码里写身份即红——扫描 `src/fetchers/impl/` 每个模块的语法树:预设类的类体(含条件块、解包、增量与带注解的赋值)不许出现身份属性,未注册的中间父类只许声明形态 / 平台 / 内容类型先验,类体之外对抓取器类的 `X.attr = …` 与 `setattr` 同样不许(17 个反例与不该误伤的例子逐一钉住);目录里的类不互相继承;加载器对 14 种结构错误逐一报错;预设类缺条目、缺一个目录文件、目录错误时 `discover()` 抛错、Python 3.10 的回退、新解释器里只导入具体类也带目录身份;目录文件已入库、镜像 `COPY src ./src`、`.dockerignore` 不排除它们。反向对照:往 `x_sama` 的类体里写回一行 `name`,守卫变红。
+- **验证**:改动前后给注册表里全部 69 个类各拍一份快照(26 个身份 / 绑定属性、注册顺序、`get_all_metadata()` 全量)——逐字相同。R1a 的对拍工具在基线 `0a4d5015` 与分支上各跑一遍(46 组函数级输出、35 个只读接口 × 三种身份,开发库副本与两份合成库):三份都是零差异。
+- **部署顺序与混版本**:目录文件是运行时必需的数据,镜像整目录拷 `src`、裸机走 `git archive`,两种形态都带;缺失或不全时启动即失败。不触及同步流;镜像行对账读的还是类属性,值不变;两端任意顺序。依赖面只多一条 3.10 才生效的 `tomli`(此前已由 alembic 间接带入)。
+- **流程变化**:加策展源 = 目录里加一条 + 一个带 `source_id` 的抓取器类;转正 = 把那一条的 `admission` 改成 `admitted`(此前是删类上的一行,X 预设是在子类上覆盖父类默认值)。`AGENTS.md` 抓取器一行、`docs/sources/curation_policy.md`、`node_audit_playbook.md`、`docs/architecture/fetchers-and-sources.md` 已同步。`tests/test_rss_fetcher.py` 的准入快照、`ESSENTIAL_FETCHER_IDS` 的断言照旧(它们读的是回投后的类属性)。
+
+**R2 首块的检视(2026-11-24)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Fable 5.2)。检视方从 `0a4d5015` 在内存里重载基线代码,确认 69 个类 × 26 个属性、注册顺序与全部注册元数据同分支一致,六个 impl 文件除身份赋值外语法树一致;pytest 因只读沙箱未能启动。首轮 2 P1 + 1 P2 + 3 P3,全部接受、无分歧;#1 / #2 / #4 同根(首稿把回投挂在 `register()` 上),按「回投提前到类定义时、缺条目即报错」一次改形。
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P1 | 回投抛出的 `CatalogError` 落进 `discover()` 的异常隔离,只打一行告警,注册表剩 4 个模板照常启动 | `discover()` 扫描前先加载目录,扫描中 `CatalogError` 原样抛出 |
+| 2 | P1 | 加载器不管目录全不全:缺 `x.toml` 时七个 X 预设带着「未命名抓取器 + admitted」注册,进每日采集的候选 | 预设类缺目录条目在类定义时抛错;加载器拒绝没有任何条目的文件 |
+| 3 | P2 | 无条件 `import tomllib` 要 Python ≥3.11,`requires-python` 与裸机文档仍是 ≥3.10 | 取不到 `tomllib` 时用 `tomli`,`pyproject` 加显式条件依赖,锁与两份镜像依赖清单按流程重生成 |
+| 4 | P3 | 直接导入具体类并实例化的脚本(`scripts/compare_web_backends.py`)不经注册表,拿到的名称是「未命名抓取器」 | 回投挂在 `BaseFetcher.__init_subclass__`,导入即带身份;脚本不必改 |
+| 5 | P3 | 语法树守卫漏检条件块内赋值、解包赋值、模块级 `Cls.name = …`、`setattr` | 扫描器改为类体递归 + 类体外属性写入 + `setattr`,反例逐一入测 |
+| 6 | P3 | `fetchers-and-sources.md`、`content-model.md`、`curation_policy.md` 仍在教把身份写在类上 | 三处改为目录文件的做法 |
+
+另:实现方自查把加载器从顶层包 `sources` 挪到 `fetchers/catalog_files.py`(`src/sources/` 只留数据)——顶层包名与 `api/sources.py` 同名,从 `src/api/` 目录直接跑脚本时会被遮住。
+
+**R2 首块的复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `2d101236`。六条逐条判「够」;未发现修订新引入的 P1。检视方另做的核对:不导入注册表时 62 个预设类的身份都已到位;`abc.ABC` 与合作式多重继承两种顺序下 `__init_subclass__` 都被调用,仓内没有截断调用链的覆写;继承 `source_id` 的替身、模板、`fetchers.impl` 之外的类没有被误伤;从基线重新加载代码对拍,69 个类 × 26 个属性、MRO、注册顺序与全部注册元数据仍完全一致;真实 `tomli` 的回退解析结果一致。观察两条:回退测试自身在真正的 3.10 上会先在 `import tomllib` 处失败(已顺手改成兼容导入);锁文件只带入两行在结构上完整,但 `uv lock --check` 在检视方的只读沙箱里跑不了,以 CI 的实际结果为准。检视方的 pytest 未能启动,全量套件由实现方本机跑(4125 条通过)。

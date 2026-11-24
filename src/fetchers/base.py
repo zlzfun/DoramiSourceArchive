@@ -20,10 +20,52 @@ from models.content import BaseContent
 DedupLookup = Callable[[Iterable[str]], Awaitable[Dict[str, bool]]]
 
 
+def apply_catalog_identity(fetcher_class: type) -> bool:
+    """把策展源目录文件里的身份回投到抓取器类属性上(issue #262 R2);没有可回投的返回 False。
+
+    预设源「是谁」(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)写在 ``src/sources/catalog/*.toml``,
+    类上不再声明;执行路径、注册元数据、源目录读服务照旧读类属性,所以在类定义的这一刻
+    (``BaseFetcher.__init_subclass__``)把目录值放上去——不等到注册表扫描,直接 ``import`` 具体类的
+    脚本拿到的也是目录里的身份。
+
+    - 只管在类体里**自己**写了 ``source_id`` 的非模板类;继承 ``source_id`` 的子类(测试替身)沿用父类
+      已回投的值,模板(``is_template``)的名称等是它自己的。
+    - ``fetchers.impl`` 里的预设类在目录里没有条目 → 抛 ``CatalogError``:缺一条(或缺一个目录文件)
+      不能让它带着「未命名抓取器 + admitted」的缺省值上线。别处定义的类(测试里的假类)没有条目就不回投。
+    - 目录里没写的键取 ``BaseFetcher`` 的缺省,不让中间父类的值漏下来;只在类上当前生效的值与目标
+      不同才写——继承来的值本来就对的(如形态继承自所属的抓取器家族)不在子类上重复落一份。
+      这条与定义先后无关的前提是「目录里的类不继承自另一个目录里的类」,
+      ``tests/test_source_catalog_files.py`` 守着。
+    """
+    from fetchers import catalog_files
+
+    source_id = fetcher_class.__dict__.get("source_id")
+    if not isinstance(source_id, str) or source_id in ("", "unknown_source", "unknown"):
+        return False
+    if getattr(fetcher_class, "is_template", False):
+        return False
+    entry = catalog_files.catalog().get(source_id)
+    if entry is None:
+        if str(getattr(fetcher_class, "__module__", "")).startswith("fetchers.impl."):
+            raise catalog_files.CatalogError(
+                f"预设抓取器 {fetcher_class.__name__}(source_id={source_id!r})在 src/sources/catalog/ 里没有条目:"
+                "加策展源要同时加一条 [[source]];若是执行基座请标 is_template = True"
+            )
+        return False
+    for attribute, value in catalog_files.identity_attributes(entry, BaseFetcher).items():
+        if getattr(fetcher_class, attribute, None) != value:
+            setattr(fetcher_class, attribute, value)
+    return True
+
+
 class BaseFetcher(abc.ABC):
     """
     无状态抓取器基类
     """
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        apply_catalog_identity(cls)
 
     # 模板节点(2026-07 拍板):参数驱动的通用抓取器只在后端保留——作为 source-configs/
     # source_builder 的执行底座与新节点开发的模板参考;前端节点目录一律不显现
@@ -42,8 +84,9 @@ class BaseFetcher(abc.ABC):
 
     # 准入状态(issue #178 自原 category 拆出):admitted 正式 | incubating 观察期。
     # 观察期节点默认可见、可订阅、可手动抓取,但不进每日自动采集(scripts/ensure_daily_collection_job.py),
-    # 管理面挂「观察」徽记。验收转正 = 让该类的有效值成为 admitted:类上自己声明观察期的删掉那一行,
-    # 观察期继承自父类的(如 X 预设)在具体类上写 admission_status = "admitted"。来源角色(官方 / 媒体 / 个人 / 榜单)
+    # 管理面挂「观察」徽记。预设源的准入写在策展源目录文件里(src/sources/catalog/*.toml 的 admission,
+    # 每个源必填),类定义时回投到这个属性;验收转正 = 把那一条改成 admitted。这里的缺省值只对没有目录
+    # 条目的类(模板、测试里的假类)生效。来源角色(官方 / 媒体 / 个人 / 榜单)
     # 由 services/source_naming.source_role 推导,模板节点看 is_template,都不再挤在这个字段里。
     admission_status: str = "admitted"
 
@@ -63,6 +106,9 @@ class BaseFetcher(abc.ABC):
 
     # 新一代数据源准入元数据。用于区分来源身份、准入层级与抓取可靠性(源级 content_tags 已于 issue #178 退役:
     # 条目的类型与主题由内容类型推导和入库分析给出)。
+    # 预设源的这一组值(连同下面的 name / icon / description)来自策展源目录文件
+    # src/sources/catalog/*.toml,类定义时回投(issue #262 R2,见 apply_catalog_identity);预设类上不要再写,守卫
+    # tests/test_source_catalog_files.py 会拦。
     source_owner: str = ""
     source_brand: str = ""
     source_scope: str = ""
@@ -84,7 +130,7 @@ class BaseFetcher(abc.ABC):
     web_backend_enabled: bool = False
 
     # ==========================================
-    # 2. 前端 UI 渲染元数据 (必须由子类覆盖)
+    # 2. 前端 UI 渲染元数据 (模板类自己写;预设源写在目录文件里)
     # ==========================================
     name: str = "未命名抓取器"
     icon: str = "📦"
