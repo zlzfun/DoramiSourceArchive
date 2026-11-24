@@ -23,11 +23,15 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import literal_column, or_
+from sqlalchemy import or_
 from sqlmodel import Session, func, select
 
 from api import deps
-from api.articles_view import serialize_article_list_item
+from api.articles_view import (
+    build_article_search_plan,
+    search_tag_hits,
+    serialize_article_list_item,
+)
 from api.routers.articles import (
     _analysis_assets,
     _podcast_digest_audio_assets,
@@ -56,7 +60,6 @@ from api.sources import (
 )
 from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
 from llm.client import LLMError, UsageMeta
-from storage.fts import fts_search_ids
 from models.db import (
     AiUsageRecord,
     ArticleRecord,
@@ -1066,15 +1069,11 @@ def list_favorites(
         cond = content_shape_condition(shape_value, session)
         base = base.where(cond)
         count_query = count_query.where(cond)
-    if search:
-        # FTS5 全文检索（标题+正文）；不可用/过短时回退标题 LIKE。base 与 count 同条件。
-        fts_ids = fts_search_ids(session, search)
-        if fts_ids is not None:
-            cond = literal_column("articles.rowid").in_(fts_ids)
-        else:
-            cond = ArticleRecord.title.contains(search)
-        base = base.where(cond)
-        count_query = count_query.where(cond)
+    search_plan = build_article_search_plan(session, search)
+    if search_plan is not None:
+        # 与 /api/articles 同一把检索尺子：每词命中 标题/正文(FTS5)/标签 任一。base 与 count 同条件。
+        base = base.where(search_plan.condition)
+        count_query = count_query.where(search_plan.condition)
     if display_tag:
         flexible_article_ids = article_ids_for_flexible_label(session, display_tag)
         cond = ArticleRecord.id.in_(flexible_article_ids or ["__none__"])
@@ -1114,6 +1113,12 @@ def list_favorites(
         )
         for record in records
     ]
+    if search_plan is not None:
+        for item in items:
+            article_id = item.get("id")
+            item["search_tag_hits"] = search_tag_hits(
+                search_plan, display_tags.get(article_id, []), tags.get(article_id, []),
+            )
     favorite_ids = resolve_favorite_article_ids(session, username)
     return {
         "items": items,

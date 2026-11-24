@@ -305,6 +305,16 @@ export const ArticleRow = memo(function ArticleRow({
   // 内容类型(论文 / 教程 / 观点 / 版本更新…):源名后的一个词,资讯不挂(issue #178)。
   // issue #184:列表不再挂主题标签,内容类型也不画框——标签只在阅读窗出现,条目行只回答「谁发的、说了什么、值不值得点开」。
   const kindTag = kindLabel ? <span className="reader-entry-kind">{kindLabel}</span> : null;
+  // issue #94 搜索命中标签:仅在搜索态且条目由标签命中时,复用元信息命中词样式(.reader-entry-hit)
+  // 标出命中的标签名(至多两枚,命中片段高亮),与兴趣命中同名不重复;非搜索态零额外渲染。
+  const searchTagHits = searchQuery && Array.isArray(article.search_tag_hits)
+    ? article.search_tag_hits.filter((label) => label && label !== interestHit).slice(0, 2)
+    : [];
+  const searchTagNodes = searchTagHits.map((label) => (
+    <span key={`search-tag-${label}`} className="reader-entry-hit" title={`标签命中：${label}`}>
+      {highlightMatch(label, searchQuery)}
+    </span>
+  ));
   // 收藏星(审计 M-02 / M-35,issue #230 批 4a):不再是嵌在整行 <button> 里的 span[role=button](嵌套交互)。
   // 桌面:星是行里的装饰元素(aria-hidden),点到它由整行的点击分流成「收藏 / 取消收藏」;鼠标悬停浮出、
   // 触屏(pointer: coarse)常显(index.css);键盘与读屏走右键菜单(ContextMenu 键)与阅读窗的收藏钮,行名补一句「已收藏」。
@@ -354,6 +364,7 @@ export const ArticleRow = memo(function ArticleRow({
             <span className="reader-podcast-copy">
               <span className="reader-entry-top">
                 <span className="reader-entry-src" title={podcast?.show_title || sourceName}>{podcast?.show_title || sourceName}</span>
+                {searchTagNodes}
                 <span
                   className="reader-entry-time"
                   title={card ? formatPublishDateTime(article.publish_date || article.fetched_date) : formatReaderDate(article.publish_date || article.fetched_date, { withYear: true })}
@@ -411,6 +422,7 @@ export const ArticleRow = memo(function ArticleRow({
               {kindTag}
               {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
               {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
+              {searchTagNodes}
               <span
                 className="reader-entry-time"
                 title={card ? formatPublishDateTime(article.publish_date || article.fetched_date) : formatReaderDate(article.publish_date || article.fetched_date, { withYear: true })}

@@ -7,18 +7,25 @@ app 级可变全局（db_sink 等），故可被任意 Router 安全 import、�
 """
 
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from sqlalchemy import literal_column, or_
+from sqlalchemy import and_, false, literal_column, or_
 
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
 from services import content_classification, podcast_premium
+from services.article_display_tags import (
+    TagTextMatch,
+    display_tag_matches,
+    match_tags_by_text,
+    tag_match_condition,
+)
 from services.paper_content import strip_layout_markers
 from services.title_cache import cached_title
-from storage.fts import build_search_components, fts_search_ids
+from storage.fts import MIN_TRIGRAM_CHARS, fts_available, fts_search_ids, normalize_for_search
 
 
 class GenericContent(BaseContent):
@@ -232,6 +239,88 @@ def ingest_channel_label(value: Optional[str]) -> str:
     return INGEST_CHANNEL_LABELS.get(key, key)
 
 
+@dataclass(frozen=True)
+class ArticleSearchPlan:
+    """一次关键词检索的 SQL 条件 + 标签侧命中（用于列表标注「因哪个标签命中」）。"""
+
+    condition: Any
+    tag_matches: tuple[TagTextMatch, ...] = ()
+
+
+def build_article_search_plan(
+    session,
+    search: Optional[str],
+    *,
+    max_fts_rowids: Optional[int] = None,
+) -> Optional[ArticleSearchPlan]:
+    """把搜索框输入编译成检索条件：**每个词**命中「标题 / 正文 / 标签」任一，词间 AND。
+
+    - 正文：≥ 3 字的词走 FTS5（标题+正文，trigram 子串）；短词或 FTS 不可用时退回标题 LIKE；
+    - 标签：读者在该文上看得见的标签（规范标签含中英文名与别名、合并/激活候选、灵活标签）
+      含该词，见 `services.article_display_tags.match_tags_by_text`；
+    - 词先做 Unicode 归一化（与 FTS 两端同一映射），LIKE 一律 autoescape。
+
+    无 session 的老调用方保持原整串标题 LIKE。
+    """
+    if not search or not search.strip():
+        return None
+    if session is None:
+        return ArticleSearchPlan(ArticleRecord.title.contains(search))
+    tokens = list(dict.fromkeys((normalize_for_search(search) or "").split()))
+    if not tokens:
+        return ArticleSearchPlan(ArticleRecord.title.contains(search))
+
+    fts_ready = fts_available(session)
+    conditions = []
+    tag_matches: list[TagTextMatch] = []
+    for token in tokens:
+        text_condition = None
+        fts_empty = False
+        if fts_ready and len(token) >= MIN_TRIGRAM_CHARS:
+            fts_ids = fts_search_ids(session, token)
+            if fts_ids is not None:
+                limited = fts_ids[:max_fts_rowids] if max_fts_rowids is not None else fts_ids
+                if limited:
+                    text_condition = literal_column("articles.rowid").in_(limited)
+                else:
+                    fts_empty = True
+                    text_condition = false()
+        if text_condition is None:
+            text_condition = ArticleRecord.title.contains(token, autoescape=True)
+        match = match_tags_by_text(session, token)
+        tag_condition = tag_match_condition(match)
+        if tag_condition is None:
+            conditions.append(text_condition)
+        else:
+            tag_matches.append(match)
+            conditions.append(tag_condition if fts_empty else or_(text_condition, tag_condition))
+    return ArticleSearchPlan(and_(*conditions), tuple(tag_matches))
+
+
+def search_tag_hits(
+    plan: Optional[ArticleSearchPlan],
+    display_tags: Sequence[Dict[str, Any]] = (),
+    canonical_tags: Sequence[Dict[str, Any]] = (),
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """列表条目上「因哪个标签命中」：取展示投影 + durable 规范标签里命中的标签名。"""
+    if not plan or not plan.tag_matches:
+        return []
+    scored: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for idx, tag in enumerate([*display_tags, *canonical_tags]):
+        label = str(tag.get("name_zh") or tag.get("name_en") or tag.get("label") or "").strip()
+        if not label or label in seen:
+            continue
+        hit_count = sum(1 for match in plan.tag_matches if display_tag_matches(tag, match))
+        if hit_count > 0:
+            seen.add(label)
+            scored.append((-hit_count, idx, label))
+    scored.sort()
+    return [label for _, _, label in scored[: max(0, int(limit))]]
+
+
 def apply_article_query_filters(
         query,
         content_type: Optional[str] = None,
@@ -251,6 +340,7 @@ def apply_article_query_filters(
         fetched_date_end: Optional[str] = None,
         ingest_channel: Optional[str] = None,
         session=None,
+        search_plan: Optional[ArticleSearchPlan] = None,
 ):
     if content_type:
         query = query.where(ArticleRecord.content_type == content_type)
@@ -285,18 +375,11 @@ def apply_article_query_filters(
     if has_content is not None:
         query = query.where(ArticleRecord.has_content == has_content)
     if search:
-        # 先试 FTS5 全文检索（标题+正文）；不可用/输入过短时 fts_search_ids 返回
-        # None，回退到原标题 LIKE。命中按 rowid 过滤，排序/分页/其它过滤保持不变。
-        fts_ids = fts_search_ids(session, search) if session is not None else None
-        if fts_ids is not None:
-            query = query.where(literal_column("articles.rowid").in_(fts_ids))
-            # trigram 匹配不了 < 3 字的词（如「AI Agent」里的 AI），FTS 只按长词
-            # 召回；短词在此补一条标题 LIKE（AND），不再被静默丢弃。
-            _, short_words = build_search_components(search)
-            for word in short_words:
-                query = query.where(ArticleRecord.title.contains(word, autoescape=True))
-        else:
-            query = query.where(ArticleRecord.title.contains(search))
+        # 每词命中 标题/正文(FTS5)/标签 任一，词间 AND；同一请求的列表与计数可传入
+        # 预编译的 search_plan，避免 FTS 与标签解析各跑两遍。
+        plan = search_plan or build_article_search_plan(session, search)
+        if plan is not None:
+            query = query.where(plan.condition)
 
     if publish_date_start:
         query = query.where(ArticleRecord.publish_date >= publish_date_start)

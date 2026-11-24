@@ -37,6 +37,7 @@ from services import image_insights as image_insights_service
 from services import user_sources as user_sources_service
 from services import podcast_qa
 from services import source_visibility
+from services.article_display_tags import match_tags_by_text, tag_match_condition
 from services.qa_contract import QAState, clean_parts, part_keywords, traced_completion
 from storage.fts import fts_search_ranked
 
@@ -188,6 +189,9 @@ def fetch_candidates(
     - 短于 trigram 下限(3 字符)的关键词(常见:两字中文实体名如「豆包」)与
       FTS 整体不可用时的关键词,走标题 LIKE **补召回**——并入同一候选池,
       无 rank 的命中排在 FTS 命中之后、按日期倒序;
+    - 规范标签(名称/别名)与读者可见展示标签(含读时合并/激活投影与灵活标签)
+      命中的文章同样并入同一候选池,仅靠标签命中的文章无 bm25 rank,排在
+      FTS 命中之后、按日期倒序;
     - 排序:rank 升序(越小越相关)为主序,发布日期倒序为次序;两阶段取数——
       先取轻量列(id/rowid/日期)排序截断,再按序装载完整记录,避免为排序把
       全量正文载入内存。
@@ -199,7 +203,11 @@ def fetch_candidates(
     with Session(engine) as session:
         ranks: Dict[int, float] = {}
         like_keywords: List[str] = []
+        tag_conditions = []
         for keyword in keywords:
+            tag_cond = tag_match_condition(match_tags_by_text(session, keyword))
+            if tag_cond is not None:
+                tag_conditions.append(tag_cond)
             hits = fts_search_ranked(session, keyword)
             if hits is None:
                 # 不可用(FTS 缺失)或过短(trigram 命不中)——进 LIKE 补召回分支。
@@ -218,6 +226,8 @@ def fetch_candidates(
             conditions.append(
                 or_(*[ArticleRecord.title.contains(keyword) for keyword in like_keywords])
             )
+        if tag_conditions:
+            conditions.append(or_(*tag_conditions))
         if not conditions:
             return []
 

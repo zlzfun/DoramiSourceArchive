@@ -6,10 +6,9 @@ from mcp.server.fastmcp import FastMCP
 # 内部模块路径:mcp 顶层与 mcp.server.fastmcp 都不导出 TransportSecuritySettings。
 # pyproject 的 mcp<2 上限是这行成立的前提,2.x 会移动该模块。
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import literal_column
 from sqlmodel import Session, select
+from api.articles_view import build_article_search_plan
 from models.db import ArticleRecord, SourceStateRecord
-from storage.fts import fts_search_ids
 from storage.impl.db_storage import DatabaseStorage
 from services.source_naming import friendly_source_name
 from services.paper_content import delivery_body
@@ -181,15 +180,10 @@ def _fts_hit_records(
         if publish_date_gte:
             stmt = stmt.where(ArticleRecord.publish_date >= publish_date_gte)
 
-        fts_ids = fts_search_ids(session, query)
-        if fts_ids is not None:
-            if not fts_ids:
-                return []
-            stmt = stmt.where(
-                literal_column("articles.rowid").in_(fts_ids[:_SEARCH_MAX_ROWIDS])
-            )
-        else:
-            stmt = stmt.where(ArticleRecord.title.contains(query.strip()))
+        plan = build_article_search_plan(session, query, max_fts_rowids=_SEARCH_MAX_ROWIDS)
+        if plan is None:
+            return []
+        stmt = stmt.where(plan.condition)
         stmt = stmt.order_by(ArticleRecord.publish_date.desc()).limit(top_k)
         return list(session.exec(stmt).all())
 

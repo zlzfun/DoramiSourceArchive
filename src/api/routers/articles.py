@@ -28,7 +28,9 @@ from api.articles_view import (
     apply_article_query_filters,
     article_recency_order,
     article_to_markdown,
+    build_article_search_plan,
     ingest_channel_label,
+    search_tag_hits,
     serialize_article_list_item,
     serialize_feed_article,
 )
@@ -389,8 +391,14 @@ def get_articles(
         "fetched_date_start": fetched_date_start,
         "fetched_date_end": fetched_date_end,
     }
-    query = apply_article_query_filters(select(ArticleRecord), session=session, **filter_kwargs)
-    count_query = apply_article_query_filters(select(func.count(ArticleRecord.id)), session=session, **filter_kwargs)
+    # 关键词检索（标题/正文/标签）只编译一次，列表与计数共用，也用于逐条标注命中标签。
+    search_plan = build_article_search_plan(session, search)
+    query = apply_article_query_filters(
+        select(ArticleRecord), session=session, search_plan=search_plan, **filter_kwargs,
+    )
+    count_query = apply_article_query_filters(
+        select(func.count(ArticleRecord.id)), session=session, search_plan=search_plan, **filter_kwargs,
+    )
     analysis_conditions = [
         ArticleAnalysisRecord.article_id == ArticleRecord.id,
         or_(
@@ -585,6 +593,13 @@ def get_articles(
         )
         for record in records
     ]
+    if search_plan is not None:
+        # 逐条标注「因哪个标签命中」（只看读者看得见的标签）；仅标题/正文命中时为空列表。
+        for item in items:
+            article_id = item.get("id")
+            item["search_tag_hits"] = search_tag_hits(
+                search_plan, display_tags.get(article_id, []), tags.get(article_id, []),
+            )
     if with_unread:
         # 页级未读标记：只读现有水位（不写库）；水位由 /api/reader/unread-counts 挂载校准。
         # 全站范围(subscribed_scope!=only)与 unread_only 的过滤同尺子:无水位源按逐篇读态。
