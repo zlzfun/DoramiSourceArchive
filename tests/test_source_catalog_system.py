@@ -4,8 +4,11 @@
 ``SOURCE_FRIENDLY_NAMES`` / ``SOURCE_COLLECTIONS`` / ``DEFAULT_SUBSCRIPTION_SOURCE_IDS``),现在写在
 ``src/sources/catalog/system.toml`` 与 ``collections.toml``。守三件事:
 
-- 搬迁没有改变取值:墓碑与公共日报的视图同搬迁前代码里的算法;
-- 各消费方(取名、读者目录、收录保留 id、对账、合集、默认订阅)读的是目录;
+- 身份没有被搬错:七个墓碑的 id 与名称、公共日报的视图,对照的是搬迁前代码里的字面量与算法
+  (下面的 ``TOMBSTONES_AT_MIGRATION`` 与日报那条用例里的字面量),不是拿目录自己比自己;
+- 各消费方(取名、读者目录、收录保留 id、对账、合集、默认订阅)读的是目录。合集内容与默认订阅名单是会随
+  策展改动的数据,这里不再抄一份——它们搬迁时与旧常量逐字相等由基线对拍确认(方案 §12 末),
+  测试只守「消费方读目录」与引用完整性;
 - 保留文件缺失、写坏、或引用了目录里没有的源,加载就失败——注册表扫描前会把整个目录读一遍,
   所以进程起不来,而不是带着「没有墓碑」「没有默认订阅」的半份目录跑。
 """
@@ -27,25 +30,27 @@ from services import source_catalog  # noqa: E402
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# 搬迁时(2026-11-24)代码常量里的七个已下线源。墓碑只增不减:这里列的 id 必须一直在墓碑里,
-# 永远不回到现役源——历史归档还挂在这些 id 上。以后下线新的源不必改这张表。
-TOMBSTONES_AT_MIGRATION = frozenset({
-    "docs_gemini_api_changelog",
-    "docs_openai_api_changelog",
-    "github_qwen_code_releases",
-    "docs_alibaba_model_studio_announcements",
-    "web_bytedance_seed_models",
-    "x_ai_at_meta",
-    "x_openrouter",
-})
+# 搬迁时(2026-11-24)的七个已下线源:id 来自 registry.DECOMMISSIONED_FETCHER_IDS,名称来自
+# source_naming.SOURCE_FRIENDLY_NAMES(两个常量在基线 18fad018 里的字面量,逐字抄在这里)。
+# 墓碑只增不减:这里列的 id 必须一直在墓碑里、名称不变,永远不回到现役源——历史归档还挂在这些 id 上。
+# 以后下线新的源不必改这张表。
+TOMBSTONES_AT_MIGRATION = {
+    "docs_gemini_api_changelog": "Gemini API Changelog",
+    "docs_openai_api_changelog": "OpenAI API Changelog",
+    "github_qwen_code_releases": "Qwen Code Releases",
+    "docs_alibaba_model_studio_announcements": "阿里云百炼公告",
+    "web_bytedance_seed_models": "ByteDance Seed Models",
+    "x_ai_at_meta": "X · AI at Meta",
+    "x_openrouter": "X · OpenRouter",
+}
 
 
-# ── 搬迁没有改变取值 ─────────────────────────────────────────────────────────
+# ── 身份没有被搬错:对照搬迁前的字面量与算法 ───────────────────────────────────
 
 
 def test_tombstones_only_grow_and_never_overlap_live_sources():
     loaded = catalog_files.loaded()
-    assert TOMBSTONES_AT_MIGRATION <= set(loaded.tombstones) == source_catalog.tombstone_ids()
+    assert set(TOMBSTONES_AT_MIGRATION) <= set(loaded.tombstones) == source_catalog.tombstone_ids()
     assert not set(loaded.tombstones) & set(loaded.sources)
     assert not set(loaded.tombstones) & set(fetcher_registry._fetchers)        # 下线 = 类也删了
     assert all(entry.name.strip() for entry in loaded.tombstones.values())
@@ -54,10 +59,15 @@ def test_tombstones_only_grow_and_never_overlap_live_sources():
 @pytest.mark.parametrize("source_id", sorted(TOMBSTONES_AT_MIGRATION))
 def test_tombstone_view_equals_what_the_code_used_to_derive(source_id):
     """搬迁前:名称查 ``SOURCE_FRIENDLY_NAMES``,形态 / 平台 / 条目类型按 ``x_`` 前缀推;现在逐条写明。"""
+    from services import source_naming
+
     is_x = source_id.startswith("x_")
+    legacy_name = TOMBSTONES_AT_MIGRATION[source_id]
     view = source_catalog._builtin_view(source_id)
     assert view.origin == source_catalog.ORIGIN_CATALOG
-    assert view.name == catalog_files.loaded().tombstones[source_id].name != source_id
+    assert view.name == legacy_name
+    assert catalog_files.loaded().tombstones[source_id].name == legacy_name
+    assert source_naming.friendly_source_name(source_id) == legacy_name
     assert (view.shape, view.platform, view.content_type) == (
         ("social", "x", "social_post") if is_x else ("article", "", "")
     )
