@@ -31,7 +31,7 @@ Every newly admitted source batch starts with `admission = "incubating"` in its 
 - The source is default-visible, subscribable, and manually fetchable — but **excluded from the daily auto-collection job** (`scripts/ensure_daily_collection_job.py` excludes `admission_status = "incubating"` nodes alongside `is_template` nodes).
 - The 源管理 board shows an 「观察」 badge on incubating sources for focused review.
 - Promotion (转正): after fetch-quality review over a few manual/observed runs (body cleanliness, dates/order, dedup, no boilerplate leakage — see `node_audit_playbook.md`), change that source's `admission` to `"admitted"` in its catalog entry. Every source carries its own `admission` line — there is no batch-level default any more (the X presets used to inherit incubation from `PresetXTimelineFetcher`), so promoting one source cannot promote its siblings. Then update the admission snapshot assertion in `tests/test_rss_fetcher.py`, and re-run `ensure_daily_collection_job.py` to admit it into the daily schedule. A `SourceConfig` row is promoted with `PUT /api/source-configs/{source_id}` `{"admission_status": "admitted"}`; catalog re-imports keep that choice.
-- Demotion: a source that fails review is removed from `ESSENTIAL_FETCHER_IDS` and recorded in its candidate file's Parking Lot with the reason (the class may stay for a later retry).
+- Demotion: a source that fails review is removed from the catalog — its `[[source]]` entry and its class are deleted together (a preset class cannot exist without a catalog entry), and if it ever archived items it gets a `[[tombstone]]` in `src/sources/catalog/system.toml` — and recorded in its candidate file's Parking Lot with the reason. A later retry re-adds the entry and the class: under the original id only if the source never got a tombstone; a tombstoned id is never reused (the loader refuses an id that is both live and a tombstone), so a retry of a tombstoned source takes a new id.
 
 ## Default Essential Sources
 
@@ -116,4 +116,4 @@ Future candidates should be recorded first in `docs/sources/candidates/` with th
 
 ## Operational Rule
 
-`src/fetchers/registry.py` exposes `ESSENTIAL_FETCHER_IDS`. A source must not become default-visible unless it is added to that whitelist and has a clear curation reason. The only registered non-essential fetchers should be generic advanced capabilities that support user-defined source configs.
+The curated source catalog (`src/sources/catalog/*.toml`) is the whitelist: a source is default-visible only if it has a `[[source]]` entry there, which requires the v1.0 dimensions and an explicit `admission`. The only registered fetchers outside the catalog should be generic advanced capabilities (`is_template`) that support user-defined source configs. (Until issue #262 R2 the whitelist was a separate hand-written set, `ESSENTIAL_FETCHER_IDS` in `src/fetchers/registry.py`, that had to be kept in step with the classes.)

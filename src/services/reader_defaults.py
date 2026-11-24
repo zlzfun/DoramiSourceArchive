@@ -2,13 +2,15 @@
 
 读者账号登录点播种的默认订阅,此前是 ``api/app.py`` 的硬编码常量。落地页改成个人早报后,
 新用户第一份早报的观感完全取决于这份名单当天有没有过线稿,公网与内网两套部署对「大众」
-的理解也会分叉——名单因此改为 **代码缺省 + KV 覆盖**:
+的理解也会分叉——名单因此改为 **缺省 + KV 覆盖**:
 
-- ``DEFAULT_SUBSCRIPTION_SOURCE_IDS`` 是代码缺省(2026-09-14 按生产近两周逐源 ≥6.0 产量与
-  中文/头部官方优先重定:日报 + 中文三大媒体 + 英文日更主力 The Decoder + OpenAI/Anthropic/
-  DeepMind 官方 + X·OpenAI,播客暂不进);
+- ``DEFAULT_SUBSCRIPTION_SOURCE_IDS`` 是缺省名单,写在策展源目录文件
+  ``src/sources/catalog/system.toml`` 的 ``[reader_defaults]``(issue #262 R2;此前是本模块里的列表
+  字面量,接口里仍叫 ``code_default``)。2026-09-14 按生产近两周逐源 ≥6.0 产量与中文/头部官方优先重定:
+  日报 + 中文三大媒体 + 英文日更主力 The Decoder + OpenAI/Anthropic/DeepMind 官方 + X·OpenAI,播客暂不进;
+  名单里的 id 必须是目录里的现役策展源或系统源,目录加载时校验;
 - KV ``reader_default_source_ids``(JSON 数组)存在即整体覆盖,管理面 运维 → 内容 编辑;
-  删除该 KV 即回落代码缺省。空数组是合法值(= 新账号不播种任何订阅)。
+  删除该 KV 即回落缺省。空数组是合法值(= 新账号不播种任何订阅)。
 
 只影响播种时刻:存量账号不回填,退订过的不复活(播种一次性标记见 ``ensure_default_subscriptions``)。
 """
@@ -22,21 +24,12 @@ from sqlmodel import Session, select
 
 from models.db import AppSettingRecord, SourceConfigRecord
 from services import daily_brief as daily_brief_service
+from services import source_catalog
 
 PRIVATE_SOURCE_PREFIX = "user_rss_"  # 与 personal_digest / user_sources 同值,不反向 import 防循环
 DEFAULT_SOURCE_IDS_KEY = "reader_default_source_ids"
 
-DEFAULT_SUBSCRIPTION_SOURCE_IDS: List[str] = [
-    daily_brief_service.DAILY_BRIEF_SOURCE_ID,  # 哆啦美·AI资讯日报(全站聚合;不进早报候选池,是文章容器的主菜)
-    "web_qbitai",                   # 量子位(中文媒体)
-    "web_ithome_ai",                # IT之家 AI(中文快讯)
-    "web_aiera",                    # 新智元(中文媒体)
-    "rss_the_decoder",              # The Decoder(英文日更,早报供给压舱石)
-    "rss_openai_news",              # OpenAI 官方
-    "web_anthropic_news",           # Anthropic 官方
-    "rss_deepmind_blog",            # Google DeepMind 官方
-    "x_openai",                     # X · OpenAI(社交容器)
-]
+DEFAULT_SUBSCRIPTION_SOURCE_IDS: List[str] = list(source_catalog.default_subscription_ids())
 
 
 def normalize_source_ids(raw: Iterable[Any]) -> List[str]:

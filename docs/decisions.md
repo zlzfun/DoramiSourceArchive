@@ -349,7 +349,7 @@
 - 决策:推文图存 extensions_json.media_urls 不塞正文;exclude=replies 保留 RT/quote;since_id 增量;$5 月预算守卫到顶即停 — §2.4 / §2.5
 - 决策:不展示点赞/转发数(快照过时即错误信息,字段照常入库);时间戳即原推链接;社交流不计 reads 只维护已读态 — §3
 - 不做:全批 incubating 不进每日采集 job、不进日报名单 — §2.6
-- 不做:明确不收 @cohere / @AndrewYNg / @elonmusk;@MistralAI / @huggingface 降候补;x_ai_at_meta / x_openrouter 成本压缩下线并登记 DECOMMISSIONED_FETCHER_IDS — §1
+- 不做:明确不收 @cohere / @AndrewYNg / @elonmusk;@MistralAI / @huggingface 降候补;x_ai_at_meta / x_openrouter 成本压缩下线并登记 DECOMMISSIONED_FETCHER_IDS(2026-11-24 起墓碑名单在 `src/sources/catalog/system.toml`) — §1
 - 不做:跨容器去重首版不做记 backlog;thread 截断(self-thread 算 reply)首版接受;取缔「今日」混合容器 — §1 / §2.5 / §4.6
 - 触发:观察期看发帖频率/有效占比/与文章流重复率/thread 截断率/配额消耗 → 转正/淘汰/开第二批/是否做跨容器去重 — §5
 
@@ -359,7 +359,7 @@
 - 关联 issue:无
 - 决策:合集是目录呈现层策展视图 + 批量动作,不是新订阅实体;订阅粒度仍 source_id,feed/MCP/未读/隐藏链路不感知合集 — §0
 - 决策:「订阅合集」= 一次性批量订阅当前成员,后续新增成员不自动推送;退订合集会退掉同属多合集的源,确认时如实列出 — §0
-- 决策:策展存储为代码注册表 services/source_collections.py(与 preset fetcher「代码即记录」同路线,git 即审计) — §1
+- 决策:策展存储为代码注册表 services/source_collections.py(与 preset fetcher「代码即记录」同路线,git 即审计) — §1 → 2026-11-24 被 issue #262 R2 取代:存储搬到 `src/sources/catalog/collections.toml`(仍是改文件 + 部署、git 即审计),模块只留读取与序列化
 - 决策:GET /api/reader/collections 轻载荷由前端与 sources 目录 join;批量订阅跳过隐藏/不存在成员不整体 404,单事务 — §2
 - 决策:后端模块名一律 source_collections(collection 已被采集任务占用),UI 词「合集」;合集须答「为什么一起看」不复刻角色/形态轴 — §2 / §6
 - 不做:「跟随合集」持久绑定(membership 表 + 重算订阅域)本波不做 — §0
@@ -395,7 +395,7 @@
 
 ### 源模型重构与收录推送(issue #262) — [方案](plans/issue-262-source-model-refactor.md) · [收录方案](plans/issue-262-agent-ingest-sources.md)
 
-- 落地:PR #270 / #271 / #272(2026-11-09 合入,v3.68.0 发布;迁移 `c5e1a7b3d9f2` / `d7f3b9e2a614` / `e2a9c4f7b183` / `f3b8d1c6a925`);R1a 余项 2026-11-24 实现(PR #335,无迁移);R2 首块 2026-11-24 实现(PR #337,预设源身份搬进 `src/sources/catalog/*.toml`,无迁移);R2 余下部分 / R3 在后续 PR,未开工
+- 落地:PR #270 / #271 / #272(2026-11-09 合入,v3.68.0 发布;迁移 `c5e1a7b3d9f2` / `d7f3b9e2a614` / `e2a9c4f7b183` / `f3b8d1c6a925`);R1a 余项 2026-11-24 实现(PR #335,无迁移);R2 首块 2026-11-24 实现(PR #337,预设源身份搬进 `src/sources/catalog/*.toml`,无迁移),两者随 v3.70.4 发版;R2 第二块 2026-11-24 实现(PR #338,白名单 / 墓碑 / 合集 / 默认订阅缺省收进目录文件,无迁移);R2 余下部分 / R3 在后续 PR,未开工
 - 关联 issue:#262
 - 决策(2026-11-06 用户按推荐拍板 E1–E7、D1–D8):三层模型——源(`source_configs` 扩列,沿用表名)/ 采集绑定(行上 0..1,空 = 无绑定)/ 抓取器(注册表,R3 后不带身份);卡片是源的视图,推送 / 手工 / 同步是通道不是绑定 — 重构 §1
 - 决策:每个 `articles.source_id` 恰有一行源;外网启动对账生成预设镜像行、系统行、墓碑与孤儿回填,写入闸同事务补建;被引用的源删除改退役;内网从不本地写公共源行 — 重构 §1.3 / §12 → 「内网从不本地写公共源行」已被 issue #263 取代(每台节点都跑对账、都可新建公共源)
@@ -411,8 +411,10 @@
 - 触发:先推送、后来抓取器在同源用另一个链接抓到同一篇会落两行(抓取路径不动)——发现真实例子再评估;需要补录公共日报 → 为日报单开入口 — 收录 §11、backlog
 - 决策:注入通道建的源 `legacy_export=False`——旧内网的表现与改动前导入内容相同,推送不需要等内网升级的开关 — 重构 §12
 - 决策:未登记源的角色兜底前后端统一为「媒体」;前端临时源单列「收录」组 — 收录 D8 / §10
-- 决策:X 社交波「双路径 preset 类 + config 源」与源合集「策展存储为代码注册表」将由 R2 目录文件取代(R2 落地时在此标注) → 2026-11-24 R2 首块:预设源的身份已出代码(类还在,只写怎么抓);合集仍在代码里,等 R2 余下部分
+- 决策:X 社交波「双路径 preset 类 + config 源」与源合集「策展存储为代码注册表」将由 R2 目录文件取代(R2 落地时在此标注) → 2026-11-24 R2 首块:预设源的身份已出代码(类还在,只写怎么抓);合集仍在代码里,等 R2 余下部分 → 2026-11-24 R2 第二块:合集已搬进 `src/sources/catalog/collections.toml`
 - 决策(2026-11-24,R2 首块):预设源的身份(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)写在 `src/sources/catalog/<前缀>.toml`,抓取器类只写怎么抓;类定义时(`BaseFetcher.__init_subclass__`)回投到类属性,读类属性的代码不变。准入每条必填、没有整批默认值;目录结构错误、或 `fetchers/impl` 里的预设类缺目录条目,启动即失败(不走注册表「单个模块加载失败只告警」的隔离);在代码里再写身份属性由守卫拦 — 重构 §12、`tests/test_source_catalog_files.py`
+- 决策(2026-11-24,R2 第二块):「进过审阅的策展源」只有一份名单——目录里的 `[[source]]`,手写白名单 `ESSENTIAL_FETCHER_IDS` 删除;已下线源的墓碑(连同名称)、公共日报这个系统源的身份、新账号默认订阅的缺省名单写在 `system.toml`,源合集写在 `collections.toml`;业务代码经 `services/source_catalog` 读,加载器只有抓取器层与读服务直接用。保留文件缺失、墓碑与现役源重 id、合集或默认订阅引用了目录里没有的源,启动即失败;墓碑名单读不到时报错,不当成「没有墓碑」放行 — 重构 §12、`tests/test_source_catalog_system.py`
+- 不做(2026-11-24):`default_visible` / `curation_reason` 两个无消费方的注册元数据字段本块不删(对外输出不变),留到 R3a 元数据瘦身;`daily` 不在本块显式化(与准入解耦会让转正要改两处,和镜像行改由文件对账一起做) — 重构 §12
 - 决策(2026-11-24):目录文件用 TOML,Python 3.10 上以条件依赖 `tomli` 解析——`requires-python` 维持 >=3.10,不为此抬高最低版本 — 重构 §12 检视 #3
 - 不做(2026-11-24,R2 首块):`daily` / `identity_keys` / `binding` 三个目录键——`daily` 仍由准入推出,身份键与绑定参数仍在类上,分别等 R2 余下部分与 R3 — 重构 §12
 - 不做:「无源」条目;Agent 写入 MCP 工具;临时源按条目数自动晋升;付费 ASR 对临时源放开 — 收录 §8

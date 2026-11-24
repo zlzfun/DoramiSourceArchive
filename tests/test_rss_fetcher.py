@@ -35,7 +35,8 @@ from fetchers.impl.rss_fetcher import (
     TestingCatalogRssFetcher as CatalogRssFetcher,
     TheDecoderRssFetcher,
 )
-from fetchers.registry import ESSENTIAL_FETCHER_IDS, fetcher_registry
+from fetchers import catalog_files
+from fetchers.registry import fetcher_registry
 
 
 class DummyResponse:
@@ -735,7 +736,7 @@ def test_hn_popular_blogs_presets_are_visible_incubating_and_classified():
 
     for fetcher_class in fetcher_classes:
         source_id = fetcher_class.source_id
-        assert source_id in ESSENTIAL_FETCHER_IDS
+        assert source_id in catalog_files.catalog()
         item = metadata_by_id[source_id]
         assert item["admission_status"] == "incubating"
         assert item["default_visible"] is True
@@ -818,7 +819,7 @@ def test_second_expansion_rss_presets_are_registered_with_complete_curation_meta
         "fetch_reliability",
     )
 
-    assert expected_ids <= ESSENTIAL_FETCHER_IDS
+    assert expected_ids <= set(catalog_files.catalog())
     assert expected_ids <= metadata_by_id.keys()
     # 观察期(incubating):新节点批次集中观察、不进每日自动采集(curation_policy「Incubation」节)。
     # 质量验收转正时删掉类上的 admission_status 行,并同步把本断言改为 admitted——这是转正的显式护栏。

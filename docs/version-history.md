@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **白名单 / 墓碑 / 合集 / 默认订阅收进目录文件(issue #262 R2 第二块,PR #338,2026-11-24,开发版 3.70.5-alpha,纯后端)**:散在代码里的五个源级常量搬进策展源目录——手写白名单 `ESSENTIAL_FETCHER_IDS` 删除(「进过审阅」= 目录里有 `[[source]]`);已下线源的墓碑与名称、公共日报的身份、新账号默认订阅的缺省名单写进 `src/sources/catalog/system.toml`,源合集写进 `collections.toml`。业务代码经 `services/source_catalog` 读;保留文件缺失或引用了目录里没有的源,启动即失败。下线一个源从改四处变成「删类 + 删条目 + 加墓碑」。无迁移、不动同步流;三份库对拍与类属性快照改动前后相同。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **预设源的身份搬进目录文件(issue #262 R2 首块,PR #337,2026-11-24,开发版 3.70.4-alpha,纯后端)**:62 个预设源的名称 / 图标 / 简介 / 形态 / 准入 / 策展维度从抓取器类属性搬进 `src/sources/catalog/<前缀>.toml`(六个文件),抓取器类只写怎么抓;类定义时把目录值回投到类属性,读类属性的代码不变。准入每条必填、没有整批默认值;目录结构错误或预设类缺条目,启动即失败。加策展源 = 目录加一条 + 一个带 `source_id` 的类;转正 = 改那一条的 `admission`。无迁移、不动同步流;类属性快照与三份库对拍改动前后相同。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **精品导读语音:等回执锁不占线程(issue #334,2026-11-24,开发版 3.70.4-alpha,纯后端)**:#326 上线当天,13 期导读的容量等待同一分钟到期,外网后台任务停摆 17 分钟——文章分析、播客转写 worker、入队巡检、存储维护、个人早报待处理全部被跳过。根因:每期导读一个协程任务,拿回执目录锁的两步(容量预检、合成)各自先进线程再阻塞等锁,而合成全程持锁约 100 秒;2 核机器的共享线程池只有 6 个线程,被等锁的导读占满。现在同一进程里的调用先在协程层按到达顺序排队,轮到的那一个才进线程,语音这一段占用的共享线程固定为每个事件循环、每个回执目录至多一个;轮次到线程结束才交还,取消不会让下一个再放线程进去等。文件锁、回执、账本都不变,无迁移。方案 [`docs/archive/issue-334-tts-receipt-queue.md`](archive/issue-334-tts-receipt-queue.md)。
 - **业务代码读源的身份只经源目录(issue #262 R1a 余项,PR #335,2026-11-24,开发版 3.70.4-alpha,纯后端重构)**:取名与角色、路由层源元数据、早报 / 事件榜 / 事件归并的角色与形态、内容类型先验、MCP `list_sources`、OPML、X 配额探针、系统源撞库、收录的身份解析与站点索引、每日采集任务脚本,原先各自直接读抓取器注册表,现在统一经 `services/source_catalog`;直接引用 `fetcher_registry` 的文件由守卫名单登记(只许减)。无迁移、不动同步流;基线与分支在开发库副本上逐项对拍零差异。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
@@ -116,6 +117,20 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
+
+## issue #262 R2 第二块:白名单 / 墓碑 / 合集 / 默认订阅收进目录文件(PR #338,分支 `feat/issue-262-catalog-constants`,开发版 3.70.5-alpha,版本号以实际发版为准)
+
+起因:R2 首块把预设源的身份搬进了目录文件,但「有哪些策展源」周边的名单还散在五个代码常量里,而且互相重复——手写白名单 `ESSENTIAL_FETCHER_IDS` 恰好等于全部预设源(加源要改两处);已下线源的名单在 `registry.py`,它们的名称另在 `source_naming.py` 再写一份;合集和默认订阅的缺省名单各在自己的模块里。下线一个源要改四处,漏一处就是「下线的源回到读者目录」或「历史文章的来源显示成裸 id」。
+
+**做法**:目录下加两个保留文件。`system.toml` 放 `[[system]]`(公共日报这个不经抓取器产出的系统源)、`[[tombstone]]`(七个已下线源:名称、形态、平台逐条写明,此前形态按 `x_` 前缀推)、`[reader_defaults]`(新账号默认订阅的缺省名单,运维的 KV 覆盖照旧);`collections.toml` 放五个 `[[collection]]`。加载器 `catalog_files.load()` 读全部文件并核对引用:墓碑不与现役源重 id、合集成员必须是现役策展源、默认订阅必须是现役策展源或系统源、代码按 id 引用的系统源必须在。`ESSENTIAL_FETCHER_IDS` 与空字典 `FOCUSED_FETCHER_CURATION` 删除,注册元数据里的 `default_visible` / `curation_reason` 改按「在不在目录里」判定,输出不变。业务代码经 `services/source_catalog`(`tombstone_ids` / `builtin_name` / `collection_entries` / `default_subscription_ids`)读,阅读器路由不再从注册表模块导入东西。
+
+**启动即失败**:注册表扫描前本来就要先取目录,现在取目录 = 把整个目录读一遍,所以保留文件缺失、合集引用了不存在的源和 `[[source]]` 写错一样让进程起不来。收录的保留 id 检查、对账建墓碑行以前在「注册表导入失败」时把墓碑名单当成空集,现在读不到就报错(正常运行的进程里走不到)。
+
+**没做**:`default_visible` / `curation_reason` 两个没有消费方的字段留到 R3a;`daily` 显式、对账把已进墓碑的既有行标退役、「目录里消失但没进墓碑」的快照守卫,和「镜像行改由文件直接对账」一起做;播客目录并入等差异报告。
+
+**验证**:对拍工具加了 11 组本块的输出(含启动对账预览:对账会写出的全部源行、台账、身份键),57 组函数级输出 + 35 个只读接口 × 三种身份,基线 `18fad018` 与分支在两份合成库和开发库副本上零差异;类属性快照逐字相同。新测试 `tests/test_source_catalog_system.py`,边界守卫加两条(谁可以直接用加载器、旧常量名不许回到代码里);七组反向对照全部被拦。Codex(`gpt-6-astra` / ultra)两轮检视:首轮未发现 P1 / P2,两条 P3(墓碑名称的断言改为对照搬迁前的字面量、下线后重试的文档口径)修订后复检通过。
+
+**版本**:v3.70.4 于同日发版(含本 issue 的 R1a 余项与 R2 首块),本块是发版后的第一波,开发版改为 3.70.5-alpha。
 
 ## issue #262 R2 首块:预设源的身份搬进目录文件(PR #337,分支 `feat/issue-262-catalog-files`,开发版 3.70.4-alpha,版本号以实际发版为准)
 

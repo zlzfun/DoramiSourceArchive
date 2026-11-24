@@ -27,6 +27,11 @@
 两层按自己的顺序取(角色看行、形态早报与事件榜看行而事件归并看类、主体看类)。``layers`` 把两层
 原样交出去,``info_role`` / ``reader_shape`` 是这些口径的唯一写法,与 ``[sources] model`` 无关。
 把它们统一成「一律以行为准」是 full 模式的事,不在 R1a。
+
+**目录文件里的系统级条目**(R2):系统源(公共日报)、已下线源的墓碑、源合集、新账号默认订阅的缺省
+名单写在 ``src/sources/catalog/system.toml`` 与 ``collections.toml``,不再是散在各模块的常量;
+业务代码经这里的 ``tombstone_ids`` / ``builtin_name`` / ``collection_entries`` /
+``default_subscription_ids`` 读,``fetchers.catalog_files`` 只有抓取器层与本模块直接用。
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from typing import Iterable, Mapping, Optional
 
 from sqlmodel import Session, select
 
+from fetchers import catalog_files   # 只依赖标准库的目录文件加载器,不会连带导入注册表
 from models.db import SourceConfigRecord
 from services.source_naming import DEFAULT_SOURCE_ROLE, _role_from_metadata
 
@@ -367,35 +373,61 @@ def podcast_catalog_source(source_id: str):
         return None
 
 
-def _builtin_view(source_id: str) -> Optional[SourceView]:
-    """没有行也没有注册表类的内建 id:公共日报、下线墓碑、播客目录常量。"""
-    if source_id == DAILY_BRIEF_SOURCE_ID:
-        from services.source_naming import SOURCE_FRIENDLY_NAMES
+# ── 目录文件里的系统级条目:系统源 / 墓碑 / 合集 / 默认订阅 ──────────────────────
 
+# 系统源产出的条目类型是代码里的事实(谁写的条目谁知道),不进目录文件。
+_SYSTEM_CONTENT_TYPES = {DAILY_BRIEF_SOURCE_ID: "daily_brief"}
+_TOMBSTONE_CONTENT_TYPES = {"social": "social_post", "podcast": "podcast_episode"}
+
+
+def tombstone_ids() -> frozenset[str]:
+    """已下线的策展源:类与目录条目已删,历史归档仍在。读者目录不回流、收录通道不写入、对账建退役行。"""
+    return frozenset(catalog_files.loaded().tombstones)
+
+
+def builtin_name(source_id: str) -> str:
+    """没有抓取器类的内建 id(系统源、墓碑)在目录里登记的名称——历史文章的来源展示要可读名;
+    不是内建 id 返回空串。"""
+    files = catalog_files.loaded()
+    entry = files.system.get(source_id) or files.tombstones.get(source_id)
+    return entry.name if entry is not None else ""
+
+
+def collection_entries() -> tuple[catalog_files.CollectionEntry, ...]:
+    """源合集(目录文件里的顺序)。成员都是目录里的现役策展源,加载时已校验。"""
+    return catalog_files.loaded().collections
+
+
+def default_subscription_ids() -> tuple[str, ...]:
+    """新账号默认订阅的缺省名单(有序);运维的 KV 覆盖在 ``services.reader_defaults``。"""
+    return catalog_files.loaded().default_subscriptions
+
+
+def _builtin_view(source_id: str) -> Optional[SourceView]:
+    """没有行也没有注册表类的内建 id:系统源(公共日报)、下线墓碑、播客目录常量。"""
+    files = catalog_files.loaded()
+    system = files.system.get(source_id)
+    if system is not None:
         return SourceView(
             source_id=source_id,
             origin=ORIGIN_SYSTEM,
-            name=SOURCE_FRIENDLY_NAMES.get(source_id, source_id),
-            shape="article",
-            content_type="daily_brief",
-            source_owner="dorami",
-            source_scope="aggregator",
-            provenance_tier="tier1_curated",
+            name=system.name,
+            shape=system.shape,
+            content_type=_SYSTEM_CONTENT_TYPES.get(source_id, ""),
+            source_owner=system.owner,
+            source_scope=system.scope,
+            provenance_tier=system.tier,
             fetcher_id="",
         )
-    try:
-        from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
-        from services.source_naming import SOURCE_FRIENDLY_NAMES
-    except Exception:  # noqa: BLE001
-        DECOMMISSIONED_FETCHER_IDS, SOURCE_FRIENDLY_NAMES = frozenset(), {}
-    if source_id in DECOMMISSIONED_FETCHER_IDS:
+    tombstone = files.tombstones.get(source_id)
+    if tombstone is not None:
         return SourceView(
             source_id=source_id,
             origin=ORIGIN_CATALOG,
-            name=SOURCE_FRIENDLY_NAMES.get(source_id, source_id),
-            shape="social" if source_id.startswith("x_") else "article",
-            content_type="social_post" if source_id.startswith("x_") else "",
-            platform="x" if source_id.startswith("x_") else "",
+            name=tombstone.name,
+            shape=tombstone.shape,
+            content_type=_TOMBSTONE_CONTENT_TYPES.get(tombstone.shape, ""),
+            platform=tombstone.platform,
             retired_at="decommissioned",
             is_active=False,
         )

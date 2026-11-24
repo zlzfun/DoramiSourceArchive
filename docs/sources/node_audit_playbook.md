@@ -173,14 +173,16 @@ Do not confuse "no new posts" with an outage: `web_anthropic_news` returned `fet
   处理细节——发现页源卡直出这段文案(读者面不漏采集词汇纪律);`is_template=True` 的通用
   模板源仅后端可见,不受此限。
 - **取名的运行时单点**:现役源名一律从 registry 现取(`vector_storage.friendly_source_name`,
-  chunk 头部/RAG 来源/目录兜底共用);`SOURCE_FRIENDLY_NAMES` 只登记非注册表源(日报特殊源 +
-  下线归档源,名单同步 `DECOMMISSIONED_FETCHER_IDS`)。**删类下线一个节点时在此补一行友好名**。
+  chunk 头部/RAG 来源/目录兜底共用);非注册表源(日报特殊源 + 下线归档源)的名称写在策展源目录文件
+  `src/sources/catalog/system.toml`(`[[system]]` / `[[tombstone]]`,issue #262 R2;此前是
+  `SOURCE_FRIENDLY_NAMES` 常量)。**删类下线一个节点时,它的墓碑条目里要写上名称**。
   改名后存量 chunk 头部仍是旧名,在意就 `reindex-all`。
 
 ## When to remove a node instead of fixing it
 
-Delete the node (delete the class and its entry in `src/sources/catalog/*.toml`, remove its id from `ESSENTIAL_FETCHER_IDS`, **and**
-add its id to `DECOMMISSIONED_FETCHER_IDS`) when either trigger fires:
+Delete the node (delete the class and its `[[source]]` entry in `src/sources/catalog/<prefix>.toml`, **and**
+add a `[[tombstone]]` entry — `id`, `name`, `shape`, and `platform` for social sources — to
+`src/sources/catalog/system.toml`) when either trigger fires:
 
 - **Structural unfitness** — it can't produce correct chronological records with a reasonable fetcher: a static catalog with no dates/chronology, the same blob every fetch, or an entry point now hard-gated (WAF/SPA) with no cheap recovery.
 - **Redundancy** — the brand/topic is already covered by a higher-signal node, so the marginal node mostly duplicates.
@@ -190,12 +192,14 @@ Removing the class (not just hiding it) is the policy — see
 "registered but hidden" presets. Precedents: `docs_xai_models`,
 `web_bytedance_seed_models`, `web_jiqizhixin`.
 
-Registering the id in `DECOMMISSIONED_FETCHER_IDS` matters because the reader-side
+Adding the tombstone matters because the reader-side
 subscription catalog (`GET /api/reader/sources`) unions in every `source_id` that still
 has archived rows. A removed node's historical archive would otherwise leak back as a
 "fresh" subscribable source, leaving the 阅读器's source list out of sync with the slimmed
-节点管理. The denylist keeps the two surfaces aligned; already-subscribed users still see
-the node so they can unsubscribe.
+节点管理. The tombstone list keeps the two surfaces aligned; already-subscribed users still see
+the node so they can unsubscribe. The catalog loader refuses a tombstone whose id is still a live
+`[[source]]`, and tombstones are never removed (a retired id is not reused). Until issue #262 R2 this
+list was the `DECOMMISSIONED_FETCHER_IDS` constant in `src/fetchers/registry.py`.
 
 ## Fix discipline
 

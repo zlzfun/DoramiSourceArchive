@@ -54,7 +54,6 @@ from api.sources import (
     source_shape,
     subscription_source_ids,
 )
-from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
 from llm.client import LLMError, UsageMeta
 from storage.fts import fts_search_ids
 from models.db import (
@@ -87,6 +86,7 @@ from services import rankings as rankings_service
 from services import ranking_picks as ranking_picks_service
 from services import reader_state as reader_state_service
 from services import token_usage as token_usage_service
+from services import source_catalog as source_catalog_service
 from services import source_collections as source_collections_service
 from services import subscription_mutations as subscription_mutations_service
 from services import source_visibility as source_visibility_service
@@ -1427,7 +1427,7 @@ def _reader_sources_catalog(
     #     只对已订阅者保留(退订入口),不回流目录。
     retired_ids = {
         source_id for source_id, meta in configured_meta.items() if meta.get("retired")
-    } | set(DECOMMISSIONED_FETCHER_IDS)
+    } | set(source_catalog_service.tombstone_ids())
     for source_id in configured_meta:
         if source_id in retired_ids and source_id not in subscribed_ids:
             continue

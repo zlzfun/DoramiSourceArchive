@@ -21,7 +21,7 @@ For *which* nodes are default-visible and *why*, see [curation_policy.md](./cura
 
 | Group | Count | Notes |
 | --- | ---: | --- |
-| Default-visible nodes | 62 | The exact set in `ESSENTIAL_FETCHER_IDS` (including 38 incubating sources). |
+| Default-visible nodes | 62 | The exact set of `[[source]]` entries in `src/sources/catalog/*.toml` (including 38 incubating sources). |
 | Generic advanced fetchers | 6 | Runtime-configured RSS / web / GitHub releases / GitHub repos / HF models / X timeline. Hidden by default. |
 | Historical concrete presets | 0 | Removed from `src/fetchers/impl`, not merely hidden. |
 

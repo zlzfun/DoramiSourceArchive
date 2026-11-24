@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2 首块(预设源的身份搬进目录文件 + 类定义时回投)2026-11-24 实现(PR #337,分支 `feat/issue-262-catalog-files`),记录见 §12 末;R2 余下部分与 R3a / R3b 未开工;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2 首块(预设源的身份搬进目录文件 + 类定义时回投)2026-11-24 实现(PR #337,分支 `feat/issue-262-catalog-files`),记录见 §12 末;这两块随 v3.70.4 发版(2026-11-24);R2 第二块(散在代码里的源级常量收进目录文件)2026-11-24 实现(PR #338,分支 `feat/issue-262-catalog-constants`),记录见 §12 末;R2 余下部分(镜像行改由目录文件直接对账、`daily` 显式、播客目录并入、管理面目录字段只读)与 R3a / R3b 未开工;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -95,6 +95,8 @@
 | `PODCAST_CATALOG`(37) | 常量 → 行 | 目录文件播客段;并入方式见 §3.2 |
 | `dorami_daily_brief` | 特殊常量 | 目录文件系统段(`origin=system`,无绑定) |
 | 每日采集默认范围 | 脚本按「注册表里非模板、非观察期」枚举(`ensure_daily_collection_job.py:103`) | **独立政策**:目录条目显式 `daily = true`;R1c 投影与今天的集合逐个相等,扩围另行拍板 |
+
+> 2026-11-24 注:本表除 `PODCAST_CATALOG`(等差异报告逐条过)与每日采集默认范围(`daily` 显式)两行外,已随 R2 第二块落地,各常量的去向与读法见 §12 末。
 
 ## 3. 目录文件与同步
 
@@ -438,3 +440,46 @@ shape = "article"
 另:实现方自查把加载器从顶层包 `sources` 挪到 `fetchers/catalog_files.py`(`src/sources/` 只留数据)——顶层包名与 `api/sources.py` 同名,从 `src/api/` 目录直接跑脚本时会被遮住。
 
 **R2 首块的复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `2d101236`。六条逐条判「够」;未发现修订新引入的 P1。检视方另做的核对:不导入注册表时 62 个预设类的身份都已到位;`abc.ABC` 与合作式多重继承两种顺序下 `__init_subclass__` 都被调用,仓内没有截断调用链的覆写;继承 `source_id` 的替身、模板、`fetchers.impl` 之外的类没有被误伤;从基线重新加载代码对拍,69 个类 × 26 个属性、MRO、注册顺序与全部注册元数据仍完全一致;真实 `tomli` 的回退解析结果一致。观察两条:回退测试自身在真正的 3.10 上会先在 `import tomllib` 处失败(已顺手改成兼容导入);锁文件只带入两行在结构上完整,但 `uv lock --check` 在检视方的只读沙箱里跑不了,以 CI 的实际结果为准。检视方的 pytest 未能启动,全量套件由实现方本机跑(4125 条通过)。
+
+**R2 第二块:散在代码里的源级常量收进目录文件(2026-11-24,PR #338,分支 `feat/issue-262-catalog-constants`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §2.3 表里不依赖待定事项的几行:`ESSENTIAL_FETCHER_IDS`、`FOCUSED_FETCHER_CURATION`、`DECOMMISSIONED_FETCHER_IDS`(连同 `source_naming.SOURCE_FRIENDLY_NAMES` 里重复的那一份)、`SOURCE_COLLECTIONS`、`DEFAULT_SUBSCRIPTION_SOURCE_IDS` 的缺省值、`dorami_daily_brief` 的身份。纯后端:不改数据、无迁移、不动同步流、对外行为无变化。`PODCAST_CATALOG`(等差异报告)、每日采集默认范围(`daily` 显式)、镜像行改由文件直接对账、管理面目录字段只读不在本块。
+
+- **两个保留文件**(文件名不是源 id 的前缀,加载器按文件名分派):
+  - `src/sources/catalog/system.toml`:`[[system]]` 系统源(`id` / `name` / `shape` 必填,`owner` / `scope` / `tier` 可选;现有一条 `dorami_daily_brief`)、`[[tombstone]]` 已下线源(`id` / `name` / `shape` 必填,`platform` 可选;七条)、`[reader_defaults]` 的 `subscriptions`(新账号默认订阅的缺省名单,有序;空数组合法)。
+  - `src/sources/catalog/collections.toml`:`[[collection]]` 源合集(`id` 是 kebab 标识、`name`、`description`、`provenance_note`、`sources` 有序非空)。
+- **各常量的去向**:
+
+  | 常量 | 去向 | 现在怎么读 |
+  |---|---|---|
+  | `ESSENTIAL_FETCHER_IDS`(62) | 删除。它恰好等于目录里的全部 `[[source]]`,「进过审阅」= 在目录里有条目 | `registry.focused_curation_for` 按目录成员判定;注册元数据里 `default_visible` / `curation_reason` 两个字段的输出不变 |
+  | `FOCUSED_FETCHER_CURATION` | 删除(空字典,连同三条走不到的分支) | — |
+  | `DECOMMISSIONED_FETCHER_IDS`(7)与 `SOURCE_FRIENDLY_NAMES` 里的七个名称 | `system.toml` 的 `[[tombstone]]`;形态与平台逐条写明(此前按 `x_` 前缀推) | `source_catalog.tombstone_ids()` / `builtin_name()` / `_builtin_view()` |
+  | `dorami_daily_brief` 的名称与策展元数据 | `system.toml` 的 `[[system]]` | 同上。id 常量 `DAILY_BRIEF_SOURCE_ID` 仍在代码里(代码按 id 引用它,加载器要求目录里必须有这一条);它产出的条目类型 `daily_brief` 也仍在代码里 |
+  | `SOURCE_COLLECTIONS`(5) | `collections.toml` | `source_collections.list_collections()` / `get_collection()`(数据类与序列化不变) |
+  | `DEFAULT_SUBSCRIPTION_SOURCE_IDS`(9) | `system.toml` 的 `[reader_defaults]` | `reader_defaults.DEFAULT_SUBSCRIPTION_SOURCE_IDS` 这个模块属性保留,导入时取自目录;KV 覆盖与管理面接口(字段仍叫 `code_default`)不变 |
+
+- **加载与校验**(`fetchers/catalog_files.py`):`load()` 读源家族文件 + 两个保留文件并核对它们之间的引用。保留文件缺失、顶层出现不该有的表、缺键 / 未知键 / 类型不对 / `shape` 取值不合法 / id 重复、缺代码按 id 引用的系统源、墓碑与现役源或系统源重 id、合集 id 不是 kebab、合集成员为空 / 重复 / 不是目录里的现役策展源、默认订阅里有不是现役策展源或系统源的 id——一律抛 `CatalogError`。`catalog()`(注册表扫描前调一次、每个预设类定义时也调)现在等于把整个目录读一遍,所以这些错误和 `[[source]]` 的错误一样让进程起不来:少了 `system.toml` 不会变成「没有墓碑、下线的源回到读者目录」。`load_catalog()` 仍只读源家族文件(保留文件不是 `system_*` / `collections_*` 源)。
+- **读的入口与守卫**:业务代码经 `services/source_catalog` 读(`tombstone_ids` / `builtin_name` / `collection_entries` / `default_subscription_ids`);`fetchers.catalog_files` 只有 `fetchers/base.py`、`fetchers/registry.py` 与 `source_catalog` 直接用。`api/routers/reader.py` 不再从 `fetchers.registry` 导入任何东西。`tests/test_source_catalog_boundary.py` 新增两条:直接引用加载器的文件名单;五个旧常量名不许在 `src/` `scripts/` 里再被定义、导入或取属性(按语法树判,文档串与注释里提到历史名字不算)。
+- **与改前不同的一处(有意)**:`ingest_policy._decommissioned_ids`、`source_rows._ensure_tombstone_rows`、`source_catalog._builtin_view` 以前在「注册表导入失败」时把墓碑名单当成空集——收录的保留 id 检查放行、对账不建墓碑行。现在名单来自只依赖标准库的加载器,读不到就抛错,不再有「当成没有墓碑」这条路。正常运行的进程里走不到(目录坏了进程起不来);取名(`source_naming.builtin_source_name`)仍按该模块「取名失败绝不阻断展示」的既有约定吞掉异常、回落到配置行名称与裸 id。
+- **没做**:
+  - `default_visible` / `curation_reason` 两个没有运行时消费方的输出字段留着(对外输出不变),R3a 元数据瘦身时一起删。
+  - `daily` 显式。它是镜像行上目录拥有的字段,今天与准入是同一件事(非模板 ∧ 正式);拆开意味着转正要改两处,和「镜像行改由文件直接对账」一起做。
+  - §3.2 的删除语义与 §3.3 的快照守卫:对账把「目录里已进墓碑、库里还没退役」的既有行标退役(现在 `_ensure_tombstone_rows` 只在行不存在时建)、「目录里消失但没进墓碑」直接失败。本块只守「墓碑只增不减、不与现役源重 id」。
+  - 合集成员限定为 `[[source]]`(今天五个合集的成员全是预设源);播客目录并入目录文件后自然可以引用。
+- **验证**:R1a 的对拍工具加了 11 组本块的输出(注册元数据全量、`focused_curation_for` 对全部 id × 两种标志、内建视图、合集列表与逐个查询、默认订阅的四种读法、回填行取名、启动对账预览——对账在这份库上会写出的全部源行、台账与身份键),共 57 组函数级输出 + 35 个只读接口 × 三种身份;基线 `18fad018` 与分支在空源表合成库、各来路齐全合成库、开发库副本上都是零差异(基线先自比一次确认输出确定)。注册表 69 个类的属性快照逐字相同。新测试 `tests/test_source_catalog_system.py`(搬迁时的七个墓碑一直在、视图同改前算法;各消费方读的是目录;保留文件 40 种结构错误逐一报错;缺保留文件时注册表扫描抛错;另起进程验证合集引用了不存在的源时注册表导入失败、同一份目录不改则正常导入)。反向对照七组全部被拦:删一个墓碑、旧常量回流、业务代码直读加载器、保留 id 检查吞异常、墓碑形态写错、默认订阅指向墓碑、合集成员写错。
+- **部署顺序与混版本**:不触及同步流的字段、枚举、导出范围或删除语义;墓碑行、系统行、镜像行的内容与改前逐行相同(对账预览)。两端任意顺序。目录文件随镜像与裸机两种部署形态发出(R2 首块已有守卫)。内网 `master` 相对合并基 `v3.70.3` 在本块触及的 8 个源码文件上没有改动,tag 同步不冲突,也没有内网独有的名单要保留。
+- **流程变化**:下线一个源 = 删类 + 删它的 `[[source]]` + 在 `system.toml` 加一条 `[[tombstone]]`(此前是删类、从白名单移除、墓碑名单加 id、另在取名表里补名称,四处);加源不再有白名单这一步;改合集、改默认订阅的缺省名单 = 改目录文件。`docs/sources/node_audit_playbook.md`、`curation_policy.md`、`node_catalog_and_risks.md`、`docs/contracts/reader_subscription.md`、`docs/architecture/fetchers-and-sources.md`、`code-map.md` 已同步。
+
+**R2 第二块的检视(2026-11-24)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Fable 5.2)。检视方从基线 `18fad018` 取旧常量在内存里对拍:62 个白名单 id、七个墓碑及名称、公共日报完整视图、五个合集的全部字符串与成员顺序、九项默认订阅及顺序都与目录一致;`focused_curation_for` 390 组输入(含「在目录里且 `is_template=True`」、墓碑、系统源、模板、陌生 id)与 69 个注册节点的完整元数据一致;112 个 id 在空源表与含同步 / 私有 / 退役行的内存库上,compat / full 两种读法的消费方输出、默认订阅四种 KV 情况、回填行、空库启动对账的源行 / 台账 / 身份键一致;缺任一保留文件、TOML 写坏、合集或默认订阅悬空引用都阻止 `api.app` 导入,取名的异常回退绕不过启动检查,只导入模型不触发目录加载,没有新导入环;17 类非法输入被加载器拒绝。pytest 因只读沙箱未能启动。首轮未发现 P1 / P2,两条 P3,全部接受、无分歧。
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P3 | 「搬迁取值不变」的部分断言是拿新目录自证:墓碑名称的预期取自目录,合集与默认订阅只验证「消费方 == 目录」,搬迁时抄错发现不了 | 墓碑名称钉成搬迁前的字面量表,视图、目录条目、取名都对它断言(做了抄错名称的反向对照);合集内容与默认订阅名单是会随策展改动的数据,不在测试里再抄一份——搬迁时的逐字相等由基线对拍与检视方的独立对拍确认;测试说明改准确 |
+| 2 | P3 | `curation_policy.md` 的 Demotion 写「重试时把条目与类加回来」,对已进墓碑的 id 会被加载器拒绝,也与「退役 id 不复用」矛盾 | 改为:没进过墓碑的源可以用原 id 回来,已进墓碑的源重试换新 id |
+
+观察(不改):语法树守卫不覆盖 `getattr` / `globals()` 这类动态写法,仓内没有这种写法。
+
+**R2 第二块的复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `3b3557c8`(源码没有改动)。两条逐条判「够」:七个墓碑名称的字面量与 `18fad018` 完全一致,检视方在内存里逐个改错七个名称都触发断言失败;Demotion 的说法与加载器及墓碑规则一致。对「合集内容与默认订阅名单不在测试里再抄一份」无异议——搬迁等价已有独立的基线对拍,长期测试守目录消费与引用完整性即可。未发现修订新引入的 P1;本段上方对首轮核对内容的转述经检视方确认准确。检视方的 pytest 两轮都未能启动(只读沙箱),全量套件由实现方本机跑:首轮提交前与修订后各一遍,都是 4200 条通过、1 条跳过。
+
+合入前主干多了发版提交 `release: v3.70.4`(含 R1a 余项与 R2 首块);本块合并主干后按「发版后第一波」把开发版改为 3.70.5-alpha(`src/version.py` / `pyproject.toml` / `uv.lock` 根包行)。

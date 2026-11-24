@@ -36,7 +36,7 @@ CORE = {"src/fetchers/registry.py", "src/services/source_catalog.py"}
 EXECUTION_LAYER_MAY_CALL = {"get_class"}
 
 
-def _referencing_files() -> set[str]:
+def _referencing_files(pattern: re.Pattern = _REFERENCE) -> set[str]:
     found: set[str] = set()
     for top in _SCANNED:
         for folder, _dirs, files in os.walk(os.path.join(_ROOT, top)):
@@ -47,7 +47,7 @@ def _referencing_files() -> set[str]:
                     continue
                 path = os.path.join(folder, name)
                 with open(path, encoding="utf-8") as handle:
-                    if _REFERENCE.search(handle.read()):
+                    if pattern.search(handle.read()):
                         found.add(os.path.relpath(path, _ROOT).replace(os.sep, "/"))
     return found
 
@@ -81,3 +81,83 @@ def test_execution_layer_files_only_resolve_classes():
         "执行层文件只许调 fetcher_registry.get_class;枚举 / 读元数据请经 services.source_catalog:"
         f"{offenders}"
     )
+
+
+# ── 目录文件加载器(R2):只有抓取器层与读服务直接用 ─────────────────────────────
+
+_CATALOG_FILES = re.compile(r"\bcatalog_files\b")
+CATALOG_FILES_ALLOWED = {
+    "src/fetchers/base.py": "类定义时把目录里的身份回投到类属性",
+    "src/fetchers/registry.py": "扫描前先把目录读一遍;派生 default_visible",
+    "src/services/source_catalog.py": "读目录的唯一业务入口(墓碑 / 系统源 / 合集 / 默认订阅)",
+}
+# 搬进目录文件的旧常量:不许再在代码里定义或导入(文档串里提到历史名字不算)。
+RETIRED_CONSTANTS = (
+    "ESSENTIAL_FETCHER_IDS",
+    "FOCUSED_FETCHER_CURATION",
+    "DECOMMISSIONED_FETCHER_IDS",
+    "SOURCE_FRIENDLY_NAMES",
+    "SOURCE_COLLECTIONS",
+)
+
+
+def retired_constant_uses(source: str) -> list[str]:
+    """源码里对旧常量的「定义」或「导入 / 取属性」;只在注释与文档串里出现的不算。"""
+    import ast
+
+    names = set(RETIRED_CONSTANTS)
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id in names:
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute) and node.attr in names:
+            found.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.update(alias.name.split(".")[-1] for alias in node.names if alias.name.split(".")[-1] in names)
+            found.update(alias.asname for alias in node.names if alias.asname in names)
+    return sorted(found)
+
+
+def test_only_the_fetcher_layer_and_the_read_service_load_catalog_files():
+    found = _referencing_files(_CATALOG_FILES)
+    unexpected = sorted(found - set(CATALOG_FILES_ALLOWED))
+    assert not unexpected, (
+        "这些文件直接用了 fetchers.catalog_files;墓碑 / 系统源 / 合集 / 默认订阅请经 services.source_catalog 读:"
+        f"{unexpected}"
+    )
+    stale = sorted(set(CATALOG_FILES_ALLOWED) - found)
+    assert not stale, f"这些文件已不再用 catalog_files,请从 CATALOG_FILES_ALLOWED 删除:{stale}"
+
+
+def test_retired_source_constants_do_not_come_back():
+    """白名单、墓碑、内建名称、合集的名单只在目录文件里;代码里再出现同名常量就是又分叉出一份。"""
+    offenders = {}
+    for top in _SCANNED:
+        for folder, _dirs, files in os.walk(os.path.join(_ROOT, top)):
+            if "__pycache__" in folder:
+                continue
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(folder, name)
+                with open(path, encoding="utf-8") as handle:
+                    used = retired_constant_uses(handle.read())
+                if used:
+                    offenders[os.path.relpath(path, _ROOT).replace(os.sep, "/")] = used
+    assert not offenders, f"这些名单已搬进 src/sources/catalog,请经 services.source_catalog 读:{offenders}"
+
+
+def test_retired_constant_scanner_tells_code_from_prose():
+    assert retired_constant_uses('"""以前叫 ESSENTIAL_FETCHER_IDS。"""\n# SOURCE_COLLECTIONS 已搬走\nx = 1\n') == []
+    assert retired_constant_uses("ESSENTIAL_FETCHER_IDS = frozenset()\n") == ["ESSENTIAL_FETCHER_IDS"]
+    assert retired_constant_uses("SOURCE_COLLECTIONS: tuple = ()\n") == ["SOURCE_COLLECTIONS"]
+    assert retired_constant_uses("from fetchers.registry import DECOMMISSIONED_FETCHER_IDS\n") == [
+        "DECOMMISSIONED_FETCHER_IDS"
+    ]
+    assert retired_constant_uses("from a import b as SOURCE_FRIENDLY_NAMES\n") == ["SOURCE_FRIENDLY_NAMES"]
+    assert retired_constant_uses("import registry\nids = registry.DECOMMISSIONED_FETCHER_IDS\n") == [
+        "DECOMMISSIONED_FETCHER_IDS"
+    ]
+    assert retired_constant_uses("def f():\n    return naming.SOURCE_FRIENDLY_NAMES.get('x')\n") == [
+        "SOURCE_FRIENDLY_NAMES"
+    ]

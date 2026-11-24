@@ -6,7 +6,7 @@ authority 上成立并保持:
 - **镜像行**:62 个预设抓取器类各一行(``origin=catalog``、``source_type=preset``、绑定 = 自身类
   id),目录拥有的字段与类属性逐字段相等;``legacy_export=False``——旧接收端靠注册表认识它们;
 - **系统行**:公共日报 ``dorami_daily_brief``(``origin=system``,无绑定);
-- **墓碑**:已下线源(``DECOMMISSIONED_FETCHER_IDS``)保留身份、标退役;
+- **墓碑**:已下线源(目录文件 ``system.toml`` 的 ``[[tombstone]]``)保留身份、标退役;
 - **回填**:只在 ``articles`` / 订阅里出现的 id——公共 id 记 ``origin=legacy``(照旧列出,存量
   不变);``user_rss_*`` 孤儿记私有隔离行(不分析、按「带凭证」处理、不列出、不外发);
 - **写入时补建**:注入通道遇到未登记的 id,在同一事务里补一行(``origin=ingest``,
@@ -240,7 +240,7 @@ def _ensure_system_row(session: Session, *, now: str, analysis_default: bool = T
         name=view.name,
         source_type=SYSTEM_SOURCE_TYPE,
         origin=source_catalog.ORIGIN_SYSTEM,
-        shape="article",
+        shape=view.shape,
         source_owner=view.source_owner,
         source_scope=view.source_scope,
         provenance_tier=view.provenance_tier,
@@ -255,12 +255,8 @@ def _ensure_system_row(session: Session, *, now: str, analysis_default: bool = T
 
 
 def _ensure_tombstone_rows(session: Session, *, now: str) -> int:
-    try:
-        from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
-    except Exception:  # noqa: BLE001
-        return 0
     created = 0
-    for source_id in sorted(DECOMMISSIONED_FETCHER_IDS):
+    for source_id in sorted(source_catalog.tombstone_ids()):
         row = session.get(SourceConfigRecord, source_id)
         if row is not None:
             continue
@@ -359,11 +355,9 @@ def _legacy_row(
 ) -> SourceConfigRecord:
     shape = source_catalog.shape_from_content_type(content_type)
     platform = "x" if shape == "social" and source_id.startswith("x_") else ""
-    from services.source_naming import SOURCE_FRIENDLY_NAMES
-
     return SourceConfigRecord(
         source_id=source_id,
-        name=SOURCE_FRIENDLY_NAMES.get(source_id, source_id),
+        name=source_catalog.builtin_name(source_id) or source_id,
         source_type=_source_type_for_shape(shape, platform),
         origin=source_catalog.ORIGIN_LEGACY,
         shape=shape,
