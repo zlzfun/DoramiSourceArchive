@@ -19,9 +19,10 @@
 | [`oss-storage.md`](./oss-storage.md) / [`oss-local-fallback.md`](./oss-local-fallback.md) | OSS 持久媒体与 Archive Sync 路径 / 从 OSS 回退本地;策略样例 `oss-*.example.json` |
 | [`storage-backups.md`](./storage-backups.md) | 自动备份与离线恢复(默认关闭) |
 | [`taxonomy-v1-deployment.md`](./taxonomy-v1-deployment.md) | Taxonomy v1 发布资产与 authority / replica 启动姿态 |
+| [`taxonomy-governance.md`](./taxonomy-governance.md) | 标签自动治理启用：INI／管理台双开关、模型补标、飞书提醒、验收与停用 |
 | [`aliyun-dual-node-deployment.md`](./aliyun-dual-node-deployment.md) | 阿里云外网 / 内网双节点上线指导 |
 | [`bailian-singapore-deployment.md`](./bailian-singapore-deployment.md) | 新加坡百炼 ASR / TTS 接入 |
-| [`feishu-review-notifications.md`](./feishu-review-notifications.md) | #298 飞书审核清单适配器、签名配置、投递状态及待集成边界 |
+| [`feishu-review-notifications.md`](./feishu-review-notifications.md) | #298 飞书审核清单、签名配置、持久投递及接收状态边界 |
 | [`issue-298-observation-runner.md`](./issue-298-observation-runner.md) | #298 独立账本、readiness、LaunchAgent、固定 72h 截止与停费核验 |
 | [`full-analysis-backfill.md`](./full-analysis-backfill.md) | 历史文章 `full_analysis` 回填操作 |
 | [`runbook.md`](./runbook.md) | 排查手法沉淀:日报漏报 / cron 缺席 / 分析回填吞吐 / 部署后核对 |

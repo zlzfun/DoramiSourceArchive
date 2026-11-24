@@ -1,7 +1,7 @@
 # 飞书新概念审核清单
 
-> 状态:进行中
-> #298：投递适配器及本机签名接通测试已通过；持久审核/outbox 与路由仍在集成验证。本页不表示已部署或启用正式每日清单。
+> 状态:耐久参考
+> #298：投递适配器、持久审核/outbox、路由与调度已集成到 PR #333；尚未合入部署。本页不表示目标节点已启用正式每日清单。完整启用流程见[标签自动治理手册](taxonomy-governance.md)。
 
 ## 接收方式与配置
 
@@ -33,8 +33,8 @@ allow_loopback_review_url = false
 审核路径为 `/review/taxonomy` 及 `/review/taxonomy/<id>`，需要管理员登录，GET 不改变状态。
 `governance_enabled` 与 `exact_merge_enabled` 分别控制统计/队列维护和精确自动归并；
 精确归并还需在管理面打开同名开关（兼容存储键 `taxonomy_auto_activation_enabled`）。
-配置是能力闸、管理开关允许热启停；两者默认关闭。它们不依赖文章分析 worker 或 LLM 是否可用，
-不允许自动发布新公共概念。
+配置是能力闸、管理开关允许热启停；两者默认关闭。维护和精确身份归并不依赖文章分析 worker 或 LLM，
+但有模型时会消费相关性补标任务，语义建议也会调用模型；不允许自动发布新公共概念。
 
 ## 适配器约定
 
@@ -50,7 +50,7 @@ allow_loopback_review_url = false
 
 ## 可靠性边界
 
-适配器不维护 outbox，也不重试 POST。持久 outbox 必须先保存 payload/batch identity，再领取并发送，确认 `accepted` 后记录终态。飞书自定义 Webhook 没有本适配器可用的幂等键或查询回执接口；`unknown` 必须停在待核对状态，不能立即盲重发。调度/lease 恢复、已审核组取消待发消息、旧 revision 过期处理，由主方案实现。
+适配器本身不维护 outbox，也不重试 POST；上层 `services.taxonomy_review` 已实现持久 outbox、批次领取、调度／lease 恢复、已审核组取消待发消息和旧 revision 过期处理。明确失败最多尝试 3 次，一个日期最多一个逻辑批次；确认 `accepted` 后记录终态。飞书自定义 Webhook 没有本适配器可用的幂等键或查询回执接口；超时或发送中断的 `unknown` 保留待核对，不自动盲重发。
 
 HTTP 库日志在本次发送的执行上下文内关闭，防止 hook 路径和响应诊断带出凭据；其它请求日志不受影响。发送前仍需确认配置属于正确目标群，并使用已明确授权的消息范围。
 
