@@ -8,8 +8,10 @@ POST. Neither a crash nor an ambiguous response can silently repeat that POST.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import datetime as dt
 from services.file_lock import LOCK_EX, LOCK_NB, flock
+import functools
 import hashlib
 import io
 import json
@@ -20,6 +22,7 @@ import shutil
 import stat
 import struct
 import wave
+import weakref
 import zlib
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -455,6 +458,57 @@ def reclaim_completed_receipts(
         )
 
 
+# 每个事件循环一份 {回执目录: asyncio.Lock}:同一目录的调用按到达顺序轮流(issue #334)。
+_RECEIPT_TURNS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+async def _in_turn(receipt_root, call, *args):
+    """Run ``call`` on a worker thread, one at a time per receipt directory.
+
+    ``call`` takes the receipt ``.lock`` with a blocking ``flock``, and a
+    synthesis holds that lock from its reservation to its last download. If
+    every caller went to a thread first, each one waiting for the lock would
+    park a thread of the event loop's default executor. That pool also runs
+    the scheduler's jobs and every other ``asyncio.to_thread``, and it is
+    small (``cpu + 4``): thirteen guides that became due together stalled the
+    background jobs of a 2-core node for 17 minutes (issue #334).
+
+    So the callers of one process queue here as coroutines, in arrival order,
+    and only the one whose turn it is goes to a thread. The file lock still
+    excludes other processes, the daily backup and the reclaim job.
+
+    A turn ends when its thread ends, not when its caller stops waiting. A
+    thread cannot be cancelled: a cancelled caller's ``call`` runs to its end,
+    and the next caller must not put a second thread behind it.
+    """
+
+    loop = asyncio.get_running_loop()
+    turns = _RECEIPT_TURNS.setdefault(loop, {})
+    key = os.path.realpath(receipt_root)
+    turn = turns.get(key)
+    if turn is None:
+        turn = turns[key] = asyncio.Lock()
+    await turn.acquire()
+    try:
+        # ``asyncio.to_thread`` 做的事,只是不经它那层协程:这里当场把调用交给
+        # 线程池,拿到轮次和「总有人归还轮次」之间没有空档。
+        work = loop.run_in_executor(
+            None, functools.partial(contextvars.copy_context().run, call, *args)
+        )
+    except BaseException:
+        turn.release()
+        raise
+    work.add_done_callback(functools.partial(_end_turn, turn))
+    return await asyncio.shield(work)
+
+
+def _end_turn(turn, work):
+    turn.release()
+    # 等结果的人可能已经被取消:异常在这里取走,免得事件循环报「从未被取回」。
+    if not work.cancelled():
+        work.exception()
+
+
 class BailianPremiumGuideTtsProvider:
     def __init__(
         self,
@@ -481,7 +535,11 @@ class BailianPremiumGuideTtsProvider:
         self.clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
 
     async def synthesize(self, narration):
-        return await asyncio.to_thread(self._synthesize, narration)
+        return await _in_turn(self.config.tts_receipt_root, self._synthesize, narration)
+
+    async def check_capacity(self, characters: int) -> dict:
+        """``ensure_capacity`` for callers on the event loop: it waits its turn first (``_in_turn``)."""
+        return await _in_turn(self.config.tts_receipt_root, self.ensure_capacity, characters)
 
     def capacity_snapshot(self, characters: int) -> dict:
         """Conservative PCM estimate, bounded by the final file limit."""
@@ -504,7 +562,9 @@ class BailianPremiumGuideTtsProvider:
         """Take the receipt lock, reclaim once if short, then recheck.
 
         Do not call this while the same ``.lock`` is already held. Synthesis
-        uses ``_ensure_capacity_locked`` instead.
+        uses ``_ensure_capacity_locked`` instead. It blocks until the lock is
+        free: from the event loop use ``check_capacity``, never a thread of
+        your own.
         """
         root = Path(self.config.tts_receipt_root)
         root.mkdir(parents=True, exist_ok=True, mode=0o700)

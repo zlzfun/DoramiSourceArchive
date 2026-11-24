@@ -11,6 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
+- **精品导读语音:等回执锁不占线程(issue #334,2026-11-24,开发版 3.70.4-alpha,纯后端)**:#326 上线当天,13 期导读的容量等待同一分钟到期,外网后台任务停摆 17 分钟——文章分析、播客转写 worker、入队巡检、存储维护、个人早报待处理全部被跳过。根因:每期导读一个协程任务,拿回执目录锁的两步(容量预检、合成)各自先进线程再阻塞等锁,而合成全程持锁约 100 秒;2 核机器的共享线程池只有 6 个线程,被等锁的导读占满。现在同一进程里的调用先在协程层按到达顺序排队,轮到的那一个才进线程,语音这一段占用的共享线程固定为每个回执目录至多一个;轮次到线程结束才交还,取消不会让下一个再放线程进去等。文件锁、回执、账本都不变,无迁移。方案 [`docs/archive/issue-334-tts-receipt-queue.md`](archive/issue-334-tts-receipt-queue.md)。
 - **业务代码读源的身份只经源目录(issue #262 R1a 余项,PR #335,2026-11-24,开发版 3.70.4-alpha,纯后端重构)**:取名与角色、路由层源元数据、早报 / 事件榜 / 事件归并的角色与形态、内容类型先验、MCP `list_sources`、OPML、X 配额探针、系统源撞库、收录的身份解析与站点索引、每日采集任务脚本,原先各自直接读抓取器注册表,现在统一经 `services/source_catalog`;直接引用 `fetcher_registry` 的文件由守卫名单登记(只许减)。无迁移、不动同步流;基线与分支在开发库副本上逐项对拍零差异。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **W3 内网个人日报 M2M 契约 v1.0 接口与租约恢复（2026-11-23，开发波）**：新增管理员 Cookie 鉴权的 `GET/POST /api/admin/reader/briefs/today` 接口，按 `users.w3_uid` 精确唯一映射（冲突 500 告警）；入口锁定上海日期，GET 零副作用只读，POST 经共享首版互斥门原子创建并由 `BriefRuntime`（240s 预算 / 300s 租约 / 60s 续租 / fencing token 原子发布 / 30s 扫描恢复）受监督执行，发布时固化 `briefs_payload_json` 与 7 种业务态。补齐两条迁移、冻结共享契约 `contracts/briefs-v1/shared/` 与 D01–D20 / C01–C12 全套测试。详见 [契约](contracts/admin_reader_briefs.md)。
 - **每日备份:空间不够先别拷,连续失败别十分钟一轮(issue #330,2026-11-24,开发版 3.70.3-alpha,纯后端)**:外网余盘比备份的门槛少 0.3GB,每日备份自 11-23 19:18 起每轮先把 1GB 的库和 1GB 的回执目录拷进暂存区、最后才判空间不够,十分钟后原样重来,15 小时约 60 轮、写盘 132GB,而后端日志里一行都没有。修法三条:做库快照之前就把这一轮要暂存的量算清(库 + 回执 + 未登记到对象存储的本地 blob),不够直接失败、一个字节不拷;连续失败的重试间隔从十分钟起翻倍、最长 6 小时且不超过备份周期,成功清零(`backup_busy` 与拷贝前判定的空间不足不计);失败与成功各写一行日志。无迁移,归档格式与恢复路径不变。方案 [`docs/archive/issue-330-backup-space-preflight.md`](archive/issue-330-backup-space-preflight.md)。
@@ -114,6 +115,15 @@
 - **裸机部署回滚(issue #126,2026-09-21,待发布)**:裸机路径改「运行副本版本化」release 形态 + 锁内事务 + 两级健康门告警(不自动回滚)+ `./deploy.sh --rollback`(树外固化执行体,DB 按目标上下文迁移计划分流,`--restore-db` 显式恢复,只回一代)+ 收养 + `--code` / `--status` / `--discard-txn`;extras 钉版 `docker/requirements-crawl4ai.txt`;方案 `docs/archive/baremetal-rollback-plan.md`(codex 四轮设计检视 + §9 实现记录),手册 `docs/ops/deploy-baremetal.md`,桩测试 `tests/test_deploy_baremetal.py`。
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
+
+## issue #334 精品导读语音:等回执锁不占线程(分支 `feat/issue-334-tts-queue`,开发版 3.70.4-alpha,版本号以实际发版为准)
+
+- **来由**:2026-11-24 v3.70.3 上线后读库核对 #323 / #326。两条都生效,但日志里 14:06–14:23 有一片 `maximum number of running instances reached`:转写 worker 约 100 次,文章分析、论文全文、标签重打、入队巡检、存储维护各十七八次,个人早报待处理 35 次,另有两条 `was missed by 0:17:05`。健康检查与接口正常。起点是 13 期导读的回执容量等待同一分钟到期。
+- **根因**:巡检给每期导读起一个协程任务,不设上限;`ensure_capacity` 与 `_synthesize` 都经 `asyncio.to_thread` 进默认线程池后阻塞式拿回执目录锁,合成全程持锁;默认线程池 `min(32, cpu + 4)`,2 核只有 6 个。同步的调度任务排不进线程池,协程任务卡在自己的 `to_thread` 上。
+- **做了什么**:`bailian_tts._in_turn`——每个事件循环、每个回执目录一把 `asyncio.Lock`,轮到才把调用交给线程池;轮次的归还挂在线程的完成回调上,等结果的一侧 `asyncio.shield`。提供方新增协程 `check_capacity`,`synthesize` 与它都经 `_in_turn`。`run_premium_guide` 的两处容量预检改为 `await tts_provider.check_capacity(...)`,不再自己 `to_thread`;`PremiumGuideTtsProvider` 协议写明阻塞与排队归提供方。
+- **取舍**:没有调大线程池(期数一多照样占满),也没有给导读任务数设上限(排队的协程不占线程,问题出在「等锁占线程」这一处)。轮次不在调用方被取消时交还:线程取消不了,交还后下一个会再放一个线程进去干等。没有用专门的单线程执行器:测试里每个临时目录都会留下一个常驻线程,而每个循环一把锁是仓内已有的做法。
+- **自测**:语音测试新增 7 条、导读测试新增 1 条并改 1 条;反向对照 14 个改坏的变体全部变红、只加注释的对照保持绿。导读流程第二处容量预检(正文已有、口播稿未写)此前没有用例,这次补上。
+- **部署**:无迁移、无配置项,不涉及同步流,回滚即恢复旧行为。
 
 ## issue #262 R1a 余项:业务代码读源的身份只经源目录(PR #335,分支 `feat/issue-262-source-catalog-consumers`,开发版 3.70.4-alpha,版本号以实际发版为准)
 

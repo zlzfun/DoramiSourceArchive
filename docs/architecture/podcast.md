@@ -58,6 +58,15 @@ Podcast RSS uses `source_type=podcast` and `fetcher_id=generic_podcast_rss`. Epi
 
 管理面「TTS 回执缓存」的两个缺口是逐出之后仍然不够的部分(`evictable_bytes` 已减去)。日志搜 `已逐出`。
 
+## 精品导读语音:等回执锁在协程层排队(issue #334)
+
+合成(`_synthesize`)从预留到最后一段下载完全程持有回执目录的文件锁,一期约 100 秒;容量预检(`ensure_capacity`)也要拿这把锁。两者都是阻塞调用,必须在线程里跑。
+
+- **同一进程里先排队,轮到才进线程。** `bailian_tts._in_turn`:每个事件循环、每个回执目录一把 `asyncio.Lock`,按到达顺序。许多期导读同时到期时,等待的是协程,共享线程池里为语音干活或等锁的线程至多一个。
+- **轮次到线程结束才交还。** 调用方被取消时线程停不下来、锁也还持着,所以下一个要等它跑完。
+- **提供方的两个入口都是协程**:`synthesize` 与 `check_capacity`。导读流程和文章朗读只 `await` 它们,不自己 `asyncio.to_thread` 提供方的方法——那样等多久就占多久线程。`ensure_capacity` 是同步方法,只给已经在线程里的调用方。
+- 文件锁不变:跨进程、与每日备份(非阻塞,拿不到记 `backup_busy`)和每日回收(非阻塞,拿不到跳过)的互斥仍靠它。
+
 ## 全文分析的租约路径(issue #318)
 
 `run_full_analysis_worker_step` 的顺序与三条约束:

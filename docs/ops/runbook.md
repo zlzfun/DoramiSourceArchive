@@ -13,7 +13,8 @@
 
 - `docker compose logs backend | grep "was missed"` 看被 APScheduler 跳过的任务;库里 `fetch_runs` 按日计数(scheduled vs manual)是容器重建后唯一证据。
 - 每 2 s curl `/api/runtime` 70 s,画出分钟级阻塞窗口;`/proc/<pid>/io` 两次采样看读写速率;`strace -f -y -e trace=openat,pread64 -p <pid>` 3–4 s 定位在读哪个文件。
-- 已知病因与修法:播客全文处理每分钟全表重放(#68,改复合游标 + 失败记忆 + 轮级守门)、同步 DB / 下载校验跑在事件循环(#194,改 `asyncio.to_thread` + 元数据查询不 SELECT 正文)、cron 默认 1 s 宽限(统一 `misfire_grace_time=300`)。
+- 已知病因与修法:播客全文处理每分钟全表重放(#68,改复合游标 + 失败记忆 + 轮级守门)、同步 DB / 下载校验跑在事件循环(#194,改 `asyncio.to_thread` + 元数据查询不 SELECT 正文)、cron 默认 1 s 宽限(统一 `misfire_grace_time=300`)、多期导读各占一个线程等回执锁(#334,改为协程层排队)。
+- **健康检查正常、后台任务却成片不跑**:按任务名统计日志里的 `maximum number of running instances reached`(协程任务卡在自己的 `to_thread` 上)和 `was missed`(同步任务排不进线程池),按 5 分钟分桶看起止。几个互不相干的任务同一分钟开始被跳过、同一分钟恢复,而本机 `/api/health` 的访问日志没有断档,就是默认线程池被占满(2 核只有 6 个线程),不是事件循环被拖住。再看那一分钟是什么成批开始的。同步任务只有 `taxonomy_retag`、`personal_digest_schedule`、`personal_digest_pending` 三个,`was missed` 只会出在它们身上。
 
 ## 内存占用高 / 长期读盘(issue #318 沉淀)
 
