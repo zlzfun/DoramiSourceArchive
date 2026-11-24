@@ -11,7 +11,7 @@
 
 ## 年表(一行一波;自 `CLAUDE.md` 迁入 2026-10-21,**新波次在此加一行**,L0 不再逐波改)
 
-- **业务代码读源的身份只经源目录(issue #262 R1a 余项,2026-11-24,开发版 3.70.4-alpha,纯后端重构)**:取名与角色、路由层源元数据、早报 / 事件榜 / 事件归并的角色与形态、内容类型先验、MCP `list_sources`、OPML、X 配额探针、系统源撞库、收录的身份解析与站点索引、每日采集任务脚本,原先各自直接读抓取器注册表,现在统一经 `services/source_catalog`;直接引用 `fetcher_registry` 的文件由守卫名单登记(只许减)。无迁移、不动同步流;基线与分支在开发库副本上逐项对拍零差异。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
+- **业务代码读源的身份只经源目录(issue #262 R1a 余项,PR #335,2026-11-24,开发版 3.70.4-alpha,纯后端重构)**:取名与角色、路由层源元数据、早报 / 事件榜 / 事件归并的角色与形态、内容类型先验、MCP `list_sources`、OPML、X 配额探针、系统源撞库、收录的身份解析与站点索引、每日采集任务脚本,原先各自直接读抓取器注册表,现在统一经 `services/source_catalog`;直接引用 `fetcher_registry` 的文件由守卫名单登记(只许减)。无迁移、不动同步流;基线与分支在开发库副本上逐项对拍零差异。见 [重构方案](plans/issue-262-source-model-refactor.md) §12 末。
 - **W3 内网个人日报 M2M 契约 v1.0 接口与租约恢复（2026-11-23，开发波）**：新增管理员 Cookie 鉴权的 `GET/POST /api/admin/reader/briefs/today` 接口，按 `users.w3_uid` 精确唯一映射（冲突 500 告警）；入口锁定上海日期，GET 零副作用只读，POST 经共享首版互斥门原子创建并由 `BriefRuntime`（240s 预算 / 300s 租约 / 60s 续租 / fencing token 原子发布 / 30s 扫描恢复）受监督执行，发布时固化 `briefs_payload_json` 与 7 种业务态。补齐两条迁移、冻结共享契约 `contracts/briefs-v1/shared/` 与 D01–D20 / C01–C12 全套测试。详见 [契约](contracts/admin_reader_briefs.md)。
 - **每日备份:空间不够先别拷,连续失败别十分钟一轮(issue #330,2026-11-24,开发版 3.70.3-alpha,纯后端)**:外网余盘比备份的门槛少 0.3GB,每日备份自 11-23 19:18 起每轮先把 1GB 的库和 1GB 的回执目录拷进暂存区、最后才判空间不够,十分钟后原样重来,15 小时约 60 轮、写盘 132GB,而后端日志里一行都没有。修法三条:做库快照之前就把这一轮要暂存的量算清(库 + 回执 + 未登记到对象存储的本地 blob),不够直接失败、一个字节不拷;连续失败的重试间隔从十分钟起翻倍、最长 6 小时且不超过备份周期,成功清零(`backup_busy` 与拷贝前判定的空间不足不计);失败与成功各写一行日志。无迁移,归档格式与恢复路径不变。方案 [`docs/archive/issue-330-backup-space-preflight.md`](archive/issue-330-backup-space-preflight.md)。
 - **精品导读语音的回执缓存:满了以后自己腾地方(issue #326,2026-11-23,开发版 3.70.3-alpha,纯后端)**:v3.70.2 放开预算后,14 期导读停在「回执缓存不足」——回执目录 980MB / 上限 1GB。根因两条:回收只把已发布节目的 WAV 压成归档、从不删归档,约六十期就把 1GB 占满(9、10 月那批「回执存储满」同因);#322 解除占用的预留状态仍是 `reserved`,被当成在途,那些节目的音频连压缩都轮不到。修法:「在途」只算 `authorized` / `generated` 与仍占额度的 `reserved`;容量不足时在压缩之后按从旧到新逐出已有成品的节目的回执音频,只删够用的量,盖不住缺口就一份不删;合成不动自己的分段;有意删除的音频留下 `.evicted` 标记,每日备份认标记(否则备份从第一次逐出起每天失败);管理面的缓存缺口按可逐出量折算。账本行与供应商回执不动。方案 [`archive/issue-326-tts-receipt-eviction.md`](archive/issue-326-tts-receipt-eviction.md)。
@@ -115,7 +115,7 @@
 - **Podcast(issue #7 P0–P0.2)**:`source_type=podcast` → `generic_podcast_rss`,单集复用 `ArticleRecord` + `extensions_json`,只解析 enclosure 元数据不下载音频;36 节目策展目录 `services.podcast_catalog` 启动幂等安装、进普通采集任务不设源级开关;边界与后续见 `docs/archive/podcast-wave-plan.md`。
 
 
-## issue #262 R1a 余项:业务代码读源的身份只经源目录(分支 `feat/issue-262-source-catalog-consumers`,开发版 3.70.4-alpha,版本号以实际发版为准)
+## issue #262 R1a 余项:业务代码读源的身份只经源目录(PR #335,分支 `feat/issue-262-source-catalog-consumers`,开发版 3.70.4-alpha,版本号以实际发版为准)
 
 起因:#262 首个 PR 建了源目录读服务 `services/source_catalog.py`,但只把形态判定收成一处、迁了 7 个消费方;其余读点仍各自 `import fetcher_registry`,自己决定类与行谁压谁、查不到当成什么。R2 要把身份搬进目录文件、R3 要让抓取器不带身份,读点散着就得改几十处。
 

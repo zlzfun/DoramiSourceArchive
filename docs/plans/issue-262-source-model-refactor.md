@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 在分支 `feat/issue-262-source-catalog-consumers` 实现,记录见 §12 末;R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2、R3a / R3b 未开工,在后续 PR;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -380,7 +380,7 @@ shape = "article"
 | C | 沙箱端到端发现:策展源登记的是分类页或 feed 地址(`rss_openai_news` → `openai.com/news/rss.xml`、`rss_nvidia_genai` → `blogs.nvidia.com/blog/category/generative-ai/`),只给文章链接的推送认不回,另建临时源,抓取器随后把同一篇收进策展源,落成跨源两行 | 前缀不中时按主机兜底:该主机上恰好一个形态相同、链接即条目身份的已有源就认它;多个候选、多租户主机、单页文档 / `docs_*` / `github_*` 不兜底(`developers.openai.com` 只有 Codex changelog,仍建临时源) |
 
 
-**R1a 余项:消费方只经源目录读身份(2026-11-24,分支 `feat/issue-262-source-catalog-consumers`)**
+**R1a 余项:消费方只经源目录读身份(2026-11-24,PR #335,分支 `feat/issue-262-source-catalog-consumers`)**
 
 实现方 Claude Code(Fable 5.2)。范围 = §5「注册表被当成源目录」一行里除执行层以外的全部读点。纯重构:不改数据、无迁移、不动任何同步流。
 
