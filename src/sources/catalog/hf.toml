@@ -1,0 +1,41 @@
+# 策展源目录:Hugging Face 模型(hf_*)。
+#
+# 每个 [[source]] 是一个策展源的身份;怎么抓在 src/fetchers/impl/ 里同 id 的抓取器类上。
+# 必填:id / name / description / shape / admission。其余键没写就是空(图标缺省 📦)。
+# 转正 = 把 admission 从 incubating 改成 admitted。键的含义与取值见 docs/sources/curation_policy.md。
+
+[[source]]
+id = "hf_deepseek_models"
+name = "DeepSeek 新模型"
+icon = "🤗"
+description = "DeepSeek 在 Hugging Face 上发布的新模型。"
+shape = "article"
+default_kind = "project"
+admission = "admitted"
+owner = "deepseek-ai"
+brand = "deepseek"
+scope = "open_model_family"
+channel = "model_repository"
+homepage = "https://huggingface.co/deepseek-ai"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "medium_noise"
+reliability = "stable_public"
+
+[[source]]
+id = "hf_qwen_models"
+name = "Qwen 新模型"
+icon = "🤗"
+description = "通义千问 Qwen 在 Hugging Face 上发布的新模型。"
+shape = "article"
+default_kind = "project"
+admission = "admitted"
+owner = "alibaba"
+brand = "qwen"
+scope = "open_model_family"
+channel = "model_repository"
+homepage = "https://huggingface.co/Qwen"
+tier = "tier0_primary"
+signal = "high_signal"
+noise = "medium_noise"
+reliability = "stable_public"

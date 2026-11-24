@@ -153,23 +153,22 @@ def _export_feed_url(raw: str) -> Optional[str]:
 
 def _outline_for_source(session: Session, source_id: str) -> Optional[Dict[str, Any]]:
     """订阅源里能写进 OPML 的真实 feed;没有 feed 地址则返回 None。"""
-    from fetchers.registry import fetcher_registry
     from models.db import SourceConfigRecord
+    from services import source_catalog
 
-    fetcher_class = fetcher_registry.get_class(source_id)
-    if fetcher_class is not None:
-        if getattr(fetcher_class, "is_template", False):
+    preset = source_catalog.registry_view(source_id)
+    if preset is not None:
+        if preset.is_template:
             return None
-        feed_url = str(getattr(fetcher_class, "feed_url", "") or "").strip()
-        xml_url = _export_feed_url(feed_url)
+        binding = source_catalog.preset_binding(source_id)
+        xml_url = _export_feed_url(binding.get("feed_url", "").strip())
         if not xml_url:
             return None
-        html_url = str(getattr(fetcher_class, "source_url", "") or "").strip()
         return {
-            "name": _clean_text(getattr(fetcher_class, "name", "") or source_id) or source_id,
+            "name": _clean_text(preset.name or source_id) or source_id,
             "xml_url": xml_url,
-            "html_url": _public_html_url(html_url, xml_url),
-            "podcast": str(getattr(fetcher_class, "content_shape", "") or "").lower() == "podcast",
+            "html_url": _public_html_url(binding.get("source_url", "").strip(), xml_url),
+            "podcast": preset.shape == "podcast",
         }
 
     record = session.get(SourceConfigRecord, source_id)

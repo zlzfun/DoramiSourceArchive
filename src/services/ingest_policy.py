@@ -28,14 +28,10 @@ _ITEM_ID_UNSAFE = re.compile(r"[\s]+")
 
 def _registry_template_ids() -> set[str]:
     try:
-        from fetchers.registry import fetcher_registry
+        from services import source_catalog
     except Exception:  # noqa: BLE001
         return set()
-    return {
-        source_id
-        for source_id, cls in fetcher_registry._fetchers.items()
-        if getattr(cls, "is_template", False)
-    }
+    return source_catalog.template_ids()
 
 
 def _decommissioned_ids() -> frozenset[str]:

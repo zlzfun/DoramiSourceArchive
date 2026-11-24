@@ -779,7 +779,7 @@ wheels = [
 
 [[package]]
 name = "doramisourcearchive"
-version = "3.70.3"
+version = "3.70.4"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -795,6 +795,7 @@ dependencies = [
     { name = "playwright" },
     { name = "pydantic" },
     { name = "sqlmodel" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "uvicorn" },
 ]
 
@@ -831,6 +832,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6" },
     { name = "sqlmodel", specifier = ">=0.0.8" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "uvicorn", specifier = ">=0.23.0" },
 ]
 provides-extras = ["dev", "crawl4ai"]

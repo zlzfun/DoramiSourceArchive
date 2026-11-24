@@ -1,6 +1,6 @@
 # issue #262 配套:源模型重构——源 / 采集绑定 / 抓取器三层分离(R2)
 
-> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR 落地,R2 / R3 在后续 PR;实施偏差见 §12)。
+> 状态:进行中(2026-11-06 起实施;§8 拍板项 E1–E7 已于 2026-11-06 由用户按推荐拍板。R0、R1a 局部、R1b、R1c、R4 最小闭环随 #262 波 1 首个 PR #270 落地(2026-11-09 合入,v3.68.0 发布);R1a 余项(消费方只经源目录读身份)2026-11-24 实现(PR #335,分支 `feat/issue-262-source-catalog-consumers`),记录见 §12 末;R2 首块(预设源的身份搬进目录文件 + 类定义时回投)2026-11-24 实现(PR #337,分支 `feat/issue-262-catalog-files`),记录见 §12 末;R2 余下部分与 R3a / R3b 未开工;实施偏差见 §12)。
 > 关系:本稿展开 [issue-262-agent-ingest-sources.md](./issue-262-agent-ingest-sources.md) 的 §5.1 / §5.4 / §6 波 2,取代那里「2a → 2b → 2c」的粗分;#262 的推送通道(波 1)依赖本稿 R1c 与 R4。
 > 执行:主代理 Claude Code(Opus 5.5)。§2 的分档来自对注册表全部 69 个类的反射盘点(只看类自身 `__dict__` 里定义的方法与数据属性),检视方已独立复核。
 > 基线:`main` @ `454f90da`(v3.67.4)。文中 `file:line` 均对此版本。
@@ -379,3 +379,62 @@ shape = "article"
 | B | `kind` 不校验目标源形态:显式 id 往 X 源推文章、往博客源推社交帖照收;`x.com/<账号>/…` 的文章按前缀落进 X 源 | 显式 id / 身份键 / 已有同名 id 命中后比对形态(`article→article`、`social_post→social`、`podcast_episode→podcast`),不符拒收;feed 与前缀匹配跳过形态不同的源、继续往下解析 |
 | C | 沙箱端到端发现:策展源登记的是分类页或 feed 地址(`rss_openai_news` → `openai.com/news/rss.xml`、`rss_nvidia_genai` → `blogs.nvidia.com/blog/category/generative-ai/`),只给文章链接的推送认不回,另建临时源,抓取器随后把同一篇收进策展源,落成跨源两行 | 前缀不中时按主机兜底:该主机上恰好一个形态相同、链接即条目身份的已有源就认它;多个候选、多租户主机、单页文档 / `docs_*` / `github_*` 不兜底(`developers.openai.com` 只有 Codex changelog,仍建临时源) |
 
+
+**R1a 余项:消费方只经源目录读身份(2026-11-24,PR #335,分支 `feat/issue-262-source-catalog-consumers`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §5「注册表被当成源目录」一行里除执行层以外的全部读点。纯重构:不改数据、无迁移、不动任何同步流。
+
+- **读服务补齐**(`services/source_catalog.py`,只加接口):`preset_views`(预设源视图,按注册顺序)、`preset_binding`(预设源的采集绑定事实——feed 地址 / 列表页 / 主页 / X 账号;今天在类属性上,R2 / R3 搬进目录文件与行上的绑定参数后只改这里)、`preset_metadata`(注册元数据字典)、`preset_default_kinds`、`template_ids`、`fetcher_class`、`podcast_catalog_source`;`layers` → `SourceLayers`(源行与预设类两层,不合并;可复用调用方已取的行,事件榜不必为同一批 id 查两遍);口径函数 `info_role`(评分 / 早报 / 事件层的四种角色,不含阅读器的 custom)与 `reader_shape`;`row_shape` / `binding_shape` / `binding_content_type` / `binding_platform` 自 `api/sources.py` 原样搬来(`api.sources` 的同名函数委托过来)。
+- **迁移的消费方**:取名与角色(`source_naming`)、路由层门面(`api/sources.py`)、早报(`personal_digest._source_role_and_shape`)、事件榜(`event_board._source_infos`)、事件归并(`event_assignment.load_source_meta`)、内容类型先验(`content_classification.source_default_kinds`)、MCP `list_sources`、OPML 导出、X 配额探针、系统源撞库检测、source-builder 的已有 id 集合、收录的保留 id / 站点索引 / X 身份解析 / 镜像行身份键 / 判重资格 / 条目链接身份、采集节点目录与源管理目录的预设枚举(`collection_nodes`)、每日采集任务脚本。
+- **留在注册表上的**(守卫名单,逐个登记理由):注册表本身、`source_catalog`;执行层 `collection_nodes`(校验绑定、执行前解析)、`api/app.py`(采集执行)与两个要实例化抓取器的脚本——执行层只许 `fetcher_registry.get_class`,不许枚举、不许读注册元数据。`monitoring` 与 MCP 按 `SourceStateRecord.fetcher_id` 关联状态属 R3a,不在本波。
+- **不改任何既有取舍**:合并视图(`describe` / `get` / `_merge`)与目录视图(`view_from_row`)同改前逐字相同。早报、事件榜、事件归并历来不用合并视图,而是各自拿源行与预设类两层按自己的顺序取——角色看行(行上两项都空就是 media,不回退到同名的类);形态早报与事件榜看行、事件归并看类;主体看类、类上为空才看行。`layers` 把两层原样交出去,这些顺序收进 `info_role` / `reader_shape` 与事件归并自己的几行,与 `[sources] model` 无关。
+- **视图缓存**:按类缓存,每次取用对照类上的当前属性(没变就复用同一对象)。原先的进程级一次性缓存若恰好建在类属性被临时改写的那一刻,后面的调用全被带偏;既有用例 `test_promoting_one_inherited_incubating_source_only_admits_that_source` 改写类的准入状态后即撞上。
+- **守卫** `tests/test_source_catalog_boundary.py`:`src/` 与 `scripts/` 里引用 `fetcher_registry` 的文件必须在名单里,名单里已不引用的要划掉,执行层文件只许调 `get_class`;放到改前代码上是红的。
+- **口径测试** `tests/test_source_catalog_consumers.py`:前半用「照改前算法直接读注册表与源行」的对照实现,在空源表与各来路齐全两种库、compat 与 full 两种读法下,对注册表全部 69 个 id 与各来路的源逐个比较早报 / 事件榜 / 事件归并的角色、形态、主体;另钉取名、OPML、撞库(整张映射比较)、身份键、站点索引、保留 id、每日任务、X 探针,收录的形态门禁(预设类与同步行形态冲突时),两套行形态判法各自的结果,以及一组「注册顺序与字母序相反」的假注册表和形态不规范的假抓取器类。这一半(16 条)放到改前代码上同样全过。后半是读服务的新接口。
+- **对拍**(脚本在会话草稿区,未入库):基线 `01ffaa11` 与分支各跑一遍,同一份库,比较 46 组函数级输出(含读服务自身的 `describe` 与源管理目录)与 35 个只读接口 × 管理员 / 读者 / 匿名三种身份的响应。本机开发库副本(迁到最新并跑过启动对账:114 个源行、7194 篇文章、74 个来源 id)、空源表合成库、各来路齐全的合成库(含与预设同 id 的上游同步行、`source_type=social`、旧形态别名 `bulletin`):**三份都是零差异**。阅读器目录(99 个源)、源管理(107)、源健康(121)、文章列表、内容看板这些接口两边都有实际内容;开发库的文章停在 2026-09-17、没有事件数据,事件榜与精选两边都是空板(榜单只有「历史高分」一栏有条目),这几处的比较说明不了多少——依据是上面的口径测试与既有的 `test_event_board` / `test_event_assignment` / `test_digest_selection`。
+- **与改前不同的地方**:没有。首稿为了让三个消费方口径一致,把合并规则与目录视图的形态判定各改了一处,检视指出它们波及收录的形态门禁与 full 模式下的角色(见下「检视」),已全部撤回。
+- **部署顺序与混版本**:不触及同步流的字段、枚举、导出范围或删除语义,对外行为无变化,两端任意顺序。
+- **没做**:口径的统一——两套行形态判法(阅读侧 `row_shape` 认 `source_type=social` 与旧别名 `bulletin`,目录视图 `view_from_row` 不认)、三个消费方各自的取舍顺序、信任兜底(`user_sources.source_content_may_leave_deployment`、`article_analysis` 里的「无配置行 = 平台源」)、前端 `sourceTaxonomy.js` 的角色兜底,都等「缺行即错」的严格不变量启用(`[sources] model = full`)时一起收;`friendly_source_name` / `source_role` 在 `full` 模式下仍先取预设源目录,R2 目录文件落地时改为取行。
+
+**R1a 余项的检视(2026-11-24)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Fable 5.2)。检视方用真正的基线函数与分支在内存库上对拍(空源表 128 个 id、各来路齐全 136 个 id),pytest 因只读沙箱未能启动。首轮 1 P1 + 2 P2 + 3 P3,全部接受、无分歧;#1 / #2 / #4 同根(首稿在读服务里动了两处既有语义),按「读服务只加接口、不改语义」一次改形,不逐条打补丁。
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P1 | 首稿把 compat 合并规则改成「形态取行」,收录的形态门禁(`ingest_push._shape_mismatch` 读合并视图)在预设类与上游同步行形态不同时接受 / 拒绝对调;方案里「没有消费方经合并视图读形态」不成立 | 合并规则恢复原样;三个消费方改用 `layers` + 口径函数,不经合并视图;补收录门禁用例 |
+| 2 | P2 | 三个消费方改用 `describe()` 后被带进 full 模式的「行上为空回退到类」:同步行策展元数据为空时角色由 media 变 official,主体由类变行 | 同上:口径函数与读法开关无关;对照测试在 compat / full 两种读法下都跑,另补专门用例 |
+| 3 | P2 | 守卫名单放行的 `collection_nodes` 仍用 `get_all_metadata()` 把名称 / 形态 / 主体送进节点目录与源管理目录 | 两处枚举改经 `preset_metadata()`;守卫新增「执行层文件只许调 `get_class`」 |
+| 4 | P3 | 首稿让目录视图的形态改走阅读侧判法,`bulletin` 与绑定 / 类型矛盾的行形态变了、与 `content_type` 不再一致 | 目录视图的形态恢复原判法;两套判法各自的结果钉进测试,统一留到 full 模式 |
+| 5 | P3 | 撞库检测的断言在源 id 不符时直接跳过 | 改为按基线算法构造整张预期映射比较;加假注册表用例(同地址两个预设、注册顺序与字母序相反、配置行覆盖) |
+| 6 | P3 | 形态对照实现没有复刻基线的归一与非法值兜底 | 完整复刻;用假抓取器类补空值 / 别名 / 大小写与空白 / 非法值 |
+
+**复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `0cc02969`。六条逐条判「够」;未发现修订新引入的 P1,无新增 P2 / P3。检视方另做的核对:语法树比较确认 `source_catalog` 相对 `01ffaa11` 被改动的既有定义只有 `_registry_views` / `registry_view` / `clear_registry_cache`(缓存实现)与 `role_from_metadata`(委托 `source_naming` 的单一实现),其余既有函数与 `SourceView` 一致;基线函数与分支同库对拍三个消费方(空源表 128 个 id、各来路齐全 136 个 id,加上同步冲突行,compat / full 两种读法)一致;形态判法 192 组输入一致。保留的前提:预设类的 `content_shape` 必须是合法值(69 个类现状如此,口径测试里有断言)。检视方的 pytest 因只读沙箱建不了日志文件未能启动,全量套件由实现方本机跑(4080 条通过)。
+
+**R2 首块:预设源的身份搬进目录文件(2026-11-24,PR #337,分支 `feat/issue-262-catalog-files`)**
+
+实现方 Claude Code(Fable 5.2)。范围 = §6 R2 行里的「只迁描述性身份,类上的 `source_id` 作为注册键保留,注册时把目录值回投到类属性,输出逐条对拍不变」。R2 的其余部分——镜像行改由文件直接对账、收编 §2.3 的常量(`ESSENTIAL_FETCHER_IDS` / 墓碑 / 合集 / 默认订阅)、`daily` 显式、播客目录并入、管理面目录字段只读——不在本块。纯后端:不改数据、无迁移、不动同步流、对外行为无变化。
+
+- **目录文件**:`src/sources/catalog/<id 前缀>.toml`,六个文件 62 条(rss 28 / web 13 / docs 7 / x 7 / github 5 / hf 2),每个 `[[source]]` 是一个预设源的身份。键:`id`、`name`、`icon`、`description`、`shape`、`platform`、`default_kind`、`admission`、`owner`、`brand`、`scope`、`channel`、`homepage`、`tier`、`signal`、`noise`、`reliability`(对应类属性见 `sources.FIELD_TO_ATTR`)。必填 `id` / `name` / `description` / `shape` / `admission`——**准入必须每条写明**,漏写不能等于转正;其余没写就是 `BaseFetcher` 上的缺省(空串,图标 📦)。
+- **加载与校验**(`src/fetchers/catalog_files.py`;数据目录 `src/sources/` 不是 Python 包):缺必填键、未知键、非字符串、`shape` / `admission` 取值不合法、id 重复、id 前缀与文件名不符、顶层出现 `[[source]]` 以外的表、文件里一条 `[[source]]` 都没有、目录下没有文件,一律抛 `CatalogError`。TOML 解析用标准库 `tomllib`,Python 3.10 上用 `tomli`(`pyproject` 新增条件依赖 `tomli>=2.0; python_version < '3.11'`——项目的 `requires-python` 仍是 >=3.10;锁文件只多这一条依赖边,两份 `docker/requirements*.txt` 只变一行注释)。
+- **回投**(`fetchers.base.apply_catalog_identity`,`BaseFetcher.__init_subclass__` 在**类定义时**调用):类体里自己写了 `source_id` 的非模板类,把目录条目对应的全部身份属性放到类上;没写的键取 `BaseFetcher` 的缺省,不让中间父类的值漏下来;只在类上当前生效的值与目标不同才 `setattr`——形态继承自抓取器家族且本来就对的,不在每个子类上各落一份。这条与定义先后无关的前提是「目录里的类不继承自另一个目录里的类」,现状成立并有守卫。继承 `source_id` 的子类(测试替身)沿用父类已回投的值;模板(`is_template`)不在目录里,名称等仍是它自己的。因为挂在类定义上,不经注册表直接导入具体类的脚本拿到的也是目录里的身份。
+- **搬迁**:一次性脚本(未入库)按类上的生效值生成目录文件,并删掉六个 impl 文件里预设类体内的 744 行身份属性;身份行的行尾注释带进目录(31 处「观察期…删掉这一行」改写为「…改为 admitted」,10 处内容类型先验的说明原样)。`PresetXTimelineFetcher` 上「整批观察期」的准入默认值一并删除——X 预设的准入各自写在 `x.toml`。
+- **相对 §3.1 的差别**:没有 `daily`、`identity_keys`、`binding` 三个键——`daily` 仍由「非模板 ∧ 正式」推出(等 R2 余下部分),身份键与绑定参数(feed 地址、handle、user_id)仍在类上(R3);按 id 前缀分文件,所以 `hf.toml` 单列;`podcasts` / `collections` / `system`(含墓碑)三个文件未建。
+- **起不来而不是带病跑**:`fetchers/impl` 里的预设类在目录里没有条目 → 类定义时抛 `CatalogError`(缺一个目录文件 = 那一族预设类定义不出来);`discover()` 扫描前先加载目录,扫描中遇到 `CatalogError` 原样抛出,不走「单个模块加载失败只告警」的隔离。目录里有、代码里没有类的条目运行时不报错(R3 起会是常态),由测试守一一对应。
+- **守卫** `tests/test_source_catalog_files.py`:目录 id 与注册表里的非模板类一一对应;每个类上生效的身份属性等于目录值;在代码里写身份即红——扫描 `src/fetchers/impl/` 每个模块的语法树:预设类的类体(含条件块、解包、增量与带注解的赋值)不许出现身份属性,未注册的中间父类只许声明形态 / 平台 / 内容类型先验,类体之外对抓取器类的 `X.attr = …` 与 `setattr` 同样不许(17 个反例与不该误伤的例子逐一钉住);目录里的类不互相继承;加载器对 14 种结构错误逐一报错;预设类缺条目、缺一个目录文件、目录错误时 `discover()` 抛错、Python 3.10 的回退、新解释器里只导入具体类也带目录身份;目录文件已入库、镜像 `COPY src ./src`、`.dockerignore` 不排除它们。反向对照:往 `x_sama` 的类体里写回一行 `name`,守卫变红。
+- **验证**:改动前后给注册表里全部 69 个类各拍一份快照(26 个身份 / 绑定属性、注册顺序、`get_all_metadata()` 全量)——逐字相同。R1a 的对拍工具在基线 `0a4d5015` 与分支上各跑一遍(46 组函数级输出、35 个只读接口 × 三种身份,开发库副本与两份合成库):三份都是零差异。
+- **部署顺序与混版本**:目录文件是运行时必需的数据,镜像整目录拷 `src`、裸机走 `git archive`,两种形态都带;缺失或不全时启动即失败。不触及同步流;镜像行对账读的还是类属性,值不变;两端任意顺序。依赖面只多一条 3.10 才生效的 `tomli`(此前已由 alembic 间接带入)。
+- **流程变化**:加策展源 = 目录里加一条 + 一个带 `source_id` 的抓取器类;转正 = 把那一条的 `admission` 改成 `admitted`(此前是删类上的一行,X 预设是在子类上覆盖父类默认值)。`AGENTS.md` 抓取器一行、`docs/sources/curation_policy.md`、`node_audit_playbook.md`、`docs/architecture/fetchers-and-sources.md` 已同步。`tests/test_rss_fetcher.py` 的准入快照、`ESSENTIAL_FETCHER_IDS` 的断言照旧(它们读的是回投后的类属性)。
+
+**R2 首块的检视(2026-11-24)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Fable 5.2)。检视方从 `0a4d5015` 在内存里重载基线代码,确认 69 个类 × 26 个属性、注册顺序与全部注册元数据同分支一致,六个 impl 文件除身份赋值外语法树一致;pytest 因只读沙箱未能启动。首轮 2 P1 + 1 P2 + 3 P3,全部接受、无分歧;#1 / #2 / #4 同根(首稿把回投挂在 `register()` 上),按「回投提前到类定义时、缺条目即报错」一次改形。
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P1 | 回投抛出的 `CatalogError` 落进 `discover()` 的异常隔离,只打一行告警,注册表剩 4 个模板照常启动 | `discover()` 扫描前先加载目录,扫描中 `CatalogError` 原样抛出 |
+| 2 | P1 | 加载器不管目录全不全:缺 `x.toml` 时七个 X 预设带着「未命名抓取器 + admitted」注册,进每日采集的候选 | 预设类缺目录条目在类定义时抛错;加载器拒绝没有任何条目的文件 |
+| 3 | P2 | 无条件 `import tomllib` 要 Python ≥3.11,`requires-python` 与裸机文档仍是 ≥3.10 | 取不到 `tomllib` 时用 `tomli`,`pyproject` 加显式条件依赖,锁与两份镜像依赖清单按流程重生成 |
+| 4 | P3 | 直接导入具体类并实例化的脚本(`scripts/compare_web_backends.py`)不经注册表,拿到的名称是「未命名抓取器」 | 回投挂在 `BaseFetcher.__init_subclass__`,导入即带身份;脚本不必改 |
+| 5 | P3 | 语法树守卫漏检条件块内赋值、解包赋值、模块级 `Cls.name = …`、`setattr` | 扫描器改为类体递归 + 类体外属性写入 + `setattr`,反例逐一入测 |
+| 6 | P3 | `fetchers-and-sources.md`、`content-model.md`、`curation_policy.md` 仍在教把身份写在类上 | 三处改为目录文件的做法 |
+
+另:实现方自查把加载器从顶层包 `sources` 挪到 `fetchers/catalog_files.py`(`src/sources/` 只留数据)——顶层包名与 `api/sources.py` 同名,从 `src/api/` 目录直接跑脚本时会被遮住。
+
+**R2 首块的复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `2d101236`。六条逐条判「够」;未发现修订新引入的 P1。检视方另做的核对:不导入注册表时 62 个预设类的身份都已到位;`abc.ABC` 与合作式多重继承两种顺序下 `__init_subclass__` 都被调用,仓内没有截断调用链的覆写;继承 `source_id` 的替身、模板、`fetchers.impl` 之外的类没有被误伤;从基线重新加载代码对拍,69 个类 × 26 个属性、MRO、注册顺序与全部注册元数据仍完全一致;真实 `tomli` 的回退解析结果一致。观察两条:回退测试自身在真正的 3.10 上会先在 `import tomllib` 处失败(已顺手改成兼容导入);锁文件只带入两行在结构上完整,但 `uv lock --check` 在检视方的只读沙箱里跑不了,以 CI 的实际结果为准。检视方的 pytest 未能启动,全量套件由实现方本机跑(4125 条通过)。

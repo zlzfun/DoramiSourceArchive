@@ -12,9 +12,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api import deps
-from fetchers.registry import fetcher_registry
 from models.db import SourceStateRecord
-from services import credentials
+from services import credentials, source_catalog
 from services import x_api_config as x_config_service
 from services.x_api_quota import (
     POST_READ_MICROS,
@@ -94,9 +93,11 @@ def _probe_resource(session: Session) -> Dict[str, Any]:
     """优先重复读取已归档 Post（$0.005），无 Post 才回退 User（$0.010）。"""
     caches = x_config_service.all_user_caches(session)
     x_source_ids = set(caches)
-    for meta in fetcher_registry.get_all_metadata():
-        if meta.get("platform") == "x" and not meta.get("is_template"):
-            x_source_ids.add(str(meta["id"]))
+    x_presets = [
+        source_id for source_id, view in source_catalog.preset_views().items()
+        if view.platform == "x"
+    ]
+    x_source_ids.update(x_presets)
 
     post_candidates = []
     if x_source_ids:
@@ -139,14 +140,11 @@ def _probe_resource(session: Session) -> Dict[str, Any]:
                 "probe": "stable_user_lookup",
             }
     # 首次尚无缓存时使用策展 preset 的稳定 ID，避免额外 username 解析。
-    for meta in fetcher_registry.get_all_metadata():
-        if meta.get("platform") != "x" or meta.get("is_template"):
-            continue
-        fetcher_class = fetcher_registry.get_class(meta["id"])
-        user_id = str(getattr(fetcher_class, "user_id", "") or "").strip()
+    for source_id in x_presets:
+        user_id = source_catalog.preset_binding(source_id).get("user_id", "").strip()
         if user_id.isdigit():
             return {
-                "source_id": meta["id"],
+                "source_id": source_id,
                 "resource_type": "user",
                 "resource_id": user_id,
                 "seen_key": "users",

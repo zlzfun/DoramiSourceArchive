@@ -19,8 +19,8 @@ from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from api import deps
-from fetchers.registry import fetcher_registry
 from models.db import SourceConfigRecord
+from services import source_catalog
 from services.media_store import SSRFError
 
 router = APIRouter(tags=["ingest"])
@@ -54,7 +54,7 @@ async def source_builder_analyze(
 
     # select 单列返回字符串;旧写法 row.source_id 在有配置行时抛 AttributeError(源表全集后必然触发)。
     existing = {str(source_id) for source_id in session.exec(select(SourceConfigRecord.source_id)).all()}
-    existing |= set(fetcher_registry._fetchers.keys())
+    existing |= set(source_catalog.registry_source_ids(include_templates=True))
     try:
         result = await source_builder.analyze_url(
             req.url, session=session, existing_ids=existing,

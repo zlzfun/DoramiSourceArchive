@@ -3,9 +3,13 @@
 v3.31 退役清仓波自 storage/impl/vector_storage.py 迁出(原模块随向量层退役,
 取名职责与向量存储本就无关)。v3.22.5 源命名核对波拍板的机制不变:
 
-现役源一律经 :func:`friendly_source_name` 从抓取器注册表现取(改名零维护);
-``SOURCE_FRIENDLY_NAMES`` 只登记注册表查不到的 id——日报特殊源(非抓取器)与
+现役源一律经 :func:`friendly_source_name` 从预设源目录现取(改名零维护);
+``SOURCE_FRIENDLY_NAMES`` 只登记目录查不到的 id——日报特殊源(非抓取器)与
 「删类下线但归档文章仍留库」的历史源(名单同步 ``registry.DECOMMISSIONED_FETCHER_IDS``)。
+
+issue #262 R1a 余项:本模块不再直接读抓取器注册表,预设源的名称与策展元数据经
+``services.source_catalog``(读注册表身份的唯一入口)。函数签名与取名 / 角色的优先级不变。
+``source_catalog`` 在函数内延迟导入——``models.db`` 导入本模块,顶层导入会成环。
 
 v3.35 起本模块同时是**信息角色**的后端单点::func:`source_role` 以运行时
 SourceConfig/注册表/内建目录元数据(source_scope / provenance_tier)判定
@@ -64,7 +68,7 @@ def source_role(
     """source_id → 信息角色 'official' | 'media' | 'personal' | 'leaderboard'。
 
     判定序与前端 sourceRoleOf 一致:个人→榜单→媒体→官方。调用方已持有的
-    SourceConfig 元数据优先，其次查注册表，再以 Podcast 内建目录兜底；三处都
+    SourceConfig 元数据优先，其次查预设源目录，再以 Podcast 内建目录兜底；三处都
     缺失才回落 media，权威加成只授予身份可考的策展源。
     """
     if not source_id:
@@ -84,28 +88,24 @@ def source_role(
                 else DEFAULT_SOURCE_ROLE
             ),
         )
-    try:
-        from fetchers.registry import fetcher_registry
-
-        fetcher_class = fetcher_registry.get_class(source_id)
-    except Exception:  # noqa: BLE001 - 判定失败绝不阻断日报主流程
-        fetcher_class = None
-    if fetcher_class is not None:
-        return _role_from_metadata(
-            str(getattr(fetcher_class, "source_scope", "") or ""),
-            str(getattr(fetcher_class, "provenance_tier", "") or ""),
-            fallback="official",
-        )
-
     # Curated Podcast IDs deliberately are not registry classes: all execute via
     # the shared generic_podcast_rss template.  The immutable catalog is a cheap
     # fallback for callers that do not already hold their SourceConfig row.
     try:
-        from services.podcast_catalog import catalog_by_id
+        from services import source_catalog
 
-        catalog_source = catalog_by_id().get(source_id)
-    except Exception:  # noqa: BLE001 - role lookup must never block a digest
-        catalog_source = None
+        preset = source_catalog.registry_view(source_id)
+        catalog_source = (
+            None if preset is not None else source_catalog.podcast_catalog_source(source_id)
+        )
+    except Exception:  # noqa: BLE001 - 判定失败绝不阻断日报 / 早报主流程
+        preset = catalog_source = None
+    if preset is not None:
+        return _role_from_metadata(
+            preset.source_scope,
+            preset.provenance_tier,
+            fallback="official",
+        )
     if catalog_source is not None:
         return _role_from_metadata(
             str(catalog_source.source_scope or ""),
@@ -116,15 +116,15 @@ def source_role(
 
 
 def _static_source_name(source_id: str) -> str:
-    """前两级取名:注册表 name → 兜底映射;都没有返回空串(不碰数据库)。
+    """前两级取名:预设源目录的 name → 兜底映射;都没有返回空串(不碰数据库)。
 
-    延迟导入注册表(触发 impl/ 扫描),避免服务层在 import 期背上抓取器依赖。
+    延迟导入源目录(首次调用触发 impl/ 扫描),避免服务层在 import 期背上抓取器依赖。
     """
     try:
-        from fetchers.registry import fetcher_registry
+        from services import source_catalog
 
-        fetcher_class = fetcher_registry.get_class(source_id)
-        name = getattr(fetcher_class, "name", "") if fetcher_class else ""
+        preset = source_catalog.registry_view(source_id)
+        name = preset.name if preset is not None else ""
         if name:
             return str(name)
     except Exception:  # noqa: BLE001 - 取名失败绝不阻断展示/检索主流程
@@ -133,7 +133,7 @@ def _static_source_name(source_id: str) -> str:
 
 
 def friendly_source_name(source_id: str) -> str:
-    """source_id → 读者可读来源名:现役源取注册表 name,其余查兜底映射,最后回落原 id。"""
+    """source_id → 读者可读来源名:现役源取预设源目录的 name,其余查兜底映射,最后回落原 id。"""
     if not source_id:
         return source_id
     name = _static_source_name(source_id)

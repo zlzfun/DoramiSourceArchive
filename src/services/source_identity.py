@@ -65,20 +65,15 @@ def _is_x_config(row: SourceConfigRecord) -> bool:
 
 def _registry_x_sources() -> Iterable[tuple[str, str, str]]:
     try:
-        from fetchers.registry import fetcher_registry
-    except Exception:  # noqa: BLE001 - 注册表不可用时只按配置行解析
+        from services import source_catalog  # 延迟导入:source_rows → 本模块 → source_catalog
+    except Exception:  # noqa: BLE001 - 源目录不可用时只按配置行解析
         return []
     out = []
-    for source_id, cls in fetcher_registry._fetchers.items():
-        if getattr(cls, "is_template", False):
+    for source_id, view in source_catalog.preset_views().items():
+        if view.platform.casefold() != X_PLATFORM:
             continue
-        if str(getattr(cls, "platform", "") or "").strip().casefold() != X_PLATFORM:
-            continue
-        out.append((
-            source_id,
-            str(getattr(cls, "handle", "") or ""),
-            str(getattr(cls, "user_id", "") or ""),
-        ))
+        binding = source_catalog.preset_binding(source_id)
+        out.append((source_id, binding.get("handle", ""), binding.get("user_id", "")))
     return out
 
 

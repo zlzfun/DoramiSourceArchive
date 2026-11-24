@@ -253,19 +253,7 @@ class PresetGitHubRepositoriesFetcher(GenericGitHubRepositoriesFetcher):
 
 class DeepSeekGitHubRepositoriesFetcher(PresetGitHubRepositoriesFetcher):
     source_id = "github_deepseek_repositories"
-    name = "DeepSeek 新仓库"
-    description = "deepseek-ai GitHub 组织下的新公开仓库。"
-    icon = "🧠"
     owner = "deepseek-ai"
-    source_owner = "deepseek-ai"
-    source_brand = "deepseek"
-    source_scope = "open_model_family"
-    source_channel = "github_repository_activity"
-    source_url = "https://github.com/deepseek-ai"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
 
 class GenericHuggingFaceModelsFetcher(BaseFetcher):
@@ -388,19 +376,7 @@ class PresetHuggingFaceModelsFetcher(GenericHuggingFaceModelsFetcher):
 
 class DeepSeekHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     source_id = "hf_deepseek_models"
-    name = "DeepSeek 新模型"
-    description = "DeepSeek 在 Hugging Face 上发布的新模型。"
-    icon = "🤗"
     author = "deepseek-ai"
-    source_owner = "deepseek-ai"
-    source_brand = "deepseek"
-    source_scope = "open_model_family"
-    source_channel = "model_repository"
-    source_url = "https://huggingface.co/deepseek-ai"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
 
 class QwenHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
@@ -409,19 +385,7 @@ class QwenHuggingFaceModelsFetcher(PresetHuggingFaceModelsFetcher):
     确定性落点,补上后开源发布不再依赖媒体转述。"""
 
     source_id = "hf_qwen_models"
-    name = "Qwen 新模型"
-    description = "通义千问 Qwen 在 Hugging Face 上发布的新模型。"
-    icon = "🤗"
     author = "Qwen"
-    source_owner = "alibaba"
-    source_brand = "qwen"
-    source_scope = "open_model_family"
-    source_channel = "model_repository"
-    source_url = "https://huggingface.co/Qwen"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
 
 class GitHubTrendingFetcher(BaseFetcher):
@@ -438,22 +402,8 @@ class GitHubTrendingFetcher(BaseFetcher):
     """
     source_id = "github_trending_daily"
     content_type = "github_trending"
-    default_kind = "project"  # 趋势榜条目:内容类型「项目」
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
 
-    name = "GitHub Trending 日榜"
-    description = "GitHub 全站每日趋势仓库榜,每天一则汇总,开源热度信号。"
-    icon = "📈"
 
-    source_owner = "github"
-    source_brand = "GitHub Trending"
-    source_scope = "community"
-    source_channel = "ranking"
-    source_url = "https://github.com/trending"
-    provenance_tier = "tier1_curated"
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
     trending_url = "https://github.com/trending?since=daily"
     default_limit = 25
