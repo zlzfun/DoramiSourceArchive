@@ -325,7 +325,11 @@ def test_importing_a_preset_class_directly_carries_catalog_identity():
 def test_loader_falls_back_to_tomli_without_tomllib():
     """Python 3.10 没有 ``tomllib``:加载器改用 ``tomli``(这里把标准库的那份挡掉,再冒名顶上去模拟)。"""
     done = _run_python("""
-        import sys, tomllib as real
+        import sys
+        try:
+            import tomllib as real
+        except ImportError:                      # 真的在 3.10 上跑这条测试:本来就只有 tomli
+            import tomli as real
         sys.modules["tomli"] = real
         sys.modules["tomllib"] = None            # import tomllib → ImportError
         from fetchers import catalog_files

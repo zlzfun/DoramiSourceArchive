@@ -436,3 +436,5 @@ shape = "article"
 | 6 | P3 | `fetchers-and-sources.md`、`content-model.md`、`curation_policy.md` 仍在教把身份写在类上 | 三处改为目录文件的做法 |
 
 另:实现方自查把加载器从顶层包 `sources` 挪到 `fetchers/catalog_files.py`(`src/sources/` 只留数据)——顶层包名与 `api/sources.py` 同名,从 `src/api/` 目录直接跑脚本时会被遮住。
+
+**R2 首块的复检(最后一轮)**:同一会话 resume,`gpt-6-astra` / `ultra` / 只读,只看修订提交 `2d101236`。六条逐条判「够」;未发现修订新引入的 P1。检视方另做的核对:不导入注册表时 62 个预设类的身份都已到位;`abc.ABC` 与合作式多重继承两种顺序下 `__init_subclass__` 都被调用,仓内没有截断调用链的覆写;继承 `source_id` 的替身、模板、`fetchers.impl` 之外的类没有被误伤;从基线重新加载代码对拍,69 个类 × 26 个属性、MRO、注册顺序与全部注册元数据仍完全一致;真实 `tomli` 的回退解析结果一致。观察两条:回退测试自身在真正的 3.10 上会先在 `import tomllib` 处失败(已顺手改成兼容导入);锁文件只带入两行在结构上完整,但 `uv lock --check` 在检视方的只读沙箱里跑不了,以 CI 的实际结果为准。检视方的 pytest 未能启动,全量套件由实现方本机跑(4125 条通过)。
