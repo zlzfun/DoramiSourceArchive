@@ -66,7 +66,7 @@
 
 ## 每日备份失败(issue #330 沉淀)
 
-- 先看 `data/backups/status.json`(或管理面「存储与备份」):`status`、`error`、`last_success_at`、`consecutive_failures`;日志搜 `备份失败`。**容器 healthy 不代表备份在成功**——2026-10 连续失败三周、2026-11 失败 15 小时,都是别的事顺带发现的。
+- 先看 `data/backups/status.json`(或管理面「存储与备份」):`status`、`error`、`last_success_at`、`consecutive_failures`、`retry_seconds`(下一次重试不早于上次尝试之后这么多秒);日志搜 `备份失败`。**容器 healthy 不代表备份在成功**——2026-10 连续失败三周、2026-11 失败 15 小时,都是别的事顺带发现的。
 - `backup_insufficient_space`:余盘门槛见 [`storage-backups.md`](storage-backups.md)「余盘门槛与重试间隔」。能动的是构建缓存(`docker builder prune -f`)、`backups/` 里较旧的部署前库备份、`data/backups` 的每日归档数(`[backup] retain_local`)、日志,或扩盘。
 - 其余错误码连续出现时重试间隔会拉长到最长 6 小时。修好原因后在容器里跑 `python scripts/storage_backup.py create` 立刻试一次。
 - 判断「是不是备份在刷盘」:`/proc/<pid>/io` 的 `read_bytes` 与 `write_bytes` 同量级、`data/backups/` 下有修改时间很新的 `.backup-*` 目录。v3.70.2 及更早版本空间不足时每轮白拷约 2 ×(库 + 回执目录),十分钟一轮。

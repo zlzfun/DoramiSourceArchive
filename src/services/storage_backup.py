@@ -33,7 +33,8 @@ logger = logging.getLogger("dorami.backup")
 
 # A failed run is retried after ten minutes; each further failure in a row doubles
 # the wait up to this ceiling (issue #330: a run that cannot succeed repeats its
-# whole copy, and nothing else slows it down).
+# whole copy, and nothing else slows it down). A failure that cost nothing asks
+# for ten minutes again, however long the streak before it.
 _RETRY_BASE_SECONDS = 600
 _RETRY_MAX_SECONDS = 6 * 3600
 _RECEIPT_FILE = re.compile(r"[0-9a-f]{64}\.(json|wav|wav\.zlib|evicted)")
@@ -286,7 +287,7 @@ class BackupService:
         if self.config.enabled:
             allowed = {"status", "last_attempt_at", "last_success_at", "error", "archive", "sha256",
                        "size_bytes", "files", "external_objects", "object_key", "pending_upload", "snapshot_at",
-                       "consecutive_failures"}
+                       "consecutive_failures", "retry_seconds"}
             try:
                 saved = json.loads((self.directory / "status.json").read_text())
                 result.update({key: value for key, value in saved.items() if key in allowed})
@@ -322,10 +323,18 @@ class BackupService:
         value = state.get("consecutive_failures")
         return value if type(value) is int and value > 0 else 0
 
+    def _ceiling(self):
+        return min(_RETRY_MAX_SECONDS, max(_RETRY_BASE_SECONDS, self.config.interval_hours * 3600))
+
+    def _backoff(self, failures):
+        return min(_RETRY_BASE_SECONDS * 2 ** min(max(failures - 1, 0), 16), self._ceiling())
+
     def _retry_delay(self, state):
-        doublings = min(max(self._failures(state) - 1, 0), 16)
-        return min(_RETRY_BASE_SECONDS * 2 ** doublings, _RETRY_MAX_SECONDS,
-                   max(_RETRY_BASE_SECONDS, self.config.interval_hours * 3600))
+        """The wait the last failure asked for; ten minutes when it left no word."""
+        value = state.get("retry_seconds")
+        if type(value) is not int or value < _RETRY_BASE_SECONDS:
+            return _RETRY_BASE_SECONDS
+        return min(value, self._ceiling())
 
     def _not_due(self, state, now):
         if now - _epoch(state.get("last_success_at")) < self.config.interval_hours * 3600:
@@ -589,8 +598,11 @@ class BackupService:
         code = str(error) if isinstance(error, BackupError) else "backup_storage_unavailable"
         # Another holder of the lock and a shortfall settled before copying cost
         # nothing to retry; every other failure in a row widens the gap.
-        if code != "backup_busy" and not isinstance(error, _PlannedShortfall):
+        if code == "backup_busy" or isinstance(error, _PlannedShortfall):
+            state["retry_seconds"] = _RETRY_BASE_SECONDS
+        else:
             state["consecutive_failures"] = self._failures(state) + 1
+            state["retry_seconds"] = self._backoff(state["consecutive_failures"])
         state.update(status="failed", error=code, last_attempt_at=self.clock())
         self._memory_state = state
         if code != "backup_busy":
@@ -630,7 +642,7 @@ class BackupService:
             if self.config.destination == "oss":
                 state["object_key"] = self._upload(archive, checksum, size)
             state.update(status="succeeded", last_success_at=state["snapshot_at"], pending_upload=False,
-                         consecutive_failures=0)
+                         consecutive_failures=0, retry_seconds=_RETRY_BASE_SECONDS)
             self._save_state(state)
             logger.info("备份完成: %s 字节,%s 个文件,%s 个外部对象",
                         state.get("size_bytes"), state.get("files"), state.get("external_objects"))

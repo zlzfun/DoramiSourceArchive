@@ -526,6 +526,12 @@ def _count_attempts(service, now):
     return attempts
 
 
+def _restart(service, now):
+    return BackupService(service.config, service.database_url, service.receipt_root,
+                         media_root=service.roots["media"], podcast_root=service.roots["podcast"],
+                         clock=lambda: now[0])
+
+
 def _gap_to_next_attempt(service, attempts, now, limit=8 * 3600):
     last, seen = attempts[-1], len(attempts)
     while len(attempts) == seen:
@@ -595,9 +601,7 @@ def test_failures_in_a_row_widen_the_retry_gap_until_a_success(service):
     assert gaps == [600, 1200, 2400, 4800, 9600, 19200, 21600, 21600]
     assert service.status()["consecutive_failures"] == 9
     # 进程重启后间隔照旧:计数落在状态文件里。
-    restarted = BackupService(service.config, service.database_url, service.receipt_root,
-                              media_root=service.roots["media"], podcast_root=service.roots["podcast"],
-                              clock=lambda: now[0])
+    restarted = _restart(service, now)
     again = _count_attempts(restarted, now)
     now[0] += 21600 - 60
     assert restarted.run_if_due()["status"] == "failed" and not again
@@ -639,6 +643,103 @@ def test_failures_that_cost_nothing_keep_the_ten_minute_retry(service, monkeypat
     free[0] = 10**12
     assert _gap_to_next_attempt(service, attempts, now) == 600
     assert service.status()["status"] == "succeeded"
+
+
+def test_a_failure_that_cost_nothing_is_retried_in_ten_minutes_even_after_a_long_streak(service, monkeypatch):
+    # 检视 P2:间隔已经被拉长之后,再遇到不花代价的失败,不能继续按长间隔等——腾出空间 / 放开目录后要十分钟内恢复。
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    _unpaid_audio(service)
+    attempts = _count_attempts(service, now)
+    assert service.run_if_due()["status"] == "failed"
+    assert [_gap_to_next_attempt(service, attempts, now) for _ in range(2)] == [600, 1200]
+    free = [0]
+    with monkeypatch.context() as short:
+        short.setattr(backup_module.shutil, "disk_usage", lambda _path: SimpleNamespace(free=free[0]))
+        assert _gap_to_next_attempt(service, attempts, now) == 2400
+        state = service.status()
+        assert state["last_error"] == "backup_insufficient_space" and state["consecutive_failures"] == 3
+        assert _gap_to_next_attempt(service, attempts, now) == 600
+        # 落在状态文件里:重启后仍是十分钟。
+        service = _restart(service, now)
+        attempts = _count_attempts(service, now)
+        now[0] += 540
+        assert service.run_if_due()["status"] == "failed" and not attempts
+        now[0] += 60
+        assert service.run_if_due()["last_error"] == "backup_insufficient_space" and len(attempts) == 1
+    # 空间回来了、原来的毛病还在:接着原来的次数往下数。
+    assert _gap_to_next_attempt(service, attempts, now) == 600
+    state = service.status()
+    assert state["last_error"] == "backup_paid_audio_missing_or_corrupt" and state["consecutive_failures"] == 4
+    with (service.receipt_root / ".lock").open("wb") as lock:   # 到点时语音合成正占着回执目录
+        flock(lock, LOCK_EX)
+        assert _gap_to_next_attempt(service, attempts, now) == 4800
+        assert service.status()["last_error"] == "backup_busy"
+        assert _gap_to_next_attempt(service, attempts, now) == 600
+    assert _gap_to_next_attempt(service, attempts, now) == 600
+    assert service.status()["consecutive_failures"] == 5
+
+
+def test_interrupted_run_waits_as_long_as_the_last_failure_asked(service, monkeypatch):
+    # 进程在备份中途被杀(部署重启):状态停在 running。正处在连续失败里就按那次失败留下的间隔;
+    # 上一次是成功就十分钟后重来(成功把间隔也复位)。
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+
+    class Killed(BaseException):
+        pass
+
+    def killed_while(target):
+        with monkeypatch.context() as dying:
+            def die(*_args):
+                raise Killed()
+            dying.setattr(target, "_create_archive", die)
+            with pytest.raises(Killed):
+                target.run_if_due()
+        target = _restart(target, now)
+        assert target.status()["status"] == "running"
+        return target, _count_attempts(target, now)
+
+    marker = _unpaid_audio(service)
+    attempts = _count_attempts(service, now)
+    assert service.run_if_due()["status"] == "failed"
+    assert [_gap_to_next_attempt(service, attempts, now) for _ in range(2)] == [600, 1200]
+    now[0] += 2400
+    service, attempts = killed_while(service)
+    now[0] += 2399
+    service.run_if_due()
+    assert not attempts
+    marker.write_bytes(b"")
+    now[0] += 1
+    assert service.run_if_due()["status"] == "succeeded" and len(attempts) == 1
+    now[0] += 24 * 3600 + 1
+    service, attempts = killed_while(service)
+    now[0] += 599
+    service.run_if_due()
+    assert not attempts
+    now[0] += 1
+    assert service.run_if_due()["status"] == "succeeded" and len(attempts) == 1
+
+
+@pytest.mark.parametrize("recorded, expected", [(10**12, 21600), (-5, 600), ("3600", 600), (True, 600), (None, 600)])
+def test_unusable_recorded_gap_cannot_stall_or_hurry_retries(service, recorded, expected):
+    # 状态文件是磁盘上的一份 JSON:坏值不能让备份永远不再重试,也不能让它比十分钟更密。
+    now = [1_800_000_000]
+    service.clock = lambda: now[0]
+    _unpaid_audio(service)
+    assert service.run_if_due()["status"] == "failed"
+    path = service.directory / "status.json"
+    state = json.loads(path.read_text())
+    state["retry_seconds"] = recorded
+    path.write_text(json.dumps(state))
+    service = _restart(service, now)
+    attempts = _count_attempts(service, now)
+    now[0] += expected - 1
+    service.run_if_due()
+    assert not attempts
+    now[0] += 1
+    service.run_if_due()
+    assert len(attempts) == 1
 
 
 def test_outcomes_are_logged_with_fixed_codes_only(service, captured_log, monkeypatch):
