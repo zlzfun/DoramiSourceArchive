@@ -24,6 +24,7 @@ from api.tokens import hash_subscription_token, normalize_delivery_policy
 from models.db import ArticleRecord, ReaderFeedTokenRecord, ReaderSubscriptionRecord, UserRecord
 from services import source_visibility
 from services.accounts import account_username_for
+from services.token_usage import KIND_FEED, KIND_SUBSCRIPTION, TokenIdentity
 
 
 def serialize_subscription(record: ReaderSubscriptionRecord, token: Optional[str] = None) -> Dict[str, Any]:
@@ -168,15 +169,93 @@ def resolve_all_visible_source_ids(session: Session) -> List[str]:
     return sorted(collected)
 
 
-def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
-    """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
+def subscription_token_identity(session: Session, record: ReaderSubscriptionRecord) -> Optional[TokenIdentity]:
+    """一条订阅自带的 ``dsub_`` 令牌是谁的、是哪一枚(交付计量用,issue #312)。
+
+    在鉴权通过的那一刻调。订阅行与账号世代(建号时间)用**同一条语句**取——分两次读的话,中间若
+    恰好删号又同名重建,会把旧订阅配上新账号的世代,这次调用就记到新人名下。读回来的令牌哈希
+    与刚校验过的不一致(订阅在这一瞬间被删、被换了令牌)时返回 None:这次不记,不猜。
+    """
+    row = session.exec(
+        select(
+            ReaderSubscriptionRecord.owner_username,
+            ReaderSubscriptionRecord.name,
+            ReaderSubscriptionRecord.token_hash,
+            ReaderSubscriptionRecord.token_preview,
+            UserRecord.created_at,
+        )
+        .join(UserRecord, UserRecord.username == ReaderSubscriptionRecord.owner_username, isouter=True)
+        .where(ReaderSubscriptionRecord.id == record.id)
+    ).first()
+    if row is None or row[2] != record.token_hash:
+        return None
+    owner, name, token_hash, preview, account_created_at = row
+    return TokenIdentity(
+        username=owner or "",
+        kind=KIND_SUBSCRIPTION,
+        token_hash=token_hash,
+        preview=preview,
+        subscription_id=record.id,
+        subscription_name=name or "",
+        account_created_at=account_created_at or "",   # 账号行不在:空串,永远对不上
+    )
+
+
+def resolve_feed_token_identity(session: Session, token: str) -> Optional[TokenIdentity]:
+    """个人聚合令牌 → 它是谁的、是哪一枚；令牌缺失/无效返回 None。
+
+    令牌行与账号世代(建号时间)用同一条语句取,理由同 ``subscription_token_identity``。
+    """
     if not token:
         return None
     token_hash = hash_subscription_token(token)
-    record = session.exec(
-        select(ReaderFeedTokenRecord).where(ReaderFeedTokenRecord.token_hash == token_hash)
+    row = session.exec(
+        select(
+            ReaderFeedTokenRecord.owner_username,
+            ReaderFeedTokenRecord.token_hash,
+            ReaderFeedTokenRecord.token_preview,
+            UserRecord.created_at,
+        )
+        .join(UserRecord, UserRecord.username == ReaderFeedTokenRecord.owner_username, isouter=True)
+        .where(ReaderFeedTokenRecord.token_hash == token_hash)
     ).first()
-    return record.owner_username if record else None
+    if row is None:
+        return None
+    owner, stored_hash, preview, account_created_at = row
+    return TokenIdentity(
+        username=owner,
+        kind=KIND_FEED,
+        token_hash=stored_hash,
+        preview=preview,
+        account_created_at=account_created_at or "",   # 账号行不在:空串,永远对不上
+    )
+
+
+def resolve_feed_token_owner(session: Session, token: str) -> Optional[str]:
+    """个人聚合令牌 → 归属用户名；令牌缺失/无效返回 None。"""
+    identity = resolve_feed_token_identity(session, token)
+    return identity.username if identity else None
+
+
+def resolve_token_identity(token: str) -> Optional[TokenIdentity]:
+    """任一读取类令牌 → 它是谁的、是哪一枚(MCP 工具鉴权通过的那一刻调,供交付计量)。
+
+    与 ``resolve_subscription_sources_by_token`` 同一套先后:先按单订阅令牌(启用中的订阅)找,
+    再按个人聚合令牌找;都对不上返回 None。
+    """
+    if not token:
+        return None
+    token_hash = hash_subscription_token(token)
+    with Session(deps.get_db_sink().engine) as session:
+        record = session.exec(
+            select(ReaderSubscriptionRecord).where(
+                ReaderSubscriptionRecord.token_hash == token_hash,
+                ReaderSubscriptionRecord.is_active == True,  # noqa: E712
+            )
+        ).first()
+        if record:
+            return subscription_token_identity(session, record)
+        return resolve_feed_token_identity(session, token)
 
 
 def resolve_subscription_sources_by_token(token: str) -> Optional[List[str]]:

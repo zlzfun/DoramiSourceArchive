@@ -358,13 +358,17 @@ def landing_env(monkeypatch, tmp_path):
     keys: list[str | None] = []
 
     async def fake_enqueue(*, episode_id, target, selection_override, reason, actor,
-                           idempotency_key=None, idempotency_key_prefix=None):
+                           idempotency_key=None, idempotency_key_prefix=None,
+                           reused_owner=None):
         calls.append(episode_id)
         keys.append(idempotency_key_prefix)
         exc = outcomes.get(episode_id)
         if isinstance(exc, BaseException):
             raise exc
-        if callable(exc):
+        if exc == "reuse-live-owner":
+            # 正式入队没有新建处理单,只是复用了拥有这份转写的在途那一单。
+            reused_owner.append(f"owner-of-{episode_id}")
+        elif callable(exc):
             await exc()
         return {"episode_id": episode_id, "idempotency_key": idempotency_key}
 
@@ -727,6 +731,28 @@ def test_success_then_failed_reresolution_keeps_memory(landing_env, monkeypatch)
     monkeypatch.setattr(app_module, "collect_podcast_landing_candidates", real_collect)
     _run()
     assert env.calls == []
+
+
+def test_reusing_a_live_owner_is_not_remembered_as_enqueued(landing_env):
+    """入队只是复用了在途处理单时,不把候选记成「已入队」(issue #318 检视)。
+
+    那一单若在重解析之前终态失败,重解析会再给出这份转写的候选;把它记成已入队
+    的话库里并没有接手的处理单,而同一 revision 从此被永久跳过。
+    """
+
+    env = landing_env
+    env.outcomes["ep-mid"] = "reuse-live-owner"
+    stats = _run()
+    assert stats["succeeded"] == 2 and "ep-mid" in env.calls
+    state = _state(env.sink)
+    assert state["ep-high"]["kind"] == "enqueued"  # 真正新建的照常记
+    assert "ep-mid" not in state
+    # 下一轮:这个候选仍然会被拿去入队(此时拥有者已不在途,正式入队会新建一单)。
+    env.calls.clear()
+    env.outcomes.pop("ep-mid")
+    _run()
+    assert env.calls == ["ep-mid"]
+    assert _state(env.sink)["ep-mid"]["kind"] == "enqueued"
 
 
 def test_request_processing_derives_auto_key_inside_lock(tmp_path, monkeypatch):

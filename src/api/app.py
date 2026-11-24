@@ -4,6 +4,8 @@ import asyncio
 import importlib
 import json
 import logging
+import re
+import uuid
 import datetime
 from dataclasses import dataclass, field
 import base64
@@ -14,11 +16,11 @@ import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response, Request
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from sqlmodel import Session, select
 from sqlalchemy import delete
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -78,6 +80,7 @@ from api.routers import ingest_push as ingest_push_router
 from api.routers import subscriptions as subscriptions_router
 from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
+from api.routers import admin_reader_briefs as admin_reader_briefs_router
 from api.routers import taxonomy as taxonomy_router
 from api.routers import taxonomy_review as taxonomy_review_router
 from api.routers import analysis_ops as analysis_ops_router
@@ -178,6 +181,7 @@ from llm.client import UsageMeta
 from llm.client import set_usage_recorder as _set_llm_usage_recorder
 
 from starlette.responses import JSONResponse as StarletteJSONResponse
+from api.delivery_metering import record_mcp_usage, resolve_mcp_identity
 from mcp_server import build_mcp_app
 from config import settings
 
@@ -568,7 +572,12 @@ async def lifespan(app: FastAPI):
             else:
                 _mcp_enabled = rec.value.lower() == "true"
         # Build fresh FastMCP instance (session_manager can only be run() once per instance)
-        mcp = build_mcp_app(db_sink, subscription_resolver=resolve_subscription_sources_by_token)
+        mcp = build_mcp_app(
+            db_sink,
+            subscription_resolver=resolve_subscription_sources_by_token,
+            usage_identity=resolve_mcp_identity,   # 令牌交付计量(issue #312):鉴权时定身份,
+            usage_recorder=record_mcp_usage,       # 成功 / 被拒后入队
+        )
         _mcp_gate._app = mcp.streamable_http_app()
     else:
         _mcp_gate._app = None
@@ -626,8 +635,18 @@ async def lifespan(app: FastAPI):
             reload_user_rss_schedule()
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
+        if runtime_reader_enabled():
+            _ensure_interval_job(
+                "personal_digest_pending",
+                execute_personal_digest_pending_job,
+                seconds=30,
+                max_instances=1,
+            )
 
     from services import translation_jobs, title_translation
+    from services.briefs_runtime import BriefRuntime
+
+    app.state.briefs_runtime = BriefRuntime(db_sink.engine)
     title_worker = asyncio.create_task(title_translation.worker_loop(db_sink.engine))
     translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
                           if runtime_reader_enabled() else None)
@@ -638,6 +657,7 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        await app.state.briefs_runtime.close()
         title_worker.cancel()
         await asyncio.gather(title_worker, return_exceptions=True)
         if translation_worker is not None:
@@ -652,6 +672,38 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
+
+BRIEFS_PATHS = admin_reader_briefs_router.PATHS
+
+
+@app.exception_handler(HTTPException)
+async def briefs_http_exception(request: Request, exc: HTTPException):
+    if request.url.path not in BRIEFS_PATHS:
+        return await http_exception_handler(request, exc)
+    request_id = admin_reader_briefs_router.resolve_request_id(request)
+    code = "INTERNAL_ERROR"
+    message = "unable to complete brief request"
+    if isinstance(exc.detail, dict):
+        code = str(exc.detail.get("code") or code)
+        message = str(exc.detail.get("message") or message)
+    elif exc.status_code == 401:
+        code, message = "UNAUTHENTICATED", "valid admin Cookie session required"
+    elif exc.status_code == 403:
+        code, message = "FORBIDDEN", "admin role required"
+    elif exc.status_code == 422:
+        code, message = "INVALID_ARGUMENT", "request arguments are invalid"
+    elif exc.status_code == 429:
+        code, message = "RATE_LIMITED", "rate limit exceeded"
+    elif exc.status_code == 503:
+        code, message = "SERVICE_UNAVAILABLE", "service temporarily unavailable"
+    headers = admin_reader_briefs_router.contract_headers(request_id)
+    if exc.headers and "Retry-After" in exc.headers:
+        headers["Retry-After"] = exc.headers["Retry-After"]
+    return StarletteJSONResponse(
+        {"error": {"code": code, "message": message, "request_id": request_id}},
+        status_code=exc.status_code,
+        headers=headers,
+    )
 
 
 @app.exception_handler(ObjectStorageError)
@@ -684,6 +736,13 @@ def _is_podcast_source_media_validation_path(path: str) -> bool:
 async def stable_podcast_reader_validation_error(
     request: Request, exc: RequestValidationError
 ):
+    if request.url.path in BRIEFS_PATHS:
+        request_id = admin_reader_briefs_router.resolve_request_id(request)
+        return StarletteJSONResponse(
+            {"error": {"code": "INVALID_ARGUMENT", "message": "request arguments are invalid", "request_id": request_id}},
+            status_code=422,
+            headers=admin_reader_briefs_router.contract_headers(request_id),
+        )
     if _is_podcast_text_reader_path(request.url.path):
         return StarletteJSONResponse(
             {
@@ -852,8 +911,13 @@ _PODCAST_PREMIUM_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 _ARTICLE_LISTEN_GUIDE_TASKS: dict[str, asyncio.Task] = {}
 
 
-def schedule_podcast_premium_guide(episode_id: str) -> bool:
-    """Start one provider-neutral guide conversion without duplicate local runs."""
+def schedule_podcast_premium_guide(episode_id: str, *, budget_wait: bool = True) -> bool:
+    """Start one provider-neutral guide conversion without duplicate local runs.
+
+    ``budget_wait`` 默认真:这是候选巡检拉起自动运行的入口,月度语音预算用完时等待
+    后由巡检再拉起。管理端手动「运行」要传 ``False``——那样的单集不一定满足巡检的
+    条件,等下去没有人能把它拉起来,所以预算不够时照旧落为终态(issue #322)。
+    """
 
     existing = _PODCAST_PREMIUM_GUIDE_TASKS.get(episode_id)
     if existing is not None and not existing.done():
@@ -917,22 +981,28 @@ def schedule_podcast_premium_guide(episode_id: str) -> bool:
                 text_provider=OpenAiCompatiblePremiumGuideTextProvider(llm_config),
                 tts_provider=tts_provider,
                 score_threshold=premium_threshold,
+                budget_wait=budget_wait,
             )
         except Exception as exc:  # noqa: BLE001 - status is persisted by service
             podcast_premium_guide_service.fail_premium_guide(
                 db_sink.engine,
                 episode_id,
                 exc,
+                budget_wait=budget_wait,
             )
-            capacity_wait = getattr(exc, "code", "") in {
-                "tts_receipt_cache_full",
-                "tts_receipt_disk_full",
-            }
+            code = str(getattr(exc, "code", "") or "")
+            if budget_wait and code in podcast_premium_guide_service.BUDGET_WAIT_CODES:
+                outcome = "因语音预算等待重试"
+            elif code in podcast_premium_guide_service.CAPACITY_RETRY_CODES:
+                outcome = "因回执容量等待重试"
+            else:
+                outcome = "生成失败"
             _dorami_logger.warning(
-                "Podcast 精品导读%s episode=%s (%s)",
-                "因回执容量等待重试" if capacity_wait else "生成失败",
+                "Podcast 精品导读%s episode=%s (%s%s)",
+                outcome,
                 episode_id,
                 type(exc).__name__,
+                f": {code}" if code else "",
             )
 
     task = asyncio.create_task(_run())
@@ -1197,6 +1267,7 @@ async def enqueue_podcast_processing_with_input(
     reason: str,
     actor: str,
     idempotency_key_prefix: str | None = None,
+    reused_owner: list[str] | None = None,
 ):
     """Prepare a full-analysis input, then issue the durable admin command.
 
@@ -1235,6 +1306,7 @@ async def enqueue_podcast_processing_with_input(
             idempotency_key_prefix=idempotency_key_prefix,
             reason=reason,
             actor=actor,
+            reused_owner=reused_owner,
         )
 
     publisher_failure: BaseException | None = None
@@ -1457,6 +1529,18 @@ def _resolve_podcast_landing_candidate(
             and selected.artifact_id == analysis.transcript_artifact_id
         ):
             return None
+        if (
+            not locator_revision
+            and podcast_processing_admin_service.transcript_is_owned_by_live_processing(
+                session, episode_id=article_id, artifact_id=selected.artifact_id
+            )
+        ):
+            # 在途的那一单会自己分析这份转写;等它落定后上面那条判断自然成立。
+            # 它若最终失败,下一轮巡检再把这份转写当作候选。
+            # 有待刷新的发布方逐字稿(locator_revision)时不拦:此刻选中的还是旧
+            # 转写,新文本要等入队流程把它取回来才成为输入;正式入队处会对最终
+            # 选定的输入再判一次。
+            return None
         revision = (locator_revision or selected.content_hash)[:16]
     return PodcastLandingCandidate(
         article_id,
@@ -1646,6 +1730,8 @@ async def execute_podcast_landing_job() -> dict[str, int]:
 
         async def _run(candidate: PodcastLandingCandidate) -> None:
             async with semaphore:
+                # 正式入队若只是复用了拥有这份转写的在途处理单,它的 id 会记在这里。
+                reused_owner: list[str] = []
                 try:
                     await enqueue_podcast_processing_with_input(
                         episode_id=candidate.episode_id,
@@ -1658,6 +1744,7 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                         idempotency_key_prefix=f"full-analysis:auto:{candidate.episode_id}",
                         reason="简介初评达到全文处理线",
                         actor="system",
+                        reused_owner=reused_owner,
                     )
                 except Exception as exc:  # noqa: BLE001 - remembered, retried with backoff
                     failure = podcast_landing_service.classify_failure(exc)
@@ -1680,7 +1767,13 @@ async def execute_podcast_landing_job() -> dict[str, int]:
                     final = await asyncio.to_thread(
                         collect_podcast_landing_candidates, [candidate.episode_id]
                     )
-                    if final.candidates:
+                    if reused_owner:
+                        # 没有为这份输入新建处理单。重解析若仍给出候选,说明那一单
+                        # 此刻已不在途(刚失败),这个候选还没人接:不能记成「已入队」
+                        # ——那条记忆会让同一 revision 永远被跳过。什么都不记,下一轮
+                        # 再看(那一单还在途时巡检侧会直接放过,不会反复入队)。
+                        pass
+                    elif final.candidates:
                         podcast_landing_service.record_enqueued(
                             state, candidate.episode_id, final.candidates[0].revision, now
                         )
@@ -1828,6 +1921,7 @@ app.include_router(ingest_push_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)
+app.include_router(admin_reader_briefs_router.router)
 app.include_router(taxonomy_router.router)
 app.include_router(taxonomy_review_router.router)
 app.include_router(analysis_ops_router.router)
@@ -1865,7 +1959,8 @@ def reload_storage_schedule():
     enabled = any(store.enabled and store.config.cache_enabled for store in _object_stores())
     if enabled or settings.backup.enabled:
         scheduler.add_job(execute_storage_maintenance_job, "interval", seconds=60,
-                          id="storage_maintenance", replace_existing=True, max_instances=1, coalesce=True)
+                          id="storage_maintenance", replace_existing=True, max_instances=1,
+                          **interval_job_options(seconds=60))
     elif scheduler.get_job("storage_maintenance"):
         scheduler.remove_job("storage_maintenance")
 
@@ -2169,6 +2264,17 @@ def is_public_subscription_path(path: str) -> bool:
 
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
+    if request.method != "OPTIONS" and request.url.path in BRIEFS_PATHS:
+        async def _protected(req: Request):
+            return await _require_admin_session_impl(req, call_next)
+
+        return await admin_reader_briefs_router.handle_request(
+            request, _protected, current_auth_session
+        )
+    return await _require_admin_session_impl(request, call_next)
+
+
+async def _require_admin_session_impl(request: Request, call_next):
     path = request.url.path
     if request.method == "OPTIONS" or is_public_auth_path(path) or is_public_health_path(path):
         return await call_next(request)
@@ -2911,10 +3017,28 @@ def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool
     return True
 
 
+_INTERVAL_UNITS = ("weeks", "days", "hours", "minutes", "seconds")
+
+
+def interval_job_options(**interval) -> dict[str, Any]:
+    """interval 类任务的迟到宽限:晚到不超过一个周期就照跑,积压的多拍合并成一拍。
+
+    APScheduler 默认宽限只有 1 秒——事件循环被拖住几秒,这一拍就被整个丢弃
+    (日志里的 ``was missed by``),要等下一个周期。cron 类任务已由
+    ``add_cron_job`` 统一给 300 秒;interval 类在这里统一(issue #318)。
+    """
+
+    period = datetime.timedelta(
+        **{unit: interval[unit] for unit in _INTERVAL_UNITS if unit in interval}
+    ).total_seconds()
+    return {"misfire_grace_time": max(1, int(period)), "coalesce": True}
+
+
 def _ensure_interval_job(job_id: str, callback, **kwargs) -> None:
     """固定 interval worker 只在缺席时注册;已在的原样保留(replace 会把 next_run_time 重置为现在起算)。"""
     if scheduler.get_job(job_id) is None:
-        scheduler.add_job(callback, "interval", id=job_id, **kwargs)
+        options = {**interval_job_options(**kwargs), **kwargs}
+        scheduler.add_job(callback, "interval", id=job_id, **options)
 
 
 COLLECTION_JOB_ID_PREFIX = "collection_job_"
@@ -3002,7 +3126,7 @@ def load_tasks_to_scheduler():
     _ensure_interval_job(
         "personal_digest_pending",
         execute_personal_digest_pending_job,
-        minutes=1,
+        seconds=30,
         max_instances=1,
     )
     # 事件分配兜底(issue #121):分析周期末尾已调一次 assign_pending,这里每 10 分钟补扫 ledger。
@@ -3197,16 +3321,16 @@ def execute_personal_digest_schedule_job():
 
     try:
         personal_briefs_router.start_scheduled_editions(db_sink.engine)
-        personal_briefs_router.process_pending_editions(db_sink.engine)
+        personal_briefs_router.process_pending_editions(db_sink.engine, recovery=False)
     except Exception as exc:  # noqa: BLE001
         _dorami_logger.warning("个人早报 08:30 编排失败: %s", exc)
 
 
 def execute_personal_digest_pending_job():
-    """Generate pending editions immediately from available content (去等待, issue #22)."""
+    """Recover stranded pending/generating editions every 30s with lease & grace fencing."""
 
     try:
-        personal_briefs_router.process_pending_editions(db_sink.engine)
+        personal_briefs_router.process_pending_editions(db_sink.engine, recovery=True)
     except Exception as exc:  # noqa: BLE001
         _dorami_logger.warning("个人早报就绪巡检失败: %s", exc)
 
@@ -3345,6 +3469,31 @@ def _configured_podcast_full_analysis_worker():
     return podcast_processing_providers.worker_for("analyze")
 
 
+# 精品导读候选巡检要把全部「有逐字稿分析」的单集过一遍。它不必跟着 10 秒一拍的
+# worker 跑:候选只在一次分析落定、发布变化或重试到点时才会变,晚一分钟发现没有
+# 区别(issue #318)。本拍 worker 确实推进了工作时不等,立即巡检。
+PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS = 60.0
+_podcast_premium_scan_at: float | None = None
+
+
+def _podcast_premium_scan_due(
+    actions: tuple[str, ...], *, clock: Callable[[], float] = time.monotonic
+) -> bool:
+    """Whether this worker tick should also look for premium-guide candidates."""
+
+    global _podcast_premium_scan_at
+    current = clock()
+    progressed = any(action != "idle" for action in actions)
+    if (
+        not progressed
+        and _podcast_premium_scan_at is not None
+        and current - _podcast_premium_scan_at < PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS
+    ):
+        return False
+    _podcast_premium_scan_at = current
+    return True
+
+
 async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
     """Advance bounded ASR and full-analysis work from the durable queue."""
 
@@ -3440,6 +3589,9 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 
     try:
         actions = await asyncio.to_thread(_run_steps)
+        if not _podcast_premium_scan_due(actions):
+            return actions
+
         def _read_threshold():
             with Session(db_sink.engine) as threshold_session:
                 return podcast_premium_service.get_threshold(threshold_session)
@@ -3464,6 +3616,10 @@ async def execute_podcast_asr_worker_job() -> tuple[str, ...]:
 def reload_podcast_asr_worker_schedule() -> None:
     """Register one delayed ASR tick, or remove it when readiness disappears."""
 
+    # (重新)注册 worker 之后的第一拍总要巡检一次精品导读候选:重启前已经落定、
+    # 还没来得及排上的候选靠它接续。
+    global _podcast_premium_scan_at
+    _podcast_premium_scan_at = None
     if (
         _configured_podcast_asr_worker() is None
         and _configured_podcast_full_analysis_worker() is None
@@ -3483,7 +3639,7 @@ def reload_podcast_asr_worker_schedule() -> None:
         id=PODCAST_ASR_WORKER_JOB_ID,
         replace_existing=True,
         max_instances=1,
-        coalesce=True,
+        **interval_job_options(seconds=interval_seconds),
     )
 
 
@@ -3664,6 +3820,7 @@ def reload_user_rss_schedule():
         scheduler.add_job(
             execute_user_rss_refresh_job, "interval", minutes=minutes,
             id="user_rss_refresh", replace_existing=True, max_instances=1,
+            **interval_job_options(minutes=minutes),
         )
     elif scheduler.get_job("user_rss_refresh"):
         scheduler.remove_job("user_rss_refresh")

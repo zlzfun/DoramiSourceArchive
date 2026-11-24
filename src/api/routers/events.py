@@ -4,15 +4,25 @@
 (``account_admin_required`` 命中 ``/api/admin`` → 仅 admin;写操作经 ``services/admin_audit`` 入审计)。
 鉴权仍由 app.py 中间件按前缀统一强制;本文件只做参数校验与服务层委托。
 返回字段逐字段对齐方案 ``docs/plans/issue-121-event-layer.md`` §5.0。
+
+对外交付面 ``/api/public/feed/events``(issue #310):``/api/public/*`` 在中间件里免会话,这里自己核对
+``dfeed_`` 个人聚合令牌(与 ``/api/public/feed/articles`` 同一枚、同一解析口);榜单是全站口径,令牌只管
+「能不能拿」,不按订阅范围裁剪。数据与读者面同源(``event_board.read_board`` / ``read_event``)。
+契约见 ``docs/contracts/reader_subscription.md``「Hot Events Board」。
 """
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from api import deps
+from api.delivery_metering import meter_call, meter_rejected
+from api.feed_service import resolve_feed_token_identity
+from api.tokens import read_bearer_or_query_token
 from services import event_board as event_board_service
+from services import token_usage as token_usage_service
+from services.token_usage import TokenIdentity
 
 router = APIRouter(tags=["events"])
 
@@ -32,6 +42,14 @@ def _check_window(window_hours: int) -> None:
         )
 
 
+def _check_limit(limit: int) -> None:
+    if not 1 <= limit <= event_board_service.BOARD_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"最多返回 {event_board_service.BOARD_LIMIT} 件",
+        )
+
+
 @router.get("/api/reader/events")
 def get_reader_events(
     window_hours: int = event_board_service.READER_WINDOW_HOURS,
@@ -41,11 +59,7 @@ def get_reader_events(
     """热点事件:当前窗内(默认 7 天,榜单页可切近 2 天)可见发布主体 ≥ 2 的事件,最多 10 件,不足不填。"""
 
     _check_window(window_hours)
-    if not 1 <= limit <= event_board_service.BOARD_LIMIT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"最多返回 {event_board_service.BOARD_LIMIT} 件",
-        )
+    _check_limit(limit)
     return event_board_service.read_board(session, window_hours=window_hours, limit=limit)
 
 
@@ -62,6 +76,62 @@ def get_reader_event(
     if result is None:
         raise HTTPException(status_code=404, detail="事件不存在")
     return result
+
+
+# ── 对外交付面(dfeed_ 令牌) ──
+
+
+def _require_feed_token(request: Request, session: Session, channel: str) -> TokenIdentity:
+    """核对个人聚合令牌;先于参数取值校验——令牌无效时不回窗口 / 条数范围类的 400。
+
+    返回「这是谁的哪一枚令牌」供交付计量(issue #312);校验不过时,这枚令牌若曾经有效,
+    在它名下记一次被拒。
+    """
+
+    token = read_bearer_or_query_token(request)
+    identity = resolve_feed_token_identity(session, token)
+    if identity is None:
+        meter_rejected(token, channel)
+        raise HTTPException(status_code=401, detail="个人聚合接口令牌无效")
+    return identity
+
+
+@router.get("/api/public/feed/events")
+def get_public_feed_events(
+    request: Request,
+    window_hours: int = event_board_service.READER_WINDOW_HOURS,
+    limit: int = event_board_service.BOARD_LIMIT,
+    include_members: bool = False,
+    session: Session = Depends(deps.get_session),
+):
+    """热点事件榜的令牌化拉取:与读者面榜单同一份数据;``include_members=true`` 时每件事带成员报道。"""
+
+    identity = _require_feed_token(request, session, token_usage_service.FEED_EVENTS)
+    _check_window(window_hours)
+    _check_limit(limit)
+    board = event_board_service.read_board(
+        session, window_hours=window_hours, limit=limit, include_members=include_members
+    )
+    meter_call(identity, token_usage_service.FEED_EVENTS, len(board["items"]))
+    return {"status": "success", "count": len(board["items"]), **board}
+
+
+@router.get("/api/public/feed/events/{event_id}")
+def get_public_feed_event(
+    event_id: int,
+    request: Request,
+    window_hours: int = event_board_service.READER_WINDOW_HOURS,
+    session: Session = Depends(deps.get_session),
+):
+    """单个事件的令牌化拉取:榜单字段 + 成员报道 + 后续事件;合并掉的旧 ID 返回新事件并带 ``merged_into``。"""
+
+    identity = _require_feed_token(request, session, token_usage_service.FEED_EVENT_DETAIL)
+    _check_window(window_hours)
+    result = event_board_service.read_event(session, event_id, window_hours=window_hours)
+    if result is None:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    meter_call(identity, token_usage_service.FEED_EVENT_DETAIL, 1)
+    return {"status": "success", "event": result}
 
 
 # ── 管理面 ──

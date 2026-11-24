@@ -35,6 +35,7 @@
 - `GET`/`POST /api/daily-brief/config` — read/set cron, top-N, LLM overrides (persisted in `AppSettingRecord` KV)
 - `POST /api/daily-brief/generate` — submit a background digest job; returns `{status, job_id}` (poll `GET /api/jobs/{job_id}` for the result)
 - `GET /api/daily-brief/runs` — recent run history; `GET /api/daily-brief/progress` — live in-memory generation progress; `GET /api/daily-brief/pipeline` — stage/pipeline view
+- `GET /api/daily-brief/dedup-runs/{report_date}` — administrator-only, node-local cross-day decisions per published batch, newest first. Supports `limit` and exclusive `before_id`.
 - `GET /api/skill/daily-brief` — download the templated `dorami-daily-brief` Claude skill zip
 
 **Collection Jobs** (the single scheduling entity; see [Collection Jobs](../architecture/jobs-and-scheduling.md))
@@ -73,8 +74,9 @@
 - `POST`/`DELETE /api/reader/sources/{source_id}/subscribe` — one-click subscribe / unsubscribe (per-user)
 - `POST /api/reader/articles/{article_id}/read` — record one deliberate article open (reader-gated, fire-and-forget; bumps `ReaderReadRecord` by the article's source)
 - `GET/POST/PUT/DELETE /api/subscriptions` + `POST /api/subscriptions/{id}/rotate-token` — subscription lifecycle (owner-scoped); REST-only advanced/custom path
-- `GET /api/reader/feed-token` + `POST /api/reader/feed-token/rotate` — the per-user aggregated feed token (`dfeed_`)
-- `GET /api/public/feed/articles[.md]` — token-auth aggregated pull across all the user's subscribed sources (filters: `publish_date_start/end`, `content_types`, `source_ids`, `search`, `include_content`); per-subscription pulls at `GET /api/public/subscriptions/{id}/articles` and `POST .../vector/search`(路径留存,v3.31 起 FTS5 全文检索芯)
+- `GET /api/reader/feed-token` + `POST /api/reader/feed-token/rotate` — the per-user aggregated feed token (`dfeed_`);status 另带现用令牌的使用情况 `last_used_at` / `usage_calls` / `usage_window_days`(issue #312)
+- `GET /api/public/feed/articles[.md|.xml]` — token-auth aggregated pull across all the user's subscribed sources, as JSON / Markdown / Atom (filters: `publish_date_start/end`, `content_types`, `source_ids`, `search`, `include_content` — not on `.md`; `limit` ≤ 500 for JSON, ≤ 200 for `.md` / `.xml`). 设置 → 聚合接口 lists every route under `/api/public/feed/` from `frontend/src/utils/feedEndpoints.js`; `frontend/test/feedEndpoints.test.mjs` fails when that list and these routes (paths, accepted parameters, limits) drift apart (issue #315); per-subscription pulls at `GET /api/public/subscriptions/{id}/articles` and `POST .../vector/search`(路径留存,v3.31 起 FTS5 全文检索芯)
+- `GET /api/public/feed/events` + `GET /api/public/feed/events/{event_id}` — token-auth (`dfeed_` only) pull of the site-wide hot events board and one event's detail; same data as `GET /api/reader/events[/{event_id}]` (session / guest), not subscription-scoped; `window_hours` (default 168, 1–336), `limit` (1–10), `include_members` (list: attach each event's reports). Contract: [`contracts/reader_subscription.md`](../contracts/reader_subscription.md) § Hot Events Board
 
 **MCP** (reader surface)
 - `/mcp` — FastMCP streamable-HTTP server (`build_mcp_app`); tools accept an optional `subscription_token` (`dsub_` or `dfeed_`) to scope results to that subscription / the user's whole subscription union
@@ -127,6 +129,7 @@
 - `GET /api/admin/overview` — account/archive/AI stat board + recent logins
 - `GET /api/admin/home?days=&top=` — 运维首页聚合(issue #114,全体管理员可见,纯聚合不含逐账户明细):`active`(逐日活跃账户 `series[{day,accounts}]` 补零 + 窗口去重合计 `accounts`;活跃 = 当天登录或阅读,排除 `guest:*` / `deleted:*`)、`reads`(窗口内各源阅读 `total` + 排行 `by_source[{source_id,name,reads}]` 取前 `top`,含游客,与 `/admin/content` 同口径只多时间窗)、`backfills`(全量分析回填:`active` 进行中数、`unresolved_failed` 最近一次成功之后的失败任务数、`latest` 最近一条)
 - `GET /api/admin/accounts?days=` — account list enriched with `subscription_count` + **窗口指标** (`reads`, `logins`, `ai_calls`/`ai_tokens` over the last `days`, `logged_in_window`) + 埋点 fields
+- 令牌交付计量(issue #312)没有独立端点:`GET /api/admin/accounts` 逐行带 `api_calls`(排序键 `sort=api`),`summary` 带 `api_calls` / `api_tokens_active` / `top_api`;`…/activity` 带 `delivery`(这个账号的令牌清单与各令牌调过的接口、逐日 × 接口组)。口径见 [令牌交付计量](../architecture/admin-ops.md)
 - `GET /api/admin/accounts/{username}/activity?days=` — per-reader activity detail: windowed AI usage (`ai_usage.summarize_user`) + reads (`reader_activity.summarize_user_reads`) + logins (`accounts.summarize_user_logins`: count/by_day/recent) + `source_engagement` (per-source reads ∪ favorites, friendly-named) + `favorites_total` + account/subscription snapshot
 - `GET /api/admin/qa-diagnostics` — 仅根管理员；最近最多 100 条/1 小时的进程内问答诊断（来源指纹/范围、结构检查、调用配置/结束状态/token/耗时，无提问/正文/答案；不代表语义正确）。重启清空，多进程各自窗口。
 - `GET /api/admin/ai-usage?days=` — AI usage dashboard (calls + tokens by 用途/用户/日期)

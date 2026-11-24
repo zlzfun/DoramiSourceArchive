@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
 import uuid
 import zlib
 from dataclasses import dataclass
-from typing import Iterable, Literal, Mapping, Sequence
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, exists, func, or_, update
@@ -175,6 +176,7 @@ class PersonalDigestGenerationResult:
     status: Literal["ready", "degraded", "empty_subscriptions"]
     edition: PersonalDigestEditionRecord | None
     items: tuple[PersonalDigestItemRecord, ...] = ()
+    created: bool = False
 
 
 def _json(value: object) -> str:
@@ -1738,6 +1740,136 @@ def _load_latest_fallback(
     return result
 
 
+_CREATION_GATE_GUARD = threading.Lock()
+_CREATION_GATES: dict[tuple[str, str], threading.Lock] = {}
+
+
+def _creation_gate(username: str, report_date: str) -> threading.Lock:
+    key = (username, report_date)
+    with _CREATION_GATE_GUARD:
+        lock = _CREATION_GATES.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _CREATION_GATES[key] = lock
+        return lock
+
+
+def ensure_first_personal_digest_edition(
+    session: Session,
+    username: str,
+    *,
+    report_date: str | None = None,
+    now: dt.datetime | None = None,
+    generation_reason: DigestGenerationReason | str = DigestGenerationReason.SCHEDULED,
+    first_open_at: dt.datetime | None = None,
+    scheduled_source_ids: Iterable[str] | None = None,
+    allow_empty: bool = False,
+) -> PersonalDigestGenerationResult:
+    """Atomically reuse or create the first edition for a user/day.
+
+    The scheduler, reader first-open, and admin ensure endpoint all enter
+    through this guard.  In-process threads coordinate via ``_creation_gate``,
+    SQLite ``BEGIN IMMEDIATE`` serializes across connections/processes, and the
+    unique ``(owner_username, report_date, revision)`` constraint acts as the
+    final database race fence.
+    """
+    current = _as_shanghai(now)
+    day = report_date or current.date().isoformat()
+    with _creation_gate(username, day):
+        if session.in_transaction() and not (session.new or session.dirty or session.deleted):
+            session.rollback()
+        connection = session.connection()
+        if connection.dialect.name == "sqlite" and not connection.in_nested_transaction():
+            if connection.in_transaction():
+                session.rollback()
+                connection = session.connection()
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        query = select(PersonalDigestEditionRecord).where(
+            PersonalDigestEditionRecord.owner_username == username,
+            PersonalDigestEditionRecord.report_date == day,
+        )
+        if not allow_empty:
+            query = query.where(
+                PersonalDigestEditionRecord.status != PersonalDigestStatus.SUPERSEDED.value
+            )
+        existing = session.exec(
+            query.order_by(PersonalDigestEditionRecord.revision.desc())
+        ).first()
+        if existing is not None:
+            items = _items_for_edition(session, existing.id)
+            session.commit()
+            session.refresh(existing)
+            for item in items:
+                session.refresh(item)
+            return PersonalDigestGenerationResult(
+                status=existing.status,  # type: ignore[arg-type]
+                edition=existing,
+                items=items,
+                created=False,
+            )
+        try:
+            result = start_personal_digest_edition(
+                session,
+                username,
+                report_date=day,
+                now=current,
+                generation_reason=generation_reason,
+                first_open_at=first_open_at,
+                scheduled_source_ids=scheduled_source_ids,
+            )
+            if result.edition is None and allow_empty:
+                stamp = current.isoformat()
+                edition = PersonalDigestEditionRecord(
+                    owner_username=username,
+                    report_date=day,
+                    revision=1,
+                    status=PersonalDigestStatus.PENDING.value,
+                    check_after=stamp,
+                    cutoff_at=stamp,
+                    first_open_at=_as_shanghai(first_open_at).isoformat() if first_open_at else stamp,
+                    created_at=stamp,
+                    updated_at=stamp,
+                    generation_reason=DigestGenerationReason.FIRST_OPEN.value,
+                )
+                session.add(edition)
+                session.commit()
+                session.refresh(edition)
+                result = PersonalDigestGenerationResult(
+                    status=PersonalDigestStatus.PENDING.value,  # type: ignore[arg-type]
+                    edition=edition,
+                )
+            if session.in_transaction():
+                session.commit()
+                if result.edition is not None:
+                    session.refresh(result.edition)
+                    for item in result.items:
+                        session.refresh(item)
+            return PersonalDigestGenerationResult(
+                status=result.status,
+                edition=result.edition,
+                items=result.items,
+                created=result.edition is not None,
+            )
+        except IntegrityError:
+            session.rollback()
+            winner = session.exec(
+                select(PersonalDigestEditionRecord)
+                .where(
+                    PersonalDigestEditionRecord.owner_username == username,
+                    PersonalDigestEditionRecord.report_date == day,
+                )
+                .order_by(PersonalDigestEditionRecord.revision.desc())
+            ).first()
+            if winner is None:
+                raise
+            return PersonalDigestGenerationResult(
+                status=winner.status,  # type: ignore[arg-type]
+                edition=winner,
+                items=_items_for_edition(session, winner.id),
+                created=False,
+            )
+
+
 def start_personal_digest_edition(
     session: Session,
     username: str,
@@ -2125,6 +2257,8 @@ def generate_personal_digest(
     sync_stale: bool = False,
     analysis_incomplete: bool = False,
     policy: DigestSelectionPolicy | None = None,
+    execution_clock: Callable[[], dt.datetime] | None = None,
+    localize_before_publish: bool = False,
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
@@ -2144,9 +2278,13 @@ def generate_personal_digest(
     report_date = report_date or current.date().isoformat()
     reason = str(getattr(generation_reason, "value", generation_reason))
     reason = DigestGenerationReason(reason).value
-    if reason == DigestGenerationReason.INTEREST_CHANGED.value and report_date != current.date().isoformat():
+    if (
+        reason == DigestGenerationReason.INTEREST_CHANGED.value
+        and report_date != current.date().isoformat()
+        and pending_edition_id is None
+    ):
         raise ValueError("兴趣变化只允许重编排当天早报，历史日期保持不变")
-    if report_date != current.date().isoformat():
+    if report_date != current.date().isoformat() and pending_edition_id is None:
         existing = _latest_completed_edition(session, username, report_date)
         if existing is not None:
             return PersonalDigestGenerationResult(
@@ -2200,7 +2338,7 @@ def generate_personal_digest(
     followed_codes = _followed_codes(interests)
     # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
     interest_only = not scope.expected_source_ids
-    if interest_only and not interests:
+    if interest_only and not interests and pending_edition is None:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
     if pending_edition is None and not force_new_revision and reason not in REBUILD_REASON_VALUES:
         existing = _latest_completed_edition(session, username, report_date)
@@ -2531,40 +2669,61 @@ def generate_personal_digest(
         "generation_token": None,
         "generation_lease_expires_at": None,
     }
+    fenced_publish = pending_edition is not None and (
+        localize_before_publish or execution_clock is not None
+    )
     has_custom = any(item.custom_interest_id is not None for item in interests)
-    matches_stale = False
-    if has_custom or frozen_interest_version < 0:
-        # Acquire the SQLite write lock before the final ACL/fingerprint check.
-        # This fence remains held through item inserts and the terminal commit.
-        custom_interest_service.lock_mutation(session)
-        session.expire_all()
-        custom_candidates = {aid: pool_by_id[aid] for aid in selected_ids
-                             if aid in pool_by_id and pool_by_id[aid].custom_interest_refs}
-        current_match_map = {(article.id, str(condition.id)): match.fingerprint
-            for match, condition, article in custom_interest_service.current_matches(
-                session, username, article_ids=list(custom_candidates))}
-        matches_stale = any(
-            current_match_map.get((aid, ref.id)) != candidate.custom_interest_evidence.get(ref.id, {}).get("fingerprint")
-            for aid, candidate in custom_candidates.items() for ref in candidate.custom_interest_refs
-        )
-    if pending_edition is None and (_interest_version(session, username) < 0
-            and _interest_version(session, username) != frozen_interest_version or matches_stale):
+
+    def interest_snapshot_stale() -> bool:
+        # Keep the final ACL/fingerprint check and publication in one write
+        # transaction, but never hold that lock across title localization.
+        matches_stale = False
+        if has_custom or frozen_interest_version < 0:
+            custom_interest_service.lock_mutation(session)
+            session.expire_all()
+            custom_candidates = {
+                aid: pool_by_id[aid] for aid in selected_ids
+                if aid in pool_by_id and pool_by_id[aid].custom_interest_refs
+            }
+            current_match_map = {
+                (article.id, str(condition.id)): match.fingerprint
+                for match, condition, article in custom_interest_service.current_matches(
+                    session, username, article_ids=list(custom_candidates)
+                )
+            }
+            matches_stale = any(
+                current_match_map.get((aid, ref.id))
+                != candidate.custom_interest_evidence.get(ref.id, {}).get("fingerprint")
+                for aid, candidate in custom_candidates.items()
+                for ref in candidate.custom_interest_refs
+            )
+        live_version = _interest_version(session, username)
+        return matches_stale or (live_version < 0 and live_version != frozen_interest_version)
+
+    def restart_after_interest_change() -> PersonalDigestGenerationResult:
+        assert pending_edition is not None
+        session.exec(update(PersonalDigestEditionRecord).where(
+            PersonalDigestEditionRecord.id == pending_edition.id,
+            PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
+            PersonalDigestEditionRecord.generation_token == generation_token,
+        ).values(
+            status=PersonalDigestStatus.PENDING.value,
+            interest_version=_interest_version(session, username),
+            interest_snapshot_json=_serialize_interests(_load_interests(session, username)),
+            generation_token=None, generation_lease_expires_at=None,
+            updated_at=generated_at,
+        ))
+        session.commit()
+        session.refresh(pending_edition)
+        return PersonalDigestGenerationResult(status=pending_edition.status, edition=pending_edition)
+
+    if not fenced_publish and interest_snapshot_stale():
+        if pending_edition is not None:
+            return restart_after_interest_change()
         session.rollback()
         raise ValueError("兴趣或匹配证据已更新，请重新编排")
     if pending_edition is not None:
         assert pending_edition.id is not None and generation_token is not None
-        if matches_stale or _interest_version(session, username) < 0 and _interest_version(session, username) != frozen_interest_version:
-            session.exec(update(PersonalDigestEditionRecord).where(
-                PersonalDigestEditionRecord.id == pending_edition.id,
-                PersonalDigestEditionRecord.generation_token == generation_token,
-            ).values(status=PersonalDigestStatus.PENDING.value,
-                     interest_version=_interest_version(session, username),
-                     interest_snapshot_json=_serialize_interests(_load_interests(session, username)),
-                     generation_token=None, generation_lease_expires_at=None,
-                     updated_at=generated_at))
-            session.commit()
-            session.refresh(pending_edition)
-            return PersonalDigestGenerationResult(status=pending_edition.status, edition=pending_edition)
         if first_open is not None:
             final_values["first_open_at"] = (
                 pending_edition.first_open_at or first_open.isoformat()
@@ -2572,29 +2731,32 @@ def generate_personal_digest(
             final_values["deadline_at"] = pending_edition.deadline_at or (
                 first_open + dt.timedelta(minutes=15)
             ).isoformat()
-        claimed = session.exec(
-            update(PersonalDigestEditionRecord)
-            .where(
-                PersonalDigestEditionRecord.id == pending_edition.id,
-                PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
-                PersonalDigestEditionRecord.generation_token == generation_token,
-                _interest_revision_condition(username, frozen_interest_version),
+        if fenced_publish:
+            edition = pending_edition
+        else:
+            claimed = session.exec(
+                update(PersonalDigestEditionRecord)
+                .where(
+                    PersonalDigestEditionRecord.id == pending_edition.id,
+                    PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
+                    PersonalDigestEditionRecord.generation_token == generation_token,
+                    _interest_revision_condition(username, frozen_interest_version),
+                )
+                .values(**final_values)
             )
-            .values(**final_values)
-        )
-        if claimed.rowcount != 1:
-            session.rollback()
-            current_edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
-            if current_edition is None:
-                raise ValueError("个人早报版本不存在")
-            return PersonalDigestGenerationResult(
-                status=current_edition.status,  # type: ignore[arg-type]
-                edition=current_edition,
-                items=_items_for_edition(session, current_edition.id),
-            )
-        session.expire_all()
-        edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
-        assert edition is not None
+            if claimed.rowcount != 1:
+                session.rollback()
+                current_edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
+                if current_edition is None:
+                    raise ValueError("个人早报版本不存在")
+                return PersonalDigestGenerationResult(
+                    status=current_edition.status,  # type: ignore[arg-type]
+                    edition=current_edition,
+                    items=_items_for_edition(session, current_edition.id),
+                )
+            session.expire_all()
+            edition = session.get(PersonalDigestEditionRecord, pending_edition.id)
+            assert edition is not None
     else:
         interests_json = _serialize_interests(interests)
         edition = PersonalDigestEditionRecord(
@@ -2621,7 +2783,7 @@ def generate_personal_digest(
     # the unique (edition_id, position) key cannot strand it in `generating`.
     # This delete and the replacement inserts share the final transaction, so a
     # later failure restores the previous rows instead of losing the snapshot.
-    if pending_edition is not None:
+    if pending_edition is not None and not fenced_publish:
         existing_snapshot_ids = session.exec(
             select(PersonalDigestItemRecord.id).where(
                 PersonalDigestItemRecord.edition_id == edition.id,
@@ -2915,6 +3077,130 @@ def generate_personal_digest(
     # session——三段构建之间的查询会触发 autoflush,先按临时 position 写入再改写会在
     # (edition_id, position) 唯一键上互撞;集中添加让 INSERT 只带最终 position。
     _assign_positions(item_records)
+    edition_id = edition.id
+    if fenced_publish:
+        assert edition_id is not None and generation_token is not None
+        if localize_before_publish:
+            from services import personal_digest_titles as titles
+
+            try:
+                stats = titles.localize_edition_titles(
+                    session,
+                    edition,
+                    items=item_records,
+                    persist=False,
+                    include_failure_count=True,
+                )
+                if stats.get("translation_failed"):
+                    final_values["degraded_reason"] = ";".join(
+                        filter(None, [final_values["degraded_reason"], "title_localization_fallback"])
+                    )
+                    final_values["status"] = PersonalDigestStatus.DEGRADED.value
+                    degraded = True
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                final_values["degraded_reason"] = ";".join(
+                    filter(None, [final_values["degraded_reason"], "title_localization_failed"])
+                )
+                final_values["status"] = PersonalDigestStatus.DEGRADED.value
+                degraded = True
+
+        # Release the read snapshot before CAS so concurrent heartbeats or
+        # lease takeovers in SQLite WAL are visible.
+        session.rollback()
+        committed_at = (execution_clock() if execution_clock else current).astimezone(SHANGHAI)
+        if interest_snapshot_stale():
+            return restart_after_interest_change()
+        current_row = session.get(PersonalDigestEditionRecord, edition_id)
+        if current_row is None:
+            raise ValueError("个人早报版本不存在")
+        if execution_clock is not None:
+            from services.briefs_runtime import (
+                _snapshot_cas_conditions,
+                iso_shanghai,
+                token_still_valid,
+            )
+
+            if not token_still_valid(current_row, generation_token, committed_at):
+                session.rollback()
+                return PersonalDigestGenerationResult(
+                    status=current_row.status,  # type: ignore[arg-type]
+                    edition=current_row,
+                    items=_items_for_edition(session, edition_id),
+                )
+            stamp = iso_shanghai(committed_at)
+            cas_conditions: list[Any] = _snapshot_cas_conditions(current_row)
+        else:
+            if (
+                current_row.status != PersonalDigestStatus.GENERATING.value
+                or current_row.generation_token != generation_token
+            ):
+                session.rollback()
+                return PersonalDigestGenerationResult(
+                    status=current_row.status,  # type: ignore[arg-type]
+                    edition=current_row,
+                    items=_items_for_edition(session, edition_id),
+                )
+            stamp = committed_at.isoformat()
+            cas_conditions = [
+                PersonalDigestEditionRecord.id == edition_id,
+                PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
+                PersonalDigestEditionRecord.generation_token == generation_token,
+            ]
+
+        final_values["generated_at"] = stamp
+        final_values["updated_at"] = stamp
+        from services.briefs_contract import adapt_edition
+
+        frozen = adapt_edition({
+            "report_date": report_date,
+            "revision": revision,
+            "status": final_values["status"],
+            "generated_at": final_values["generated_at"],
+            "degraded_reason": final_values["degraded_reason"],
+            "sync_stale": final_values["sync_stale"],
+            "analysis_incomplete": final_values["analysis_incomplete"],
+            "selection_stats": selection_stats,
+            "items": [
+                {
+                    "article_id": r.article_id,
+                    "position": r.position,
+                    "section": r.section,
+                    "selection_lane": r.selection_lane,
+                    "quality_score": r.quality_score_snapshot,
+                    "selection_reason": r.selection_reason,
+                    "snapshot": json.loads(r.snapshot_json),
+                }
+                for r in item_records
+            ],
+        })
+        final_values["briefs_payload_json"] = _json(frozen)
+        claimed = session.exec(
+            update(PersonalDigestEditionRecord)
+            .where(*cas_conditions, _interest_revision_condition(username, frozen_interest_version))
+            .values(**final_values)
+        )
+        if claimed.rowcount != 1:
+            session.rollback()
+            winner = session.get(PersonalDigestEditionRecord, edition_id)
+            if winner is None:
+                raise ValueError("个人早报版本不存在")
+            return PersonalDigestGenerationResult(
+                status=winner.status,  # type: ignore[arg-type]
+                edition=winner,
+                items=_items_for_edition(session, edition_id),
+            )
+        session.exec(
+            delete(PersonalDigestItemRecord).where(
+                PersonalDigestItemRecord.edition_id == edition_id
+            )
+        )
+        for record in item_records:
+            record.created_at = stamp
+        session.expire_all()
+        edition = session.get(PersonalDigestEditionRecord, edition_id)
+        assert edition is not None
+
     session.add_all(item_records)
     try:
         session.commit()
@@ -2965,6 +3251,7 @@ __all__ = [
     "freeze_personal_digest_scope",
     "generate_personal_digest",
     "materialize_desired_personal_digest_revision",
+    "ensure_first_personal_digest_edition",
     "start_personal_digest_edition",
     "load_digest_candidates",
     "resolve_personal_digest_source_ids",

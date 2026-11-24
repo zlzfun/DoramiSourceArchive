@@ -228,3 +228,86 @@ def test_daily_brief_job_follows_enable_flag(sandbox):
     assert scheduler.get_job("daily_brief") is None
     for other in OTHER_JOB_IDS:
         assert scheduler.get_job(other) is not None
+
+
+# ---------- interval 类任务的迟到宽限与候选巡检降频(issue #318) ----------
+
+
+def test_interval_jobs_tolerate_being_late_by_one_period(sandbox):
+    """默认宽限只有 1 秒:事件循环被拖住几秒,这一拍就被整个丢弃。"""
+
+    _sink, scheduler = sandbox
+    assert app_module.interval_job_options(minutes=1) == {
+        "misfire_grace_time": 60, "coalesce": True,
+    }
+    assert app_module.interval_job_options(seconds=10)["misfire_grace_time"] == 10
+    assert app_module.interval_job_options(hours=1, minutes=30)["misfire_grace_time"] == 5400
+    assert app_module.interval_job_options(seconds=0.2)["misfire_grace_time"] == 1
+
+    app_module.load_tasks_to_scheduler()
+    for job_id in (
+        "article_analysis", "paper_fulltext", "taxonomy_retag",
+        app_module.PODCAST_LANDING_JOB_ID,
+    ):
+        job = scheduler.get_job(job_id)
+        assert job.misfire_grace_time == 60, job_id
+        assert job.coalesce is True, job_id
+    pending_digest = scheduler.get_job("personal_digest_pending")
+    assert pending_digest.misfire_grace_time == 30
+    assert pending_digest.coalesce is True
+    sweep = scheduler.get_job(app_module.EVENT_ASSIGNMENT_SWEEP_JOB_ID)
+    assert sweep.misfire_grace_time == app_module.EVENT_ASSIGNMENT_SWEEP_MINUTES * 60
+
+
+def test_every_interval_registration_goes_through_the_shared_options():
+    """新加的 interval 任务不许绕开宽限:源码里每处 "interval" 注册都带统一选项。"""
+
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(app_module))
+    registrations = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "add_job"
+        and any(isinstance(arg, ast.Constant) and arg.value == "interval" for arg in node.args)
+    ]
+    assert len(registrations) >= 4
+    for call in registrations:
+        spreads = [keyword.value for keyword in call.keywords if keyword.arg is None]
+        covered = any(
+            (isinstance(value, ast.Call) and getattr(value.func, "id", "") == "interval_job_options")
+            or (isinstance(value, ast.Name) and value.id == "options")
+            for value in spreads
+        )
+        assert covered, f"第 {call.lineno} 行的 interval 任务没有迟到宽限"
+
+
+def test_premium_scan_is_throttled_unless_the_worker_made_progress(monkeypatch):
+    monkeypatch.setattr(app_module, "_podcast_premium_scan_at", None)
+    now = [1000.0]
+
+    def due(*actions: str) -> bool:
+        return app_module._podcast_premium_scan_due(tuple(actions), clock=lambda: now[0])
+
+    assert due() is True                      # 启动后的第一拍
+    now[0] += 10
+    assert due() is False                     # 10 秒一拍的空转不再巡检
+    assert due("idle") is False
+    now[0] += 10
+    assert due("idle", "completed") is True   # 本拍落定了一次分析:立即巡检
+    now[0] += 30
+    assert due("idle") is False
+    now[0] += app_module.PODCAST_PREMIUM_SCAN_INTERVAL_SECONDS
+    assert due("idle") is True                # 到点
+
+
+def test_registering_the_worker_makes_the_next_tick_scan(sandbox, monkeypatch):
+    """重启(重新注册 worker)后的第一拍即使空转也要巡检:接续重启前已落定的候选。"""
+
+    monkeypatch.setattr(app_module, "_podcast_premium_scan_at", 123.0)
+    monkeypatch.setattr(app_module, "_configured_podcast_asr_worker", lambda: None)
+    monkeypatch.setattr(app_module, "_configured_podcast_full_analysis_worker", lambda: None)
+    app_module.reload_podcast_asr_worker_schedule()
+    assert app_module._podcast_premium_scan_due(("idle",), clock=lambda: 124.0) is True
+    assert app_module._podcast_premium_scan_due(("idle",), clock=lambda: 125.0) is False

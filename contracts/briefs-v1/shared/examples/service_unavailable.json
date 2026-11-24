@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "SERVICE_UNAVAILABLE",
+    "message": "联调错误示例 SERVICE_UNAVAILABLE",
+    "request_id": "briefs-example-001"
+  }
+}

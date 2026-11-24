@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "ACCOUNT_NOT_FOUND",
+    "message": "联调错误示例 ACCOUNT_NOT_FOUND",
+    "request_id": "briefs-example-001"
+  }
+}

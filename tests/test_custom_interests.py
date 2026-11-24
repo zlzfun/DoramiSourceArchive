@@ -184,7 +184,8 @@ def test_semantic_permission_before_call_and_after_cas(store):
 
 
 @pytest.mark.parametrize('semantic_edit',[False,True])
-def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, monkeypatch, semantic_edit):
+@pytest.mark.parametrize('edit_stage', ['selection', 'localization'])
+def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, monkeypatch, semantic_edit, edit_stage):
     with Session(store.engine) as session:
         row=save(session)
         cid=row.id
@@ -195,7 +196,7 @@ def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, mo
         pending_id=pending.edition.id
     original=digest.select_digest_articles
     edited=False
-    def edit_during_selection(*args,**kwargs):
+    def edit_interest():
         nonlocal edited
         if not edited:
             with Session(store.engine) as session:
@@ -204,10 +205,22 @@ def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, mo
                     expected_revision=1),cid)
                 session.commit()
             edited=True
+    def edit_during_selection(*args,**kwargs):
+        edit_interest()
         return original(*args,**kwargs)
-    monkeypatch.setattr(digest,'select_digest_articles',edit_during_selection)
+    def edit_during_localization(*args,**kwargs):
+        edit_interest()
+        return {}
+    if edit_stage == 'selection':
+        monkeypatch.setattr(digest,'select_digest_articles',edit_during_selection)
+    else:
+        from services import personal_digest_titles
+        monkeypatch.setattr(personal_digest_titles, 'localize_edition_titles', edit_during_localization)
     with Session(store.engine) as session:
-        result=digest.generate_personal_digest(session,'alice',now=NOW+dt.timedelta(minutes=1),pending_edition_id=pending_id)
+        result=digest.generate_personal_digest(
+            session,'alice',now=NOW+dt.timedelta(minutes=1),pending_edition_id=pending_id,
+            localize_before_publish=edit_stage == 'localization')
+        assert edited
         assert result.status=='pending'
         assert result.items==()
         assert result.edition.generation_token is None
@@ -438,3 +451,54 @@ def test_policy_drift_at_final_brief_fence_resets_pending_and_snapshot_preserves
         selected[0] = LLMConfig(base_url='https://example.com/v1', api_key='fixture', model='another-pro')
         session.refresh(result.edition)
         assert result.edition.model_dump() == frozen
+
+
+@pytest.mark.parametrize('change', ['none', 'content', 'visibility'])
+def test_runtime_publication_rechecks_custom_evidence_after_titles(store, monkeypatch, change):
+    """M2M title work can overlap archive edits; only current evidence publishes."""
+    from models.db import PersonalDigestItemRecord
+    from services import personal_digest_titles
+
+    with Session(store.engine) as session:
+        save(session)
+        add_article(session)
+    service.run_match_cycle(store.engine)
+    stamp = NOW + dt.timedelta(minutes=1)
+    with Session(store.engine) as session:
+        pending = digest.start_personal_digest_edition(session, 'alice', now=stamp)
+        edition_id = pending.edition.id
+
+    localized = []
+    def localize(session, edition, **kwargs):
+        localized.append(edition.id)
+        assert kwargs['persist'] is False
+        assert kwargs['items']
+        # A separate connection also proves title work does not hold a write lock.
+        with Session(store.engine) as writer:
+            if change == 'content':
+                article = writer.get(ArticleRecord, 'a')
+                article.content = 'Unrelated replacement body'
+                writer.add(article)
+            elif change == 'visibility':
+                writer.add(AppSettingRecord(key='reader_hidden_source_ids', value='["rss_public"]'))
+            writer.commit()
+        return {}
+
+    monkeypatch.setattr(personal_digest_titles, 'localize_edition_titles', localize)
+    with Session(store.engine) as session:
+        result = digest.generate_personal_digest(
+            session, 'alice', now=stamp, pending_edition_id=edition_id,
+            localize_before_publish=True, execution_clock=lambda: stamp,
+        )
+        assert localized == [edition_id]
+        if change == 'none':
+            assert result.status in {'ready', 'degraded'}
+            assert [item.article_id for item in result.items] == ['a']
+            assert json.loads(result.edition.briefs_payload_json)['items']
+        else:
+            assert result.status == 'pending'
+            assert result.edition.generation_token is None
+            assert result.edition.briefs_payload_json is None
+            assert session.exec(select(PersonalDigestItemRecord).where(
+                PersonalDigestItemRecord.edition_id == edition_id
+            )).all() == []

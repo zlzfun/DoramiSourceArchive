@@ -6,6 +6,7 @@ import MobileReader from './mobile/MobileReader';
 import PlayerProvider from './player/PlayerProvider';
 import { prefetchReaderMarkdownWhenIdle } from '../utils/readerMarkdownLoader';
 import { DEFAULT_EVENT_RANGE, DEFAULT_RANKING_SEGMENT } from '../utils/rankings';
+import { holdIntent, releaseIntent } from '../utils/readerMotion';
 
 // 数据、当前位置与外出返回路径(早报 / 榜单)只保留一份。宽度变化只替换视图，不重新加载阅读器。
 // 全局播放器(issue #199)也挂在这一层:桌面 ⇄ 手机互切、换文章 / 容器 / 页面都不卸载,播放不中断。
@@ -62,7 +63,9 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const openPlayingItem = useCallback((item) => {
     if (!item?.articleId) return;
     setBriefReturn(null);
-    openArticleById(item.articleId);
+    // 动效(issue #301):请求回来才换内容,入口处挂起触发方式;失败或被盖过就放下(换上之后由 ReaderTab 放)
+    const intent = holdIntent();
+    Promise.resolve(openArticleById(item.articleId)).then((opened) => { if (!opened) releaseIntent(intent); });
   }, [openArticleById]);
   const setTab = useCallback((next) => {
     setPage((current) => {

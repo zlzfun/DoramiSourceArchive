@@ -6,6 +6,7 @@
 
 | 脚本 | 用途 | 数据边界 |
 |---|---|---|
+| [`score_daily_brief_dedup.py`](./score_daily_brief_dedup.py) | 对[跨天去重盲测](../docs/plans/issue-313-cross-day-dedup.md)的三轮配对结果计分。 | 只读两个 JSON 文件。 |
 | [`ensure_daily_collection_job.py`](./ensure_daily_collection_job.py) | 幂等创建/更新“每日全量采集”任务。 | 写当前配置库；可重复执行。 |
 | [`import_podcast_catalog.py`](./import_podcast_catalog.py) | 预览或幂等导入精选播客目录；默认 dry-run，`--apply` 写入公共采集节点。 | 可选写当前或显式数据库；Feed 健康状态只用于审查。 |
 | [`export_shendeng_daily_news.py`](./export_shendeng_daily_news.py) | 导出公共日报的结构化条目和可选 Markdown，不调用 LLM；兼容 adapter off/on 的持久化条目。 | API 只读，文件写到指定输出路径。 |

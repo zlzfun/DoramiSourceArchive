@@ -30,6 +30,7 @@ import DisplayTitle from './DisplayTitle';
 import { interestSelectionLabel, normalizeInterestMatches } from '../utils/interestMatches';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
+import { enterBrief } from '../utils/spatialMotion';
 
 // ── 我的早报 ──
 // issue #184「夜航」版式(样页 docs/design/visual-refine-final/brief.html;用户拍板:保留左轨、取消日期中栏、
@@ -604,6 +605,13 @@ export default function PersonalBriefPage({
   // 返回落位:条目进 DOM 的同一提交里把卷动位置放回去(layout effect,不闪一帧顶部),
   // 刚读过的那条短暂高亮;只消费一次,之后本次挂载内换期照常回顶。
   const cardsReady = !loading && !detailLoading && (edition?.items?.length || 0) > 0;
+  // 早报到场(issue #301 第四批,入场清单之一):这次载入里早报第一次有内容的那一刻播三拍;之后换日期、从别的视图回来都不再播
+  // (那是切视图)。只在桌面读者面;一次性由 spatialMotion 里的标记把关。
+  useLayoutEffect(() => {
+    if (mobile || !cardsReady) return;
+    const sheet = sheetRef.current;
+    enterBrief(sheet, sheet?.closest('.reader-shell')?.querySelector('.reader-vrail') || null);
+  }, [mobile, cardsReady]);
   useLayoutEffect(() => {
     const r = restoreRef.current;
     if (!r || !cardsReady) return undefined;

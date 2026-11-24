@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from functools import wraps
@@ -46,6 +47,16 @@ from services.podcast_worker_contracts import (
 ACTIVE_ATTEMPT_STATES = frozenset(
     {"prepared", "submitted", "request_unknown", "reconciling"}
 )
+
+logger = logging.getLogger("dorami.podcast_processing")
+
+# 本地 attempt 连续租约到期后的重领节奏(issue #318)。第 1 次立即重领——进程重启
+# 是常态,不该多等;之后逐级退避;用完转终态,由管理员重试。此前每次都立即重领:
+# 一个跑不进租约的本地任务会无限循环(生产上同一处理单连续 100 次、194 次),
+# 每一轮都把输入重新准备一遍。
+LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS = (0, 60, 300, 900, 3600)
+LOCAL_LEASE_EXPIRED_CODE = "lease_expired_local_attempt"
+LOCAL_LEASE_EXPIRY_EXHAUSTED_CODE = "lease_expired_retry_exhausted"
 
 
 class PodcastProcessingError(RuntimeError):
@@ -887,6 +898,42 @@ def _drainable_provider_attempt(
     return attempt
 
 
+def _local_lease_expiry_streak(
+    session: Session, processing_id: str, stage: str, *, excluding: str
+) -> int:
+    """此前连续多少个本地 attempt 以租约到期收场(不含正被回收的那一个)。
+
+    只数最近一次被接受的管理员重试之后的 attempt:重试是「再给一轮机会」,不该
+    带着上一轮已经用完的次数——否则重试后第一次失租就会被立刻判为用完。
+    ``expected_attempt_count`` 是重试当时已有的 attempt 数,之后的 ``attempt_no``
+    都比它大。
+    """
+
+    retried_after = session.exec(
+        select(func.max(PodcastProcessingCommandRecord.expected_attempt_count)).where(
+            PodcastProcessingCommandRecord.processing_id == processing_id,
+            PodcastProcessingCommandRecord.command_type == "manual_retry",
+            PodcastProcessingCommandRecord.outcome == "accepted",
+        )
+    ).one()
+    streak = 0
+    for error_code in session.exec(
+        select(PodcastStageAttemptRecord.error_code)
+        .where(
+            PodcastStageAttemptRecord.processing_id == processing_id,
+            PodcastStageAttemptRecord.stage == stage,
+            PodcastStageAttemptRecord.id != excluding,
+            PodcastStageAttemptRecord.attempt_no > int(retried_after or 0),
+        )
+        .order_by(PodcastStageAttemptRecord.attempt_no.desc())
+        .limit(len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS) + 1)
+    ).all():
+        if error_code != LOCAL_LEASE_EXPIRED_CODE:
+            break
+        streak += 1
+    return streak
+
+
 @_transaction_boundary
 def claim_next_processing(
     session: Session,
@@ -1035,10 +1082,74 @@ def claim_next_processing(
                 previous.submission_state = "failed_retryable"
                 previous.request_unknown = False
                 previous.retry_state = "none"
-                previous.error_code = "lease_expired_local_attempt"
+                previous.error_code = LOCAL_LEASE_EXPIRED_CODE
                 previous.error_message = "local attempt lease expired before completion"
                 previous.completed_at = stamp
                 _release_reservation(session, previous.id, stamp=stamp)
+                # 连续失租要退避、有上限。这里已经拿到新租约(fencing 已 +1,旧执行者
+                # 再也写不进来),由持有新租约的一方把处理单停进 retry_wait 或终态,
+                # 不放松 fence。
+                streak = 1 + _local_lease_expiry_streak(
+                    session, candidate.id, previous.stage, excluding=previous.id
+                )
+                exhausted = streak > len(LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS)
+                delay = (
+                    0 if exhausted else LOCAL_LEASE_EXPIRY_BACKOFF_SECONDS[streak - 1]
+                )
+                if not drain_only and (exhausted or delay > 0):
+                    if exhausted:
+                        previous.submission_state = "failed_terminal"
+                        previous.retry_state = "exhausted"
+                        parked: dict[str, Any] = {
+                            "processing_status": "failed",
+                            "next_retry_at": None,
+                            "error_code": LOCAL_LEASE_EXPIRY_EXHAUSTED_CODE,
+                            "error_message": (
+                                f"local attempt lease expired {streak} times in a row"
+                            ),
+                            "finished_at": stamp,
+                        }
+                    else:
+                        previous.retry_state = "scheduled"
+                        parked = {
+                            "processing_status": "retry_wait",
+                            "next_retry_at": _iso(
+                                current + dt.timedelta(seconds=delay)
+                            ),
+                            "error_code": LOCAL_LEASE_EXPIRED_CODE,
+                            "error_message": (
+                                f"local attempt lease expired {streak} times in a row"
+                            ),
+                        }
+                    previous.updated_at = stamp
+                    session.add(previous)
+                    parked_id, parked_stage = candidate.id, previous.stage
+                    session.exec(
+                        update(PodcastProcessingRecord)
+                        .where(
+                            PodcastProcessingRecord.id == parked_id,
+                            PodcastProcessingRecord.lease_token == lease_token,
+                        )
+                        .values(
+                            lease_owner=None,
+                            lease_token=None,
+                            lease_expires_at=None,
+                            updated_at=stamp,
+                            **parked,
+                        )
+                    )
+                    session.commit()
+                    logger.warning(
+                        "Podcast 处理单的本地 attempt 连续 %d 次租约到期 processing=%s "
+                        "stage=%s:%s",
+                        streak,
+                        parked_id,
+                        parked_stage,
+                        "已达上限,转为失败,等管理员重试"
+                        if exhausted
+                        else f"{delay} 秒后再试",
+                    )
+                    continue
             else:
                 # A process crash can happen after the HTTP request left the host
                 # but before mark_provider_submission. Preserve the request key and

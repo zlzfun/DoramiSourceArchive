@@ -13,12 +13,16 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import bindparam, case, func, or_, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import load_only
 from sqlmodel import Session, select
 
@@ -204,6 +208,21 @@ CAPACITY_RETRY_DELAYS_SECONDS = (5 * 60, 30 * 60, 2 * 60 * 60)
 CAPACITY_RETRY_DELAY_CAP_SECONDS = 6 * 60 * 60
 CAPACITY_RETRY_MAX_ATTEMPTS = 8
 
+# 月度预算用完不是这一期节目的问题,也不会一直持续:换月、调高上限或别的合成
+# 结算后额度就回来了(issue #322)。所以巡检拉起的自动运行遇到它时等待后重试、没有
+# 次数上限——重试时导读博文与口播稿直接复用,预算仍不够就只是再读几行账本。此前
+# 它一律按终态失败处理,预算恢复后这些单集也不会再被自动拉起。
+#
+# 只有巡检自己拉起的运行才等待(``budget_wait=True``):到期的等待只有巡检能重新
+# 拉起,而强制、读者点播、管理端手动运行的单集不一定满足巡检的条件,等下去就永远
+# 停在「生成中」。那些运行仍落为终态——明确的请求得到明确的结果,可以再发起。
+# 单次合成预算(``tts_per_run_budget_exceeded``)取决于口播稿本身,始终是终态。
+BUDGET_WAIT_CODES = {
+    "tts_monthly_budget_exceeded": "本月语音合成预算已用完，预算恢复后自动重试",
+}
+BUDGET_RETRY_DELAY_SECONDS = 6 * 60 * 60
+_LEGACY_BUDGET_FAILURE_SUFFIX = "tts_monthly_budget_exceeded"
+
 
 def _capacity_retry_delay_seconds(attempt: int) -> int:
     if attempt <= len(CAPACITY_RETRY_DELAYS_SECONDS):
@@ -216,6 +235,22 @@ def _guide_retry_attempts(guide: dict) -> int:
         return max(0, int(guide.get("retry_attempts") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def is_legacy_budget_failure(guide: dict) -> bool:
+    """A guide that the old code failed for good on an exhausted monthly TTS budget.
+
+    Those rows keep the raw provider-code message (a budget wait recorded by the
+    current code carries a readable one instead). The candidate scan starts each
+    of them once more: the retry either succeeds or records a proper budget wait,
+    so the row stops matching either way.
+    """
+
+    return (
+        str(guide.get("status") or "") == "failed"
+        and str(guide.get("failed_stage") or "") == "synthesizing"
+        and str(guide.get("error") or "").strip().endswith(_LEGACY_BUDGET_FAILURE_SUFFIX)
+    )
 
 
 def _capacity_wait_already_recorded(guide: dict, code: str) -> bool:
@@ -500,10 +535,43 @@ def fail_premium_guide(
     error: Exception | str,
     *,
     failed_stage: str = "",
+    budget_wait: bool = False,
 ) -> None:
-    """Persist a guide error. Capacity shortages wait; every other error is terminal."""
+    """Persist a guide error.
+
+    Capacity shortages wait a bounded number of times. An exhausted monthly TTS
+    budget waits without a cap, but only when ``budget_wait`` says the run was
+    started by the candidate scan (the only thing that can resume a due wait).
+    Every other error is terminal.
+    """
 
     code = error.code if isinstance(error, BailianSpeechError) else ""
+    if budget_wait and code in BUDGET_WAIT_CODES:
+        with Session(engine) as session:
+            episode = session.get(ArticleRecord, episode_id)
+            guide = _extensions(episode).get("premium_guide") if episode is not None else {}
+        if not isinstance(guide, dict):
+            guide = {}
+        if _capacity_wait_already_recorded(guide, code):
+            return
+        retry_at = (
+            dt.datetime.now(dt.timezone.utc)
+            + dt.timedelta(seconds=BUDGET_RETRY_DELAY_SECONDS)
+        ).isoformat(timespec="microseconds")
+        _set_episode_status(
+            engine,
+            episode_id,
+            "retry_wait",
+            error=BUDGET_WAIT_CODES[code],
+            # 预算只在合成前的预留处检查;旧状态若已不是进行中(比如调度器重复
+            # 记录),阶段名也不该丢。
+            failed_stage=failed_stage or "synthesizing",
+            next_retry_at=retry_at,
+            error_code=code,
+            # ``retry_attempts`` 是回执容量等待的计数(上限 8 次只针对它),预算等待
+            # 不碰:否则等了几轮预算之后,第一次遇到容量不足就会被判成用完。
+        )
+        return
     if code in CAPACITY_RETRY_CODES:
         with Session(engine) as session:
             episode = session.get(ArticleRecord, episode_id)
@@ -759,6 +827,118 @@ def _reusable_published_audio(
     return None
 
 
+# ``bailian_tts.EVICTED_AUDIO_CODE``(那边导入本模块,这里不能反过来导入)。
+EVICTED_AUDIO_CODE = "tts_cached_audio_evicted"
+
+
+def _rebind_evicted_audio(
+    engine: Engine,
+    store: PodcastArtifactStore,
+    *,
+    episode_id: str,
+    narration_id: str,
+    narration_hash: str,
+) -> PodcastArtifactRecord | None:
+    """Register an earlier audio of this narration text again, for the current narration.
+
+    The TTS receipt cache evicts the audio of episodes that already have
+    published audio (issue #326). When the same text has to be produced again
+    after that (the publication was withdrawn, or the text came back under a
+    new narration record), the receipts cannot replay: the supplier's signed
+    URL has expired. The earlier artifact holds exactly that audio, so its
+    bytes become a new ``ready`` artifact bound to the current narration. No
+    supplier call, no ledger change.
+
+    A narration's ``content_hash`` is the hash of its text, so an equal hash
+    means equal text. The artifact does not record which TTS settings made it;
+    the newest one wins.
+    """
+
+    with Session(engine) as session:
+        candidates = session.exec(
+            select(PodcastArtifactRecord)
+            .where(
+                PodcastArtifactRecord.episode_id == episode_id,
+                PodcastArtifactRecord.kind == "digest_audio_zh",
+                PodcastArtifactRecord.provenance == "premium_guide_tts",
+                PodcastArtifactRecord.narration_content_hash == narration_hash,
+            )
+            .order_by(
+                PodcastArtifactRecord.created_at.desc(),
+                PodcastArtifactRecord.id.desc(),
+            )
+        ).all()
+        for candidate in candidates:
+            session.expunge(candidate)
+    for candidate in candidates:
+        if not store.is_intact(candidate):
+            continue
+        rebound = store.import_bytes(
+            episode_id=episode_id,
+            kind="digest_audio_zh",
+            data=store.readable_path(candidate).read_bytes(),
+            declared_mime=candidate.mime,
+            provenance="premium_guide_tts",
+            authority_id="",
+            narration_artifact_id=narration_id,
+            narration_content_hash=narration_hash,
+        )
+        logger.info(
+            "精品导读 %s:语音回执已被逐出,改用已有成品 %s 重新登记", episode_id, candidate.id
+        )
+        return rebound
+    return None
+
+
+async def _synthesize_or_rebind(
+    engine: Engine,
+    store: PodcastArtifactStore,
+    tts_provider: PremiumGuideTtsProvider,
+    *,
+    episode_id: str,
+    text: str,
+    narration_id: str,
+    narration_hash: str,
+) -> PodcastArtifactRecord:
+    """Synthesize one narration and register its audio as a ``ready`` artifact.
+
+    When the narration was synthesized before and its receipts have been
+    evicted, the audio comes from the earlier artifact instead
+    (``_rebind_evicted_audio``). Every synthesis of the guide flow goes through
+    here: a rerun repeats each step, including the shorter second narration.
+    """
+
+    try:
+        synthesized = await tts_provider.synthesize(text)
+    except BailianSpeechError as exc:
+        # 这份口播稿早就合成过,只是回执音频在节目有了成品之后被逐出了:
+        # 用成品补上,而不是让节目卡在「重放不了、又不会重新付费」。
+        if exc.code != EVICTED_AUDIO_CODE:
+            raise
+        rebound = await asyncio.to_thread(
+            _rebind_evicted_audio,
+            engine,
+            store,
+            episode_id=episode_id,
+            narration_id=narration_id,
+            narration_hash=narration_hash,
+        )
+        if rebound is None:
+            raise
+        return rebound
+    return await asyncio.to_thread(
+        store.import_bytes,
+        episode_id=episode_id,
+        kind="digest_audio_zh",
+        data=synthesized.data,
+        declared_mime=synthesized.mime,
+        provenance="premium_guide_tts",
+        authority_id="",
+        narration_artifact_id=narration_id,
+        narration_content_hash=narration_hash,
+    )
+
+
 async def run_premium_guide(
     engine: Engine,
     store: PodcastArtifactStore,
@@ -769,6 +949,7 @@ async def run_premium_guide(
     tts_provider: PremiumGuideTtsProvider | None = None,
     score_threshold: float | None = None,
     selection_override: bool = False,
+    budget_wait: bool = False,
 ) -> dict:
     """Publish a guide using, but never replacing, the authoritative assessment."""
 
@@ -977,17 +1158,14 @@ async def run_premium_guide(
         _set_episode_status(
             engine, episode_id, "synthesizing", guide_metadata=guide_metadata
         )
-        synthesized = await tts_provider.synthesize(narration_text)
-        audio = await asyncio.to_thread(
-            store.import_bytes,
+        audio = await _synthesize_or_rebind(
+            engine,
+            store,
+            tts_provider,
             episode_id=episode_id,
-            kind="digest_audio_zh",
-            data=synthesized.data,
-            declared_mime=synthesized.mime,
-            provenance="premium_guide_tts",
-            authority_id="",
-            narration_artifact_id=narration_id,
-            narration_content_hash=narration_hash,
+            text=narration_text,
+            narration_id=narration_id,
+            narration_hash=narration_hash,
         )
         actual_duration = float(audio.duration_seconds or 0.0)
         tier_limit_seconds = plan.max_audio_minutes * 60
@@ -1029,17 +1207,14 @@ async def run_premium_guide(
                 retry_text = retry_narration_artifact.inline_text
                 session.commit()
 
-            retry_synthesized = await tts_provider.synthesize(retry_text)
-            audio2 = await asyncio.to_thread(
-                store.import_bytes,
+            audio2 = await _synthesize_or_rebind(
+                engine,
+                store,
+                tts_provider,
                 episode_id=episode_id,
-                kind="digest_audio_zh",
-                data=retry_synthesized.data,
-                declared_mime=retry_synthesized.mime,
-                provenance="premium_guide_tts",
-                authority_id="",
-                narration_artifact_id=retry_id,
-                narration_content_hash=retry_hash,
+                text=retry_text,
+                narration_id=retry_id,
+                narration_hash=retry_hash,
             )
             actual_duration2 = float(audio2.duration_seconds or 0.0)
             if (
@@ -1072,7 +1247,7 @@ async def run_premium_guide(
             "duration_seconds": audio.duration_seconds,
         }
     except Exception as exc:
-        fail_premium_guide(engine, episode_id, exc)
+        fail_premium_guide(engine, episode_id, exc, budget_wait=budget_wait)
         raise
 
 
@@ -1509,6 +1684,145 @@ def list_premium_guide_tasks(
         }
 
 
+@dataclass(frozen=True)
+class _ArtifactTail:
+    """一份文本产物里排在 ``inline_text`` 之后的那几列。"""
+
+    language: str
+    authority_id: str
+    source_artifact_id: str | None
+    source_content_hash: str | None
+    provenance_json: str
+
+
+@dataclass(frozen=True)
+class _TranscriptView:
+    """候选巡检用的转写视图:只有元数据,没有正文。"""
+
+    id: str
+    kind: str
+    content_hash: str
+    authority_id: str
+    language: str
+    provenance_json: str
+
+
+# ``podcast_text_artifacts`` 的行不可变(库里有 BEFORE UPDATE 触发器),而
+# ``language / authority_id / provenance_json`` 等列在行里排在 ``inline_text``
+# 之后——SQLite 要沿溢出页链走完整段逐字稿才读得到它们,哪怕查询并不取正文。
+# 候选巡检每拍都要这些列,所以在进程内记下来:每份产物只为它走一次溢出页链,
+# 而不是每拍把全部逐字稿读一遍(issue #318,实测一拍 340MB)。
+#
+# 「不可变」只管 UPDATE。单集删除时产物随之删除,之后经 Archive Sync 原样导回
+# 会得到同一个 id、不同的 ``authority_id``(接收端写成生产者)。所以缓存键是
+# (id, authority_id),而 ``authority_id`` 每次现取:它在唯一索引
+# ``uq_podcast_text_artifacts_authority_slot`` 里,只读索引就够,不碰正文。
+_ARTIFACT_TAIL_CACHE_LIMIT = 8192
+_ARTIFACT_TAIL_CHUNK = 100
+_artifact_tail_caches: (
+    "weakref.WeakKeyDictionary[Any, OrderedDict[tuple[str, str], _ArtifactTail]]"
+) = weakref.WeakKeyDictionary()
+_artifact_tail_lock = threading.Lock()
+
+
+_AUTHORITY_SLOT_INDEX = "uq_podcast_text_artifacts_authority_slot"
+
+
+def _artifact_authorities(session: Session, artifact_ids: list[str]) -> dict[str, str]:
+    """现取产物的 ``authority_id``,只读索引;库里没有的 id 不在结果里。
+
+    必须点名索引:按 id 查时 SQLite 默认走主键索引再回表,而 ``authority_id`` 在行里
+    排在正文之后,回表就要走完整段逐字稿。``(id, episode_id, kind, authority_id)``
+    这条唯一索引盖得住取的两列。
+    """
+
+    sqlite = session.get_bind().dialect.name == "sqlite"
+
+    def read(chunk: list[str], *, hinted: bool) -> list[tuple[str, str]]:
+        if hinted:
+            # SQLAlchemy 不为 SQLite 渲染表提示,``INDEXED BY`` 只能写成文本。
+            statement = text(
+                "SELECT id, authority_id FROM podcast_text_artifacts "
+                f"INDEXED BY {_AUTHORITY_SLOT_INDEX} WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True))
+            return [tuple(row) for row in session.execute(statement, {"ids": chunk}).all()]
+        return list(session.exec(
+            select(
+                PodcastTextArtifactRecord.id,
+                PodcastTextArtifactRecord.authority_id,
+            ).where(PodcastTextArtifactRecord.id.in_(chunk))
+        ).all())
+
+    authorities: dict[str, str] = {}
+    for offset in range(0, len(artifact_ids), _ARTIFACT_TAIL_CHUNK):
+        chunk = artifact_ids[offset:offset + _ARTIFACT_TAIL_CHUNK]
+        try:
+            rows = read(chunk, hinted=sqlite)
+        except OperationalError:
+            # 索引不在(不该发生:它由模型与迁移保证)。宁可慢,不可错。
+            logger.warning(
+                "索引 %s 不可用,候选巡检退回回表读取 authority_id", _AUTHORITY_SLOT_INDEX
+            )
+            rows = read(chunk, hinted=False)
+        for artifact_id, authority_id in rows:
+            authorities[artifact_id] = authority_id or ""
+    return authorities
+
+
+def _artifact_tails(session: Session, artifact_ids: Iterable[str]) -> dict[str, _ArtifactTail]:
+    """Return the trailing metadata of text artifacts, cached per engine."""
+
+    wanted = list(dict.fromkeys(artifact_id for artifact_id in artifact_ids if artifact_id))
+    if not wanted:
+        return {}
+    authorities = _artifact_authorities(session, wanted)
+    bind = session.get_bind()
+    with _artifact_tail_lock:
+        cache = _artifact_tail_caches.get(bind)
+        if cache is None:
+            cache = OrderedDict()
+            _artifact_tail_caches[bind] = cache
+        found: dict[str, _ArtifactTail] = {}
+        for artifact_id, authority_id in authorities.items():
+            key = (artifact_id, authority_id)
+            tail = cache.get(key)
+            if tail is not None:
+                cache.move_to_end(key)
+                found[artifact_id] = tail
+    missing = [artifact_id for artifact_id in authorities if artifact_id not in found]
+    for offset in range(0, len(missing), _ARTIFACT_TAIL_CHUNK):
+        chunk = missing[offset:offset + _ARTIFACT_TAIL_CHUNK]
+        loaded = {
+            row[0]: _ArtifactTail(
+                language=row[1] or "",
+                authority_id=row[2] or "",
+                source_artifact_id=row[3],
+                source_content_hash=row[4],
+                provenance_json=row[5] or "",
+            )
+            for row in session.exec(
+                select(
+                    PodcastTextArtifactRecord.id,
+                    PodcastTextArtifactRecord.language,
+                    PodcastTextArtifactRecord.authority_id,
+                    PodcastTextArtifactRecord.source_artifact_id,
+                    PodcastTextArtifactRecord.source_content_hash,
+                    PodcastTextArtifactRecord.provenance_json,
+                ).where(PodcastTextArtifactRecord.id.in_(chunk))
+            ).all()
+        }
+        found.update(loaded)
+        with _artifact_tail_lock:
+            # 以这次读到的 authority 为键:即便与上面现取的不一致(两次读之间行被
+            # 换过),也只是存进它自己的键,下一拍现取的 authority 会找到对的那条。
+            cache.update(
+                {(artifact_id, tail.authority_id): tail for artifact_id, tail in loaded.items()}
+            )
+            while len(cache) > _ARTIFACT_TAIL_CACHE_LIMIT:
+                cache.popitem(last=False)
+    return found
+
+
 def pending_premium_guide_candidates(
     engine: Engine,
     *,
@@ -1522,11 +1836,14 @@ def pending_premium_guide_candidates(
     """
 
     with Session(engine) as session:
+        # 转写只取排在 ``inline_text`` 之前的三列;其余元数据走 ``_artifact_tails``。
         rows = session.exec(
             select(
                 ArticleRecord,
                 ArticleAnalysisRecord,
-                PodcastTextArtifactRecord,
+                PodcastTextArtifactRecord.id,
+                PodcastTextArtifactRecord.kind,
+                PodcastTextArtifactRecord.content_hash,
             )
             .join(
                 PodcastTextArtifactRecord,
@@ -1561,18 +1878,22 @@ def pending_premium_guide_candidates(
                     ArticleAnalysisRecord.podcast_final_score,
                     raiseload=True,
                 ),
-                load_only(
-                    PodcastTextArtifactRecord.id, PodcastTextArtifactRecord.kind,
-                    PodcastTextArtifactRecord.content_hash,
-                    PodcastTextArtifactRecord.authority_id,
-                    PodcastTextArtifactRecord.language,
-                    PodcastTextArtifactRecord.provenance_json,
-                    raiseload=True,
-                ),
             )
         ).all()
+        tails = _artifact_tails(session, (row[2] for row in rows))
         candidates: list[str] = []
-        for episode, analysis, transcript in rows:
+        for episode, analysis, transcript_id, transcript_kind, transcript_hash in rows:
+            tail = tails.get(transcript_id)
+            if tail is None:  # 行在两次查询之间消失:本拍不处理,下一拍再看
+                continue
+            transcript = _TranscriptView(
+                id=transcript_id,
+                kind=transcript_kind,
+                content_hash=transcript_hash,
+                authority_id=tail.authority_id,
+                language=tail.language,
+                provenance_json=tail.provenance_json,
+            )
             if not has_authoritative_analysis(analysis):
                 continue
             transcript_publication = session.get(
@@ -1618,13 +1939,17 @@ def pending_premium_guide_candidates(
             guide = guide if isinstance(guide, dict) else {}
             status = str(guide.get("status") or extensions.get("processing_status") or "")
             current_mode = str(guide.get("mode") or "")
-            # Due capacity waits re-enter this scan. A future next_retry_at stays
-            # out, and terminal failures stay out. ``queued`` is a force command:
-            # prepare clears next_retry_at and the force endpoint schedules once,
-            # so this scan must not start that episode as well.
+            # Due capacity / budget waits re-enter this scan. A future
+            # next_retry_at stays out, and terminal failures stay out. ``queued``
+            # is a force command: prepare clears next_retry_at and the force
+            # endpoint schedules once, so this scan must not start that episode
+            # as well.
             if status == "retry_wait":
                 if not _premium_guide_retry_due(guide):
                     continue
+            elif is_legacy_budget_failure(guide):
+                # 旧代码把「月度预算已满」记成了终态;这些单集各再拉起一次(issue #322)。
+                pass
             elif status in {"queued", "summarizing", "synthesizing", "failed"}:
                 continue
             if status == "ready" and current_mode == eligibility.mode:
@@ -1632,14 +1957,8 @@ def pending_premium_guide_candidates(
                     PodcastTextPublicationRecord, f"{episode.id}:digest_blog_zh"
                 )
                 blog = (
-                    session.get(
-                        PodcastTextArtifactRecord, publication.artifact_id,
-                        options=[load_only(
-                            PodcastTextArtifactRecord.source_artifact_id,
-                            PodcastTextArtifactRecord.source_content_hash,
-                            PodcastTextArtifactRecord.provenance_json,
-                            raiseload=True,
-                        )],
+                    _artifact_tails(session, [publication.artifact_id]).get(
+                        publication.artifact_id
                     )
                     if publication is not None and publication.status == "published"
                     else None

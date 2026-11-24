@@ -465,9 +465,13 @@ def trigger_today_revision(
     with Session(engine) as session:
         if not personal_digest_enabled(session):
             return None
-        result = digest_service.start_personal_digest_edition(
-            session, username, generation_reason=reason
+        reason_value = str(getattr(reason, "value", reason))
+        start = (
+            digest_service.start_personal_digest_edition
+            if reason_value in digest_service.REBUILD_REASON_VALUES
+            else digest_service.ensure_first_personal_digest_edition
         )
+        result = start(session, username, generation_reason=reason)
         return result.edition
 
 
@@ -485,12 +489,15 @@ def start_scheduled_editions(engine: Engine) -> int:
     return trigger_all_today_revisions(engine, DigestGenerationReason.SCHEDULED)
 
 
-def process_pending_editions(engine: Engine) -> int:
+def process_pending_editions(engine: Engine, *, recovery: bool = True) -> int:
+    from services.briefs_runtime import run_attempt
+
+    # Persisted pending/generating rows must still recover when new traffic is
+    # disabled (ACCEPTANCE rollback boundary) and across Shanghai midnight (A06).
     with Session(engine) as session:
-        if not personal_digest_enabled(session):
-            return 0
-        rows = list(
-            session.exec(
+        rows = [
+            (edition.id, edition.status)
+            for edition in session.exec(
                 select(PersonalDigestEditionRecord)
                 .where(
                     PersonalDigestEditionRecord.status.in_([
@@ -500,30 +507,34 @@ def process_pending_editions(engine: Engine) -> int:
                 )
                 .order_by(PersonalDigestEditionRecord.report_date, PersonalDigestEditionRecord.revision)
             ).all()
-        )
-        completed = 0
-        for edition in rows:
-            before = edition.status
-            after = process_pending_edition(session, edition)
-            if before != after.status:
+            if edition.id is not None
+        ]
+
+    completed = 0
+    for edition_id, before_status in rows:
+        run_attempt(engine, edition_id, recovery=recovery)
+        with Session(engine) as session:
+            after = session.get(PersonalDigestEditionRecord, edition_id)
+            if after is not None and after.status != before_status:
                 completed += 1
-        # Desired intents live on their generating carrier revision.  Scan them
-        # after lifecycle work so a just-completed revision can materialize one
-        # coalesced successor in the same scheduler tick.  A process restart is
-        # safe because the marker stays durable until successor creation wins.
-        session.expire_all()
-        intents = list(session.exec(
-            select(PersonalDigestEditionRecord).where(
-                PersonalDigestEditionRecord.desired_requested_at.is_not(None),
-                PersonalDigestEditionRecord.status.notin_([
-                    PersonalDigestStatus.PENDING.value,
-                    PersonalDigestStatus.GENERATING.value,
-                ]),
-            )
-        ).all())
-        for carrier in intents:
-            digest_service.materialize_desired_personal_digest_revision(session, carrier)
-        return completed
+
+    with Session(engine) as session:
+        if personal_digest_enabled(session):
+            # Desired intents live on their generating carrier revision.  Scan them
+            # after lifecycle work so a just-completed revision can materialize one
+            # coalesced successor in the same scheduler tick.
+            intents = list(session.exec(
+                select(PersonalDigestEditionRecord).where(
+                    PersonalDigestEditionRecord.desired_requested_at.is_not(None),
+                    PersonalDigestEditionRecord.status.notin_([
+                        PersonalDigestStatus.PENDING.value,
+                        PersonalDigestStatus.GENERATING.value,
+                    ]),
+                )
+            ).all())
+            for carrier in intents:
+                digest_service.materialize_desired_personal_digest_revision(session, carrier)
+    return completed
 
 
 def _ensure(
@@ -535,7 +546,13 @@ def _ensure(
 ) -> dict[str, Any]:
     _require_enabled(session)
     now = dt.datetime.now(digest_service.SHANGHAI)
-    result = digest_service.start_personal_digest_edition(
+    reason_value = str(getattr(reason, "value", reason))
+    starter = (
+        digest_service.start_personal_digest_edition
+        if reason_value in digest_service.REBUILD_REASON_VALUES
+        else digest_service.ensure_first_personal_digest_edition
+    )
+    result = starter(
         session,
         username,
         now=now,

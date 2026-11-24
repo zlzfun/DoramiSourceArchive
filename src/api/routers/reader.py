@@ -86,6 +86,7 @@ from services import reader_interests as reader_interests_service
 from services import rankings as rankings_service
 from services import ranking_picks as ranking_picks_service
 from services import reader_state as reader_state_service
+from services import token_usage as token_usage_service
 from services import source_collections as source_collections_service
 from services import subscription_mutations as subscription_mutations_service
 from services import source_visibility as source_visibility_service
@@ -1263,6 +1264,8 @@ def revoke_article_share(share_id: int, request: Request, session: Session = Dep
 
 # ==================== 个人聚合接口令牌 ====================
 
+FEED_TOKEN_USAGE_WINDOW_DAYS = 30
+
 @router.get("/feed-token")
 def get_feed_token(request: Request, session: Session = Depends(deps.get_session)):
     """当前用户的个人聚合接口令牌状态（仅返回预览，不回显明文）。"""
@@ -1270,12 +1273,19 @@ def get_feed_token(request: Request, session: Session = Depends(deps.get_session
     username = app.current_username(request)
     record = session.get(ReaderFeedTokenRecord, username)
     subscribed = app.resolve_subscribed_source_ids(session, username)
+    # 这枚令牌的使用情况(issue #312):最近一次调用 + 近 30 天调用次数;重新生成后从零算起。
+    usage = token_usage_service.feed_token_usage(
+        session, username, record.token_hash if record else None, days=FEED_TOKEN_USAGE_WINDOW_DAYS,
+    )
     return {
         "exists": record is not None,
         "token_preview": record.token_preview if record else "",
         "created_at": record.created_at if record else None,
         "updated_at": record.updated_at if record else None,
         "subscribed_source_count": len(subscribed),
+        "last_used_at": usage["last_used_at"],
+        "usage_window_days": usage["window_days"],
+        "usage_calls": usage["calls"],
     }
 
 

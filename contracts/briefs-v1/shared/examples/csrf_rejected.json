@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "CSRF_REJECTED",
+    "message": "联调错误示例 CSRF_REJECTED",
+    "request_id": "briefs-example-001"
+  }
+}

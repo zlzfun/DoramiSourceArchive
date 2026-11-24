@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>聚合接口列全 · 样页</title>
+<link rel="stylesheet" href="assets/index.css?v=2">
+</head>
+<body>
+<main>
+  <header>
+    <h1>设置 · 聚合接口列全令牌接口 <span>issue #315 · 第一轮样页</span></h1>
+    <a class="open" href="app.html?dir=a" target="_blank" rel="noopener">打开原型</a>
+  </header>
+
+  <section>
+    <h2>现网与两个方向</h2>
+    <div class="trio wide">
+      <figure>
+        <figcaption>现网:5 个接口列了 2 个 <a href="app.html?dir=now" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=now&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption><b>A</b> 分组列全:一行一个接口,点开看用法 <a href="app.html?dir=a" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption><b>B</b> 一组一行:行尾分段切换 <a href="app.html?dir=b" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+    </div>
+    <dl>
+      <dt>A</dt><dd>五个接口的真实路径一屏看全,每组带自己的范围签;点开一行,是这个接口的调用示例和它认的参数。写的路径与管理面账户抽屉里「接口调用」那几行是同一套名字。</dd>
+      <dt>B</dt><dd>文章、热点事件各占一行,行尾的分段选格式(JSON / Markdown / Atom)或取哪一份(榜单 / 单个事件),地址、示例、参数跟着换——与隔壁「MCP 接入」切配置格式是同一种做法。五个里有三个的地址要点一下才看得到。</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>A · 点开一行</h2>
+    <div class="trio wide">
+      <figure>
+        <figcaption>文章 JSON <a href="app.html?dir=a&open=articles" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&open=articles&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>Atom:给 RSS 工具的订阅地址 <a href="app.html?dir=a&open=articles.xml" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&open=articles.xml&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>热点事件榜(正文滚到底) <a href="app.html?dir=a&open=events" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&open=events&scroll=bottom&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>B · 切换</h2>
+    <div class="trio wide">
+      <figure>
+        <figcaption>文章切到 Atom <a href="app.html?dir=b&fmt=articles.xml" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&fmt=articles.xml&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>热点事件切到单个事件(正文滚到底) <a href="app.html?dir=b&ev=events/%7Bevent_id%7D" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&ev=events/%7Bevent_id%7D&scroll=bottom&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>两组的接口参数都展开(正文滚到底) <a href="app.html?dir=b&params=both" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=b&params=both&scroll=bottom&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>身份、令牌状态、暗色(以 A 为例)</h2>
+    <div class="trio wide">
+      <figure>
+        <figcaption>管理员:文章也是全站公开内容 <a href="app.html?dir=a&role=admin" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&role=admin&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>还没签发令牌 <a href="app.html?dir=a&token=none" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&token=none&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+      <figure>
+        <figcaption>暗色 <a href="app.html?dir=a&open=articles&theme=dark" target="_blank" rel="noopener">打开</a></figcaption>
+        <div class="shot" data-src="app.html?dir=a&open=articles&theme=dark&bar=0" data-crop="268,84,904,600"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>列了什么</h2>
+    <table>
+      <thead><tr><th>接口</th><th>现网</th><th>样页</th><th>取到的范围</th><th>一次最多</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/public/feed/articles</code></td><td class="same">列了</td><td>列</td><td>读者:已订阅来源;管理员:全站公开内容</td><td>500 条</td></tr>
+        <tr><td><code>GET /api/public/feed/articles.md</code></td><td class="same">列了</td><td>列</td><td>同上</td><td>200 条</td></tr>
+        <tr><td><code>GET /api/public/feed/articles.xml</code></td><td class="miss">没列</td><td>列</td><td>同上</td><td>200 条</td></tr>
+        <tr><td><code>GET /api/public/feed/events</code></td><td class="miss">没列</td><td>列</td><td>全站公开内容(不按订阅筛)</td><td>10 件</td></tr>
+        <tr><td><code>GET /api/public/feed/events/{event_id}</code></td><td class="miss">没列</td><td>列</td><td>全站公开内容</td><td>1 件</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>待拍板</h2>
+    <ul class="asks">
+      <li><b>方向</b><span class="rec">A 分组列全</span><span>B 一组一行</span></li>
+      <li><b>A 打开时的样子</b><span class="rec">全收起,五行一屏看全</span><span>第一行点开(同现网默认露着示例;正文要多滚约 150px)</span></li>
+      <li><b>A 行尾标返回格式</b><span class="rec">标(JSON / Markdown / Atom)</span><span>不标,看地址后缀</span></li>
+      <li><b>卡头通往「MCP 接入」</b><span class="rec">加(那边已有一条通回来的)</span><span>不加</span></li>
+      <li><b>Atom 的示例</b><span class="rec">地址里带令牌(RSS 工具带不了请求头)</span><span>同其它接口,写 curl</span></li>
+      <li><b>单订阅令牌的接口</b><span class="rec">不列(这种令牌现在没有界面)</span><span>一起列</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>顺带查到的</h2>
+    <ul class="notes">
+      <li>现网「接口参数」写的是「limit 上限 500」,只对 JSON 成立;Markdown 的上限是 200,也不认 <code>include_content</code>。样页按接口分别写。</li>
+      <li>Atom 接口在契约文档与端点清单里同样没有记,这一波的文档一并补上。</li>
+      <li>实现时加一条测试:页面列出的接口与后端 <code>/api/public/feed/</code> 下的路由逐条对账,以后新增接口而页面没跟上会红。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>样页的边界</h2>
+    <ul class="notes">
+      <li>底页是在隔离栈里抓的现网设置弹窗(DOM 与样式),新增部分只用现有的类与取值。抓的是 issue #312 分支(PR #316,待合入),所以令牌下面已有「最近调用」那一行。</li>
+      <li>弹窗后面的页面没有放——现网那里是被遮罩压暗、虚化的阅读器。</li>
+      <li>域名、令牌尾号、调用次数是示意;示例里的事件编号 128 也是。</li>
+      <li>「MCP 接入」「显示」「重新生成」「签发令牌」点了没有反应;复制只给对勾,不保证真的进了剪贴板。</li>
+      <li>手机上的设置不列「接入集成」(issue #230),这张卡只有桌面。没有在 Windows 上看过。</li>
+    </ul>
+  </section>
+</main>
+<script src="assets/index.js?v=2"></script>
+</body>
+</html>

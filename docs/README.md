@@ -59,6 +59,7 @@
 
 - [contracts/feed_delivery.md](./contracts/feed_delivery.md) — `/api/feed/*` JSON + Markdown 批量交付(过滤参数 / 记录形状 / extensions 展开)。
 - [contracts/reader_subscription.md](./contracts/reader_subscription.md) — 读者订阅体系:一键订阅、dsub_/dfeed_ 令牌签发与轮换、`/api/public/*` 拉取端点。
+- [contracts/admin_reader_briefs.md](./contracts/admin_reader_briefs.md) — W3 工号映射的 admin Cookie 日报查询/首版 ensure 契约、状态与 curl 示例。
 - [contracts/archive_sync.md](./contracts/archive_sync.md) — collector → reader 的六流同步协议与合并规则(身份 / 血缘 / 校验和 / 墓碑;源目录按接收端能力投影 `source-catalog-v1`)。
 - [contracts/ingest_push.md](./contracts/ingest_push.md) — 收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人):收录令牌、出处描述与身份解析、条目 id 公式、跨源去重、逐条回执、临时源在各环节的行为。
 - [contracts/podcast_provider_ports.md](./contracts/podcast_provider_ports.md) — Podcast ASR / TTS provider-neutral ports、adapter 责任边界、新增供应商验收清单。
@@ -83,6 +84,8 @@
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
 - ☐ [plans/issue-298-interest-governance.md](./plans/issue-298-interest-governance.md) — 候选治理、私有条件／话题匹配、审核通知与早报价值优先；持续验证已停止，当前为存量修复与提交整理，工程回归和语义质量分列。
+- ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
+
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。

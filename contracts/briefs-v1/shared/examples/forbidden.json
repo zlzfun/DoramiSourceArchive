@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "联调错误示例 FORBIDDEN",
+    "request_id": "briefs-example-001"
+  }
+}

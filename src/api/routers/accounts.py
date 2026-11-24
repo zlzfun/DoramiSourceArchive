@@ -24,12 +24,14 @@ class AccountCreateParams(BaseModel):
     username: str
     password: str
     role: str = "user"
+    w3_uid: Optional[str] = None
 
 
 class AccountUpdateParams(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     ai_beta_enabled: Optional[bool] = None
+    w3_uid: Optional[str] = None
 
 
 class AccountResetPasswordParams(BaseModel):
@@ -52,7 +54,7 @@ def list_accounts(session: Session = Depends(deps.get_session)):
 def create_account(params: AccountCreateParams, session: Session = Depends(deps.get_session)):
     try:
         record = accounts_service.create_user(
-            session, params.username, params.password, params.role
+            session, params.username, params.password, params.role, w3_uid=params.w3_uid
         )
     except accounts_service.AccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -94,6 +96,8 @@ def update_account(
             accounts_service.set_active(session, username, params.is_active)
         if params.ai_beta_enabled is not None:
             accounts_service.set_ai_beta_enabled(session, username, params.ai_beta_enabled)
+        if "w3_uid" in params.model_fields_set:
+            accounts_service.set_w3_uid(session, username, params.w3_uid)
         record = accounts_service.get_user(session, username)
         if record is None:
             raise HTTPException(status_code=404, detail="账户不存在")

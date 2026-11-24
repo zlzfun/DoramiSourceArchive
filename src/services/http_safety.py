@@ -97,6 +97,19 @@ class PublicDownloadTimeout(PublicDownloadError):
     """The connect/read/stream operation exceeded its configured deadline."""
 
 
+class PublicDownloadTooLarge(PublicDownloadError):
+    """The response is larger than the caller's ``max_bytes``.
+
+    ``declared_length`` is the response's own ``Content-Length`` when that
+    header is what exceeded the limit (no body byte was read); it is ``None``
+    when the body outgrew the limit while streaming.
+    """
+
+    def __init__(self, *, declared_length: int | None = None) -> None:
+        super().__init__("下载响应超过大小上限")
+        self.declared_length = declared_length
+
+
 def _probe_without_body(
     client: httpx.Client,
     method: str,
@@ -340,7 +353,7 @@ def _declared_length(headers: httpx.Headers, max_bytes: int) -> None:
     if declared < 0:
         raise PublicDownloadError("下载响应的 Content-Length 无效")
     if declared > max_bytes:
-        raise PublicDownloadError("下载响应超过大小上限")
+        raise PublicDownloadTooLarge(declared_length=declared)
 
 
 def _write_all(destination: BinaryIO, chunk: bytes) -> None:
@@ -421,7 +434,7 @@ async def _stream_public_url_to_file(
                             continue
                         received += len(chunk)
                         if received > max_bytes:
-                            raise PublicDownloadError("下载响应超过大小上限")
+                            raise PublicDownloadTooLarge()
                         _write_all(destination, chunk)
                         digest.update(chunk)
                     return PublicDownloadResult(

@@ -16,9 +16,11 @@ def test_tts_receipt_capacity_and_safe_reclaim_admin_routes(api_env, monkeypatch
     assert response.status_code == 200
     assert response.json()["status"] == "available"
     assert response.json()["used_bytes"] == 0
+    assert response.json()["evictable_bytes"] == 0
     assert response.json()["estimated_max_narration_reservation_bytes"] <= app.podcast_artifact_store.max_bytes
     reclaimed = client.post("/api/admin/podcast-tts-receipts/reclaim")
     assert reclaimed.status_code == 200
     assert reclaimed.json()["compressed_wavs"] == 0
+    assert reclaimed.json()["evicted_files"] == 0 and reclaimed.json()["evictable_bytes"] == 0
 
 

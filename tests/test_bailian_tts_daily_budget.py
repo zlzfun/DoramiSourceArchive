@@ -97,13 +97,25 @@ def test_next_day_releases_only_completed_dated_spend(case):
     assert calls == ["abc", "def"]
 
 
-@pytest.mark.parametrize("status,unknown_day", [("reserved", False), ("authorized", False), ("generated", False), ("succeeded", True)])
+@pytest.mark.parametrize("status,unknown_day", [("authorized", False), ("generated", False), ("succeeded", True)])
 def test_unsettled_and_undated_legacy_receipts_keep_daily_budget(case, status, unknown_day):
     engine, cfg, now, calls, Client, provider = case
     seed(engine, now[0] - dt.timedelta(days=40), status=status, day="" if unknown_day else None, cost=3)
     with pytest.raises(BailianSpeechError, match="tts_daily_budget_exceeded"):
         asyncio.run(provider().synthesize("a"))
     assert calls == []
+
+
+def test_proven_unsent_reservation_is_released_before_daily_budget_check(case):
+    engine, cfg, now, calls, Client, provider = case
+    seed(engine, now[0] - dt.timedelta(days=40), status="reserved", cost=3)
+    asyncio.run(provider().synthesize("abc"))
+    assert calls == ["abc"]
+    with Session(engine) as session:
+        abandoned = session.get(BailianTtsCallRecord, "old")
+        assert abandoned.status == "reserved"
+        assert abandoned.cost_minor == 0
+        assert sum(row.cost_minor for row in session.exec(select(BailianTtsCallRecord))) == 3
 
 
 def test_other_scope_and_rejected_receipts_do_not_use_daily_budget(case):
@@ -222,7 +234,7 @@ def test_reserved_restart_rechecks_lowered_per_run_limit(case):
     assert calls == []
 
 
-def test_independent_database_sessions_cannot_overreserve_daily_budget(case):
+def test_independent_database_sessions_cannot_overauthorize_daily_budget(case):
     engine, cfg, now, calls, Client, provider = case
     gate = threading.Barrier(2)
 
@@ -233,18 +245,21 @@ def test_independent_database_sessions_cannot_overreserve_daily_budget(case):
             gate.wait(timeout=5)
             try:
                 worker._reserve(["ab"], [key], now[0])
-                return "reserved"
+                worker._authorize(key)
+                return "authorized"
             except BailianSpeechError as exc:
-                return str(exc)
+                return exc.code
         finally:
             separate.dispose()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(reserve, ["first", "second"]))
-    assert outcomes.count("reserved") == 1
-    assert sum("tts_daily_budget_exceeded" in result for result in outcomes) == 1
+    assert outcomes.count("authorized") == 1
+    assert sum(result in {"tts_daily_budget_exceeded", "tts_receipt_conflict"} for result in outcomes) == 1
     with Session(engine) as session:
-        assert session.exec(select(BailianTtsCallRecord)).one().cost_minor == 2
+        rows = session.exec(select(BailianTtsCallRecord)).all()
+        assert sum(row.cost_minor for row in rows) == 2
+        assert [row.cost_minor for row in rows if row.status == "authorized"] == [2]
 
 
 def test_daily_controls_ini_environment_and_runtime_resolution(case, monkeypatch):

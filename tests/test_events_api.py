@@ -1,5 +1,6 @@
 """事件热点榜端点(issue #121 wave 1;#221 默认 7 天)TestClient 测试:读者 / 游客 / 管理端点、403 边界、审计落表、
 合并 / 摘出语义与返回字段逐字段对齐方案 §5.0(#221 加 latest / first_report_at / is_recent / 主体 source_id)。
+令牌化交付口 ``/api/public/feed/events``(issue #310)在文件末尾:与读者面同源、令牌门、运行面门、隐藏源不外流。
 显式建 tmp sink;造数据相对时间。"""
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from tests.conftest import seed_default_accounts  # noqa: E402
 
 from models.db import (  # noqa: E402
     AdminAuditRecord,
+    AppSettingRecord,
     ArticleAnalysisRecord,
     ArticleRecord,
     EventAssignmentLedgerRecord,
@@ -46,6 +48,9 @@ MEMBER_KEYS = {
 }
 FOLLOWUP_KEYS = {"event_id", "title", "first_seen_at"}
 DETAIL_KEYS = ITEM_KEYS | {"members", "followups", "merged_into"}
+# 令牌化交付口(issue #310):读者面字段原样下发,外面包一层 feed 家族的 status / count。
+FEED_BOARD_KEYS = BOARD_KEYS | {"status", "count"}
+FEED_DETAIL_KEYS = {"status", "event"}
 
 
 def _iso(hours_ago: float) -> str:
@@ -296,3 +301,156 @@ def test_admin_list_merge_detach_are_applied_and_audited(monkeypatch, tmp_path):
     assert ("POST", f"/api/admin/events/{ids['hot']}/merge-into/{ids['hot']}", 409) in by_path
     assert ("POST", f"/api/admin/events/999999/merge-into/{ids['hot']}", 404) in by_path
     assert all(row.method == "POST" for row in rows)
+
+
+# ── 令牌化交付口(issue #310) ──
+
+
+def _feed_token(client, username="user", password="user") -> str:
+    _login(client, username, password)
+    token = client.post("/api/reader/feed-token/rotate").json()["token"]
+    assert token.startswith("dfeed_")
+    return token
+
+
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_public_feed_events_deliver_the_reader_board(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    ids = _seed(app_module.db_sink.engine)
+    with TestClient(app_module.app) as client:
+        token = _feed_token(client)
+        reader_board = client.get("/api/reader/events").json()
+        reader_detail = client.get(f"/api/reader/events/{ids['hot']}").json()
+        client.cookies.clear()  # 之后只凭令牌,不带会话
+
+        board = client.get("/api/public/feed/events", headers=_bearer(token))
+        assert board.status_code == 200
+        payload = board.json()
+        assert set(payload) == FEED_BOARD_KEYS
+        assert payload["status"] == "success" and payload["count"] == 3
+        assert payload["window_hours"] == 168 and payload["empty_reason"] is None
+        # 同一份榜:条目与读者面逐字段相同,默认不带成员。
+        assert payload["items"] == reader_board["items"]
+        assert all(set(item) == ITEM_KEYS for item in payload["items"])
+
+        # ?token= 兜底(不能设请求头的工具)。
+        via_query = client.get(f"/api/public/feed/events?token={token}")
+        assert via_query.status_code == 200 and via_query.json()["items"] == payload["items"]
+
+        near = client.get("/api/public/feed/events?window_hours=48&limit=1", headers=_bearer(token)).json()
+        assert near["window_hours"] == 48 and near["count"] == 1
+        assert [item["event_id"] for item in near["items"]] == [ids["hot"]]
+
+        # include_members:每件事多带成员,形状与次序同详情;其余字段不变。
+        full = client.get("/api/public/feed/events?include_members=true", headers=_bearer(token)).json()
+        assert [item["event_id"] for item in full["items"]] == [ids["hot"], ids["warm"], ids["week"]]
+        for item, plain in zip(full["items"], payload["items"]):
+            assert set(item) == ITEM_KEYS | {"members"}
+            assert {key: value for key, value in item.items() if key != "members"} == plain
+            assert len(item["members"]) == item["member_count"]
+            assert all(set(member) == MEMBER_KEYS for member in item["members"])
+        assert full["items"][0]["members"] == reader_detail["members"]
+
+        detail = client.get(f"/api/public/feed/events/{ids['hot']}", headers=_bearer(token))
+        assert detail.status_code == 200
+        body = detail.json()
+        assert set(body) == FEED_DETAIL_KEYS and body["status"] == "success"
+        assert set(body["event"]) == DETAIL_KEYS
+        assert body["event"] == reader_detail
+        assert all(set(item) == FOLLOWUP_KEYS for item in body["event"]["followups"])
+        # 名次跟窗口走;合并掉的旧 ID 指到新事件;单主体事件不上榜但可按 ID 取。
+        week = client.get(f"/api/public/feed/events/{ids['week']}?window_hours=48", headers=_bearer(token)).json()
+        assert week["event"]["rank"] is None
+        via_old = client.get(f"/api/public/feed/events/{ids['old']}", headers=_bearer(token)).json()["event"]
+        assert via_old["event_id"] == ids["hot"] and via_old["merged_into"] == ids["hot"]
+        single = client.get(f"/api/public/feed/events/{ids['single']}", headers=_bearer(token)).json()["event"]
+        assert single["rank"] is None and single["member_count"] == 1
+
+        assert client.get("/api/public/feed/events/999999", headers=_bearer(token)).status_code == 404
+        assert client.get("/api/public/feed/events/not-a-number", headers=_bearer(token)).status_code == 422
+        assert client.get("/api/public/feed/events?limit=11", headers=_bearer(token)).status_code == 400
+        assert client.get("/api/public/feed/events?window_hours=0", headers=_bearer(token)).status_code == 400
+        assert client.get(
+            f"/api/public/feed/events/{ids['hot']}?window_hours=337", headers=_bearer(token)
+        ).status_code == 400
+
+        # 榜单是全站口径:管理员的令牌拿到同一份。
+        admin_token = _feed_token(client, "admin", "admin")
+        client.cookies.clear()
+        assert client.get("/api/public/feed/events", headers=_bearer(admin_token)).json()["items"] == payload["items"]
+    assert _audit_rows(app_module.db_sink.engine) == []  # 只读交付,不入审计
+
+
+def test_public_feed_events_require_a_valid_feed_token(monkeypatch, tmp_path):
+    app_module = _setup_app(monkeypatch, tmp_path)
+    ids = _seed(app_module.db_sink.engine)
+    paths = ("/api/public/feed/events", f"/api/public/feed/events/{ids['hot']}")
+    with TestClient(app_module.app) as client:
+        for path in paths:
+            assert client.get(path).status_code == 401, path
+            assert client.get(f"{path}?token=dfeed_wrong").status_code == 401, path
+            assert client.get(path, headers=_bearer("dfeed_wrong")).status_code == 401, path
+
+        old_token = _feed_token(client)
+        # 登录会话不顶替令牌:这条口子只认令牌。
+        for path in paths:
+            assert client.get(path).status_code == 401, path
+        # 单订阅令牌(dsub_)不是这里的凭据。
+        subscription = client.post(
+            "/api/subscriptions", json={"name": "media-a", "filters": {"source_id": "media-a"}}
+        ).json()
+        assert subscription["token"].startswith("dsub_")
+        new_token = client.post("/api/reader/feed-token/rotate").json()["token"]
+        client.cookies.clear()
+        for path in paths:
+            assert client.get(path, headers=_bearer(subscription["token"])).status_code == 401, path
+            assert client.get(path, headers=_bearer(old_token)).status_code == 401, path  # 轮换后旧令牌作废
+            assert client.get(path, headers=_bearer(new_token)).status_code == 200, path
+
+        # 令牌先于参数取值校验:没有有效令牌时不回范围类 400。
+        assert client.get("/api/public/feed/events?limit=11").status_code == 401
+        assert client.get(f"/api/public/feed/events/{ids['hot']}?window_hours=0").status_code == 401
+        assert client.get("/api/public/feed/events/999999", headers=_bearer("dfeed_wrong")).status_code == 401
+
+
+def test_public_feed_events_disabled_in_collector_role(monkeypatch, tmp_path):
+    from config import RuntimeConfig
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    ids = _seed(app_module.db_sink.engine)
+    with TestClient(app_module.app) as client:
+        token = _feed_token(client)
+        client.cookies.clear()
+        monkeypatch.setattr(
+            app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="collector"))
+        )
+        for path in ("/api/public/feed/events", f"/api/public/feed/events/{ids['hot']}"):
+            assert client.get(path, headers=_bearer(token)).status_code == 403, path
+
+
+def test_public_feed_events_never_deliver_hidden_sources(monkeypatch, tmp_path):
+    """隐藏源全量排除于交付:成员、主体数、名次都只从读者可见成员算,与读者面一致。"""
+
+    app_module = _setup_app(monkeypatch, tmp_path)
+    ids = _seed(app_module.db_sink.engine)
+    with Session(app_module.db_sink.engine) as session:
+        session.add(AppSettingRecord(key="reader_hidden_source_ids", value='["media-b"]'))
+        session.commit()
+    with TestClient(app_module.app) as client:
+        token = _feed_token(client)
+        client.cookies.clear()
+        board = client.get("/api/public/feed/events?include_members=true", headers=_bearer(token)).json()
+        # hot 剩 media-a / media-c 两家;week 只剩 media-a 一家,掉出榜单。
+        assert [item["event_id"] for item in board["items"]] == [ids["hot"], ids["warm"]]
+        hot = board["items"][0]
+        assert hot["publisher_count"] == 2 and hot["member_count"] == 2
+        assert {member["source_id"] for member in hot["members"]} == {"media-a", "media-c"}
+        assert "media-b" not in json.dumps(board)
+
+        detail = client.get(f"/api/public/feed/events/{ids['hot']}", headers=_bearer(token)).json()["event"]
+        assert {member["article_id"] for member in detail["members"]} == {"h1", "h3"}
+        week = client.get(f"/api/public/feed/events/{ids['week']}", headers=_bearer(token)).json()["event"]
+        assert week["rank"] is None and {member["source_id"] for member in week["members"]} == {"media-a"}

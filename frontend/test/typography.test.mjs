@@ -10,7 +10,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const SHEETS = { 'index.css': read('../src/index.css'), 'mobile.css': read('../src/mobile.css') };
 // 豁免按「选择器」判断:一条规则的选择器列表里每一项都属豁免,这条规则(及嵌套在它里面的规则)才豁免——
 // `.auth-title, .workspace-title` 不能因为带了 .auth- 就整条放行(codex R1-P3-01)。
-const EXEMPT_SELECTOR = /\.auth-|\.app-arrive|\.logo-mark|\.scope-note summary::before|\.acct-sort-arrow/;
+const EXEMPT_SELECTOR = /\.auth-|\.app-arrive|\.logo-mark|\.scope-note summary::before|\.ep > summary::before|\.acct-sort-arrow/;
 
 // 顶层逗号拆选择器列表(:is(a, b) 里的逗号不拆)
 function splitSelectors(prelude) {

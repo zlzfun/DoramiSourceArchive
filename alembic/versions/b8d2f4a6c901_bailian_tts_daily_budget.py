@@ -6,14 +6,14 @@ billing dates. When daily limits are enabled, unknown days count conservatively
 until operator reconciliation. Receipt identities and costs are never reset.
 
 Revision ID: b8d2f4a6c901
-Revises: a63f1d2c9b70
+Revises: b8d4107c2f61
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 revision = "b8d2f4a6c901"
-down_revision = "a63f1d2c9b70"
+down_revision = "b8d4107c2f61"
 branch_labels = None
 depends_on = None
 

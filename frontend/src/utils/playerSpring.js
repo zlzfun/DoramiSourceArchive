@@ -1,41 +1,8 @@
-// 播放条形变的弹簧缓动(issue #199):阻尼振子的阶跃响应采样成 CSS linear(),WAAPI 的 easing 与 CSS transition 都认。
-// zeta = 阻尼比;response = 无阻尼周期(秒);dur = 动画时长(毫秒);kick = 初速度(以 ω0 为单位,0 = 静止起步)。
-// 末点钉到 1:动画结束时恰好落在终态,与真实元素交接不跳。
-// 不支持 linear()(Safari < 17.2 / Chrome < 113)时退回近似的三次贝塞尔——WAAPI 遇到不认识的 easing 会直接抛错。
+// 播放条形变的弹簧缓动(issue #199)。取样算法在 utils/spring.js(issue #301 抽成共用),这里只留播放条的参数表;
+// 取样函数照旧从本文件再导出,既有引用不用改。
+import { SPRING_FALLBACK, linearSupported, springEasing, springSamples } from './spring.js';
 
-export const SPRING_FALLBACK = 'cubic-bezier(.2,.85,.25,1)';
-
-export function springSamples({ zeta, response, dur, samples = 56, kick = 0 }) {
-  const w0 = (2 * Math.PI) / response;
-  const v0 = kick * w0;
-  const out = [];
-  for (let i = 0; i <= samples; i += 1) {
-    const t = (i / samples) * (dur / 1000);
-    let x;
-    if (zeta >= 1) {
-      // 临界阻尼:没有过冲
-      x = 1 - (1 + (w0 - v0) * t) * Math.exp(-w0 * t);
-    } else {
-      const wd = w0 * Math.sqrt(1 - zeta * zeta);
-      x = 1 - Math.exp(-zeta * w0 * t) * (Math.cos(wd * t) + ((zeta * w0 - v0) / wd) * Math.sin(wd * t));
-    }
-    out.push(i === samples ? 1 : Math.round(x * 10000) / 10000);
-  }
-  return out;
-}
-
-export function linearSupported() {
-  try {
-    return typeof CSS !== 'undefined' && Boolean(CSS.supports?.('animation-timing-function', 'linear(0, 0.5, 1)'));
-  } catch {
-    return false;
-  }
-}
-
-export function springEasing(options, supported = linearSupported()) {
-  if (!supported) return SPRING_FALLBACK;
-  return `linear(${springSamples(options).join(', ')})`;
-}
+export { SPRING_FALLBACK, linearSupported, springEasing, springSamples };
 
 // 样页拍板的参数(global.js MOTION):形变 / 换台 / 小位移(浮钮避让、推页)。
 export const PLAYER_MOTION = {
