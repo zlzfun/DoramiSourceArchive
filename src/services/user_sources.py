@@ -444,26 +444,22 @@ def _bump_daily_created(session: Session, username: str) -> None:
 def system_feed_urls(session: Session) -> Dict[str, Dict[str, str]]:
     """规范化 feed URL → 系统源 {source_id, name}。
 
-    集合 = registry 中 RSS preset 的 feed_url 类属性 ∪ 平台 config(owner 为空、
+    集合 = 预设源目录里带 feed 地址的预设(经 ``source_catalog``)∪ 平台 config(owner 为空、
     source_type=rss/atom)的 url。用户添加撞中即转引导订阅系统源,防平行双源。
     """
     result: Dict[str, Dict[str, str]] = {}
     try:
-        from fetchers.registry import fetcher_registry
+        from services import source_catalog
 
-        for source_id, fetcher_class in fetcher_registry._fetchers.items():  # noqa: SLF001 - 既有枚举惯例(ingest.py 同)
-            feed_url = getattr(fetcher_class, "feed_url", "") or ""
-            if not feed_url or getattr(fetcher_class, "is_template", False):
+        for source_id, preset in source_catalog.preset_views().items():
+            feed_url = source_catalog.preset_binding(source_id).get("feed_url", "")
+            if not feed_url:
                 continue
             try:
                 result[canonical_feed_url(feed_url)] = {
                     "source_id": source_id,
-                    "name": getattr(fetcher_class, "name", source_id),
-                    "content_kind": (
-                        "podcast"
-                        if str(getattr(fetcher_class, "content_shape", "article")).lower() == "podcast"
-                        else "article"
-                    ),
+                    "name": preset.name,
+                    "content_kind": "podcast" if preset.shape == "podcast" else "article",
                 }
             except ValueError:
                 continue

@@ -29,8 +29,8 @@ if str(SRC_DIR) not in sys.path:
 from sqlmodel import Session, select  # noqa: E402
 
 from config import settings  # noqa: E402
-from fetchers.registry import fetcher_registry  # noqa: E402
 from models.db import CollectionJobRecord  # noqa: E402
+from services import source_catalog  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
@@ -100,13 +100,11 @@ def selected_fetcher_ids(
     excluded_fetchers = set(exclude_fetchers or set())
 
     fetcher_ids: list[str] = []
-    for item in fetcher_registry.get_all_metadata():
-        fetcher_id = str(item["id"]).strip()
+    for source_id, view in source_catalog.preset_views(include_templates=True).items():
+        fetcher_id = str(source_id).strip()
         if not fetcher_id:
             continue
-        if not include_advanced and (
-            item.get("is_template") or item.get("admission_status") == "incubating"
-        ):
+        if not include_advanced and (view.is_template or view.admission_status == "incubating"):
             continue
         if fetcher_id in excluded_fetchers:
             continue
