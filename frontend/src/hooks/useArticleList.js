@@ -131,7 +131,8 @@ export function useListLoader(win, {
       return;
     }
     const replacedAfterAppend = append && data.replace;
-    append = !data.replace;
+    // A stale append replaces the window, but still owns the append loading flag.
+    const appendResult = !data.replace;
     pageRef.current.token = data.token;
     data = data.data;
     if (replacedAfterAppend) {
@@ -142,7 +143,7 @@ export function useListLoader(win, {
 
     const items = data.items || [];
     listVersionRef.current += 1;
-    if (!append && facetsOn) {
+    if (!appendResult && facetsOn) {
       hooksRef.current.setFacets?.((prev) => ({
         key: facetsKey,
         gen: prev.gen + 1,
@@ -150,10 +151,10 @@ export function useListLoader(win, {
       }));
     }
     setArticlesTotal(data.total || 0);
-    setArticles(prev => (append ? [...prev, ...items] : items));
+    setArticles(prev => (appendResult ? [...prev, ...items] : items));
     // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
-    if (!append) hooksRef.current.onWindowFresh?.(); // 列表已刷新,新内容提示归零
+    if (!appendResult) hooksRef.current.onWindowFresh?.(); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
   }, [query, unavailable, strict, facetsOn, facetsKey, showToast, runList, listRef,
     setArticles, setArticlesTotal, setArticlesLoading, setLoadingMore, setWindowRevision, listVersionRef]);

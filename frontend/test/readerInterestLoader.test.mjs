@@ -56,7 +56,7 @@ test('strict stale append reuses exact filters, replaces all rows/facets and res
   const h = harness(async (filters, limit, skip, includeTotal, options) => {
     calls.push({ filters, limit, skip, includeTotal, signal: options.signal }); count++;
     if (count === 2) throw Object.assign(new Error('stale'), { status: 409, code: 'interest_pagination_stale' });
-    return { items: [{ id: count === 1 ? 'old' : 'fresh' }], total: count === 1 ? 40 : 1, pagination_token: count === 1 ? 't1' : 't2', kind_facets: [{ key: count }] };
+    return { items: [{ id: count === 1 ? 'old' : count === 3 ? 'fresh' : 'next' }], total: 40, pagination_token: count === 1 ? 't1' : 't2', kind_facets: [{ key: count }] };
   });
   const q = query('7', '权限'); h.render(q); await tick();
   const loader = h.render(q); h.win.listRef.current.scrollTop = 120;
@@ -67,6 +67,14 @@ test('strict stale append reuses exact filters, replaces all rows/facets and res
   assert.equal(calls[1].signal, calls[2].signal); assert.ok(calls.every((call) => call.includeTotal));
   assert.deepEqual(h.win.articles, [{ id: 'fresh' }]); assert.deepEqual(h.facets.items, [{ key: 3 }]);
   assert.equal(h.win.listRef.current.scrollTop, 0); assert.equal(h.win.windowRevision, 1); assert.equal(h.resets, 1); assert.equal(h.replacements, 1);
+  assert.equal(h.win.loadingMore, false);
+  assert.equal(h.win.articlesLoading, false);
+  assert.equal(h.render(q).hasMore, true);
+  await h.render(q).loadArticles(1, true);
+  assert.equal(calls[3].filters.pagination_token, 't2');
+  assert.deepEqual(h.win.articles, [{ id: 'fresh' }, { id: 'next' }]);
+  assert.equal(h.win.loadingMore, false);
+  assert.equal(h.replacements, 1);
 });
 
 test('missing strict token clears positive window and stops automatic pagination until manual reload', async () => {
