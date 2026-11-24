@@ -11,6 +11,7 @@ from services.file_lock import LOCK_EX, LOCK_NB, flock
 import hashlib
 import io
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -28,8 +29,23 @@ from sqlalchemy.engine import make_url
 from config_backup import BackupConfig
 
 
+logger = logging.getLogger("dorami.backup")
+
+# A failed run is retried after ten minutes; each further failure in a row doubles
+# the wait up to this ceiling (issue #330: a run that cannot succeed repeats its
+# whole copy, and nothing else slows it down). A failure that cost nothing asks
+# for ten minutes again, however long the streak before it.
+_RETRY_BASE_SECONDS = 600
+_RETRY_MAX_SECONDS = 6 * 3600
+_RECEIPT_FILE = re.compile(r"[0-9a-f]{64}\.(json|wav|wav\.zlib|evicted)")
+
+
 class BackupError(OSError):
     """Only fixed, non-secret error codes may leave this module."""
+
+
+class _PlannedShortfall(BackupError):
+    """Too little space, decided before anything was staged: retrying costs nothing."""
 
 
 def _epoch(value):
@@ -126,7 +142,7 @@ def _integrity(connection):
 def _safe_name(name):
     if name == "database.sqlite3":
         return True
-    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav|wav\.zlib)", name):
+    if re.fullmatch(r"receipts/[0-9a-f]{64}\.(?:json|wav|wav\.zlib|evicted)", name):
         return True
     match = re.fullmatch(r"(?:media|podcast)/([0-9a-f]{2})/([0-9a-f]{64})\.[a-z0-9]{1,8}", name)
     return bool(match and match[1] == match[2][:2])
@@ -142,6 +158,8 @@ _EXTERNAL_OBJECT_FIELDS = ("namespace", "content_hash", "ext", "size_bytes", "bu
 # 付费 WAV 在回执目录里有两种形态:原始 `<id>.wav`,或被 TTS 缓存回收压成的 `<id>.wav.zlib`(issue #143 起,
 # 压缩后原文件删除;生产 2026-10-13 升 v3.63.0 后全部 `succeeded` 都是后者,备份因此连续失败——issue #231)。
 # 两种都原样收进归档;校验口径与 `bailian_tts` 读取侧一致:解压后的字节 sha256 == `audio_hash`。
+# 第三种是没有音频、只有空的 `<id>.evicted`:这期节目已有成品、回执缓存满时这段音频被有意逐出(issue #326,
+# `bailian_tts._drop_audio` 先落标记再删音频)。标记随归档保存;没有音频也没有标记的 `succeeded` 仍按缺失失败。
 _PAID_AUDIO_INFLATE_LIMIT = 1024 ** 3
 
 
@@ -268,7 +286,8 @@ class BackupService:
                   "interval_hours": self.config.interval_hours, "status": "disabled" if not self.config.enabled else "pending"}
         if self.config.enabled:
             allowed = {"status", "last_attempt_at", "last_success_at", "error", "archive", "sha256",
-                       "size_bytes", "files", "external_objects", "object_key", "pending_upload", "snapshot_at"}
+                       "size_bytes", "files", "external_objects", "object_key", "pending_upload", "snapshot_at",
+                       "consecutive_failures", "retry_seconds"}
             try:
                 saved = json.loads((self.directory / "status.json").read_text())
                 result.update({key: value for key, value in saved.items() if key in allowed})
@@ -294,12 +313,34 @@ class BackupService:
             return self.status()
         state = self.status()
         now = self.clock()
-        # Retry failures/busy spools after ten minutes; successes respect the schedule.
-        if now - _epoch(state.get("last_success_at")) < self.config.interval_hours * 3600:
-            return state
-        if state["status"] in {"failed", "busy", "running"} and now - _epoch(state.get("last_attempt_at")) < 600:
+        # Retry failures/busy spools after a backoff; successes respect the schedule.
+        if self._not_due(state, now):
             return state
         return self.run(due_only=True)
+
+    @staticmethod
+    def _failures(state):
+        value = state.get("consecutive_failures")
+        return value if type(value) is int and value > 0 else 0
+
+    def _ceiling(self):
+        return min(_RETRY_MAX_SECONDS, max(_RETRY_BASE_SECONDS, self.config.interval_hours * 3600))
+
+    def _backoff(self, failures):
+        return min(_RETRY_BASE_SECONDS * 2 ** min(max(failures - 1, 0), 16), self._ceiling())
+
+    def _retry_delay(self, state):
+        """The wait the last failure asked for; ten minutes when it left no word."""
+        value = state.get("retry_seconds")
+        if type(value) is not int or value < _RETRY_BASE_SECONDS:
+            return _RETRY_BASE_SECONDS
+        return min(value, self._ceiling())
+
+    def _not_due(self, state, now):
+        if now - _epoch(state.get("last_success_at")) < self.config.interval_hours * 3600:
+            return True
+        return (state["status"] in {"failed", "busy", "running"}
+                and now - _epoch(state.get("last_attempt_at")) < self._retry_delay(state))
 
     def _database(self):
         url = make_url(self.database_url)
@@ -335,6 +376,40 @@ class BackupService:
             raise BackupError("backup_source_checksum_mismatch")
         files[name] = {"sha256": actual_digest, "size": actual_size}
 
+    def _blobs(self, snapshot):
+        """Every blob the snapshot refers to: (namespace, archive name, hash, size, OSS row or None)."""
+        for namespace, table in (("media", "media_assets"), ("podcast", "podcast_artifacts")):
+            if not _has_table(snapshot, table):
+                continue
+            query = f"SELECT DISTINCT content_hash,ext,size_bytes FROM {table}"
+            if namespace == "media":
+                query += " WHERE status='cached'"
+            registry = _has_table(snapshot, "object_blobs")
+            for digest, ext, size in snapshot.execute(query).fetchall():
+                name = f"{namespace}/{str(digest)[:2]}/{digest}{ext}"
+                if not _safe_name(name) or type(size) is not int or size < 0:
+                    raise BackupError("backup_blob_identity_invalid")
+                remote = None
+                if registry:
+                    remote = snapshot.execute("SELECT * FROM object_blobs WHERE id=?", (f"{namespace}:{digest}{ext}",)).fetchone()
+                if remote and (remote["content_hash"] != digest or remote["size_bytes"] != size
+                               or remote["namespace"] != namespace or remote["ext"] != ext):
+                    raise BackupError("backup_blob_registry_conflict")
+                yield namespace, name, digest, size, remote
+
+    def _planned_bytes(self, source, receipt_root):
+        """What this run will stage, read off the pinned snapshot before a byte is copied."""
+        total = source.execute("PRAGMA page_count").fetchone()[0] * source.execute("PRAGMA page_size").fetchone()[0]
+        for path in receipt_root.iterdir():
+            if _RECEIPT_FILE.fullmatch(path.name):
+                try:
+                    info = path.lstat()
+                except OSError:
+                    continue  # the copy below reports what is wrong with it
+                if stat.S_ISREG(info.st_mode):
+                    total += info.st_size
+        return total + sum(size for *_blob, size, remote in self._blobs(source) if not remote)
+
     def _snapshot(self, staging):
         source_path = self._database()
         files = {}
@@ -343,8 +418,6 @@ class BackupService:
         receipt_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with _lock(receipt_root / ".lock"):
             with _connect(source_path) as source, sqlite3.connect(staging / "database.sqlite3") as target:
-                if shutil.disk_usage(staging).free - source_path.stat().st_size * 2 < self.config.minimum_free_mb * 1024**2:
-                    raise BackupError("backup_insufficient_space")
                 deadline = time.monotonic() + self.config.timeout_seconds
                 def progress(_status, _remaining, _total):
                     if time.monotonic() > deadline:
@@ -355,6 +428,13 @@ class BackupService:
                     # WAL writers can continue; bounded steps retain the deadline.
                     source.execute("BEGIN")
                     source.execute("SELECT name FROM main.sqlite_master LIMIT 1").fetchone()
+                    # The run needs its staged files once more for the archive. Everything
+                    # it will stage is already known here, so a shortfall is settled now
+                    # rather than after gigabytes of copying; the later checks stay as
+                    # guards against the disk filling up meanwhile.
+                    planned = self._planned_bytes(source, receipt_root)
+                    if shutil.disk_usage(staging).free - planned * 2 < self.config.minimum_free_mb * 1024**2:
+                        raise _PlannedShortfall("backup_insufficient_space")
                     source.backup(target, pages=256, sleep=0.01, progress=progress)
                 finally:
                     source.rollback()
@@ -364,45 +444,31 @@ class BackupService:
                 if self._receipt_directory(snapshot) != receipt_root:
                     raise BackupError("backup_receipt_root_changed")
                 for path in sorted(receipt_root.iterdir()):
-                    if re.fullmatch(r"[0-9a-f]{64}\.(json|wav|wav\.zlib)", path.name):
+                    if _RECEIPT_FILE.fullmatch(path.name):
                         name = "receipts/" + path.name
                         self._copy(path, staging / name, files, name, root=receipt_root)
                 if _has_table(snapshot, "bailian_tts_calls"):
                     for row in snapshot.execute("SELECT id,status,audio_hash FROM bailian_tts_calls"):
                         if row["status"] in {"generated", "succeeded"} and f"receipts/{row['id']}.json" not in files:
                             raise BackupError("backup_paid_receipt_missing")
-                        if row["status"] == "succeeded" and not _paid_audio_verified(
-                            staging, files, row["id"], row["audio_hash"],
+                        if (
+                            row["status"] == "succeeded"
+                            and f"receipts/{row['id']}.evicted" not in files
+                            and not _paid_audio_verified(staging, files, row["id"], row["audio_hash"])
                         ):
                             raise BackupError("backup_paid_audio_missing_or_corrupt")
         checksum, size = _hash(staging / "database.sqlite3")
         files["database.sqlite3"] = {"sha256": checksum, "size": size}
         external = []
         with _connect(staging / "database.sqlite3") as snapshot:
-            for namespace, table in (("media", "media_assets"), ("podcast", "podcast_artifacts")):
-                if not _has_table(snapshot, table):
-                    continue
-                query = f"SELECT DISTINCT content_hash,ext,size_bytes FROM {table}"
-                if namespace == "media":
-                    query += " WHERE status='cached'"
-                for row in snapshot.execute(query):
-                    digest, ext, size = row
-                    name = f"{namespace}/{str(digest)[:2]}/{digest}{ext}"
-                    if not _safe_name(name) or type(size) is not int or size < 0:
-                        raise BackupError("backup_blob_identity_invalid")
-                    remote = None
-                    if _has_table(snapshot, "object_blobs"):
-                        remote = snapshot.execute("SELECT * FROM object_blobs WHERE id=?", (f"{namespace}:{digest}{ext}",)).fetchone()
-                    if remote:
-                        if (remote["content_hash"] != digest or remote["size_bytes"] != size
-                                or remote["namespace"] != namespace or remote["ext"] != ext):
-                            raise BackupError("backup_blob_registry_conflict")
-                        external.append({key: remote[key] for key in _EXTERNAL_OBJECT_FIELDS if key in remote.keys()})
-                    else:
-                        store = self.object_stores.get(namespace)
-                        with store.pin(digest) if store is not None else nullcontext():
-                            self._copy(self.roots[namespace] / name.split("/", 1)[1], staging / name,
-                                       files, name, root=self.roots[namespace], digest=digest, size=size)
+            for namespace, name, digest, size, remote in self._blobs(snapshot):
+                if remote:
+                    external.append({key: remote[key] for key in _EXTERNAL_OBJECT_FIELDS if key in remote.keys()})
+                else:
+                    store = self.object_stores.get(namespace)
+                    with store.pin(digest) if store is not None else nullcontext():
+                        self._copy(self.roots[namespace] / name.split("/", 1)[1], staging / name,
+                                   files, name, root=self.roots[namespace], digest=digest, size=size)
         return {"format": "dorami-backup-v1", "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "files": files, "external_objects": external}
 
@@ -514,9 +580,7 @@ class BackupService:
                 if due_only:
                     # Another process may have completed since run_if_due read state.
                     state = self.status()
-                    if (self.clock() - _epoch(state.get("last_success_at")) < self.config.interval_hours * 3600
-                            or (state["status"] in {"failed", "busy", "running"}
-                                and self.clock() - _epoch(state.get("last_attempt_at")) < 600)):
+                    if self._not_due(state, self.clock()):
                         return state
                 return self._run_locked()
         except Exception as exc:
@@ -532,8 +596,17 @@ class BackupService:
     def _failure(self, error):
         state = self.status()
         code = str(error) if isinstance(error, BackupError) else "backup_storage_unavailable"
+        # Another holder of the lock and a shortfall settled before copying cost
+        # nothing to retry; every other failure in a row widens the gap.
+        if code == "backup_busy" or isinstance(error, _PlannedShortfall):
+            state["retry_seconds"] = _RETRY_BASE_SECONDS
+        else:
+            state["consecutive_failures"] = self._failures(state) + 1
+            state["retry_seconds"] = self._backoff(state["consecutive_failures"])
         state.update(status="failed", error=code, last_attempt_at=self.clock())
         self._memory_state = state
+        if code != "backup_busy":
+            logger.warning("备份失败: %s,%d 分钟后重试", code, self._retry_delay(state) // 60)
         # State persistence itself may be the failing resource. Keep an in-memory
         # attempt timestamp and safe error so UI and retry backoff remain truthful.
         try:
@@ -568,8 +641,11 @@ class BackupService:
                 self._save_state(state)
             if self.config.destination == "oss":
                 state["object_key"] = self._upload(archive, checksum, size)
-            state.update(status="succeeded", last_success_at=state["snapshot_at"], pending_upload=False)
+            state.update(status="succeeded", last_success_at=state["snapshot_at"], pending_upload=False,
+                         consecutive_failures=0, retry_seconds=_RETRY_BASE_SECONDS)
             self._save_state(state)
+            logger.info("备份完成: %s 字节,%s 个文件,%s 个外部对象",
+                        state.get("size_bytes"), state.get("files"), state.get("external_objects"))
             self._prune()
         except Exception as exc:
             self._memory_state = state

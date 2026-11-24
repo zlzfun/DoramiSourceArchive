@@ -168,6 +168,9 @@ def localize_edition_titles(
     *,
     llm_config: LLMConfig | None = None,
     budget_seconds: float = TRANSLATE_BUDGET_SECONDS,
+    items: list[PersonalDigestItemRecord] | None = None,
+    persist: bool = True,
+    include_failure_count: bool = False,
 ) -> dict[str, int]:
     """为一期早报的条目快照补 ``title_zh``;返回各来源计数(观测用)。
 
@@ -175,10 +178,19 @@ def localize_edition_titles(
     异常——本函数内部已把 LLM 失败降级为回退原标题,只有 DB 写入失败会向外抛。
     """
 
-    stats = {"chinese": 0, "cached": 0, "public_brief": 0, "translated": 0, "fallback": 0}
-    items = list(session.exec(
-        select(PersonalDigestItemRecord).where(PersonalDigestItemRecord.edition_id == edition.id)
-    ).all())
+    stats = {
+        "chinese": 0,
+        "cached": 0,
+        "public_brief": 0,
+        "translated": 0,
+        "fallback": 0,
+    }
+    if include_failure_count:
+        stats["translation_failed"] = 0
+    if items is None:
+        items = list(session.exec(
+            select(PersonalDigestItemRecord).where(PersonalDigestItemRecord.edition_id == edition.id)
+        ).all())
     pending: dict[str, str] = {}  # article_id → 原标题
     by_article: dict[str, list[PersonalDigestItemRecord]] = {}
     for item in items:
@@ -250,6 +262,8 @@ def localize_edition_titles(
             resolved[article_id] = title_zh
             stats["translated"] += 1
             # translate_shared already published against the current title and source.
+        if include_failure_count:
+            stats["translation_failed"] = sum(1 for aid in remaining if aid not in translated)
     stats["fallback"] += sum(1 for aid in pending if aid not in resolved)
 
     for article_id, title_zh in resolved.items():
@@ -257,6 +271,8 @@ def localize_edition_titles(
             snapshot = _snapshot(item)
             snapshot["title_zh"] = title_zh
             item.snapshot_json = json.dumps(snapshot, ensure_ascii=False)
-            session.add(item)
-    session.commit()
+            if persist:
+                session.add(item)
+    if persist:
+        session.commit()
     return stats

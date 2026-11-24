@@ -13,6 +13,7 @@ def serialize_user(record: UserRecord) -> Dict[str, Any]:
     """账户对外视图（账户管理 + 运维列表共用）。"""
     return {
         "username": record.username,
+        "w3_uid": record.w3_uid,
         "role": record.role,
         "avatar": record.avatar or None,
         "is_active": record.is_active,

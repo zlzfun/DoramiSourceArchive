@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "联调错误示例 INVALID_ARGUMENT",
+    "request_id": "briefs-example-001"
+  }
+}

@@ -867,7 +867,10 @@ def get_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
     if not isinstance(config, BailianSpeechConfig):
         return {"status": "unavailable", "reason": "当前未启用百炼 TTS 回执缓存"}
     store = _store()
-    return {"status": "available", **receipt_cache_overview(config, max_audio_bytes=store.max_bytes)}
+    return {
+        "status": "available",
+        **receipt_cache_overview(config, _app().db_sink.engine, max_audio_bytes=store.max_bytes),
+    }
 
 
 @router.post("/api/admin/podcast-tts-receipts/reclaim", dependencies=[Depends(deps.require_admin)])
@@ -875,8 +878,9 @@ def reclaim_podcast_tts_receipts(session: Session = Depends(deps.get_session)):
     config = podcast_speech_config_service.resolve_config(session)
     if not isinstance(config, BailianSpeechConfig):
         raise HTTPException(status_code=409, detail="当前未启用百炼 TTS 回执缓存")
-    result = reclaim_completed_receipts(config, _app().db_sink.engine)
-    return {**result, **receipt_cache_overview(config, max_audio_bytes=_store().max_bytes)}
+    engine = _app().db_sink.engine
+    result = reclaim_completed_receipts(config, engine)
+    return {**result, **receipt_cache_overview(config, engine, max_audio_bytes=_store().max_bytes)}
 
 
 @router.put(

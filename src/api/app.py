@@ -4,6 +4,8 @@ import asyncio
 import importlib
 import json
 import logging
+import re
+import uuid
 import datetime
 from dataclasses import dataclass, field
 import base64
@@ -14,7 +16,7 @@ import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response, Request
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StrictBool
@@ -78,6 +80,7 @@ from api.routers import ingest_push as ingest_push_router
 from api.routers import subscriptions as subscriptions_router
 from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
+from api.routers import admin_reader_briefs as admin_reader_briefs_router
 from api.routers import taxonomy as taxonomy_router
 from api.routers import analysis_ops as analysis_ops_router
 from api.routers import articles as articles_router
@@ -628,8 +631,18 @@ async def lifespan(app: FastAPI):
             reload_user_rss_schedule()
     if not collector_on:
         print("⏸️ 当前 reader 运行角色不启动抓取调度（仅保留留存清理定时任务）。")
+        if runtime_reader_enabled():
+            _ensure_interval_job(
+                "personal_digest_pending",
+                execute_personal_digest_pending_job,
+                seconds=30,
+                max_instances=1,
+            )
 
     from services import translation_jobs, title_translation
+    from services.briefs_runtime import BriefRuntime
+
+    app.state.briefs_runtime = BriefRuntime(db_sink.engine)
     title_worker = asyncio.create_task(title_translation.worker_loop(db_sink.engine))
     translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
                           if runtime_reader_enabled() else None)
@@ -640,6 +653,7 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        await app.state.briefs_runtime.close()
         title_worker.cancel()
         await asyncio.gather(title_worker, return_exceptions=True)
         if translation_worker is not None:
@@ -654,6 +668,38 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Dorami 数据归档中枢 API", lifespan=lifespan)
+
+BRIEFS_PATHS = admin_reader_briefs_router.PATHS
+
+
+@app.exception_handler(HTTPException)
+async def briefs_http_exception(request: Request, exc: HTTPException):
+    if request.url.path not in BRIEFS_PATHS:
+        return await http_exception_handler(request, exc)
+    request_id = admin_reader_briefs_router.resolve_request_id(request)
+    code = "INTERNAL_ERROR"
+    message = "unable to complete brief request"
+    if isinstance(exc.detail, dict):
+        code = str(exc.detail.get("code") or code)
+        message = str(exc.detail.get("message") or message)
+    elif exc.status_code == 401:
+        code, message = "UNAUTHENTICATED", "valid admin Cookie session required"
+    elif exc.status_code == 403:
+        code, message = "FORBIDDEN", "admin role required"
+    elif exc.status_code == 422:
+        code, message = "INVALID_ARGUMENT", "request arguments are invalid"
+    elif exc.status_code == 429:
+        code, message = "RATE_LIMITED", "rate limit exceeded"
+    elif exc.status_code == 503:
+        code, message = "SERVICE_UNAVAILABLE", "service temporarily unavailable"
+    headers = admin_reader_briefs_router.contract_headers(request_id)
+    if exc.headers and "Retry-After" in exc.headers:
+        headers["Retry-After"] = exc.headers["Retry-After"]
+    return StarletteJSONResponse(
+        {"error": {"code": code, "message": message, "request_id": request_id}},
+        status_code=exc.status_code,
+        headers=headers,
+    )
 
 
 @app.exception_handler(ObjectStorageError)
@@ -686,6 +732,13 @@ def _is_podcast_source_media_validation_path(path: str) -> bool:
 async def stable_podcast_reader_validation_error(
     request: Request, exc: RequestValidationError
 ):
+    if request.url.path in BRIEFS_PATHS:
+        request_id = admin_reader_briefs_router.resolve_request_id(request)
+        return StarletteJSONResponse(
+            {"error": {"code": "INVALID_ARGUMENT", "message": "request arguments are invalid", "request_id": request_id}},
+            status_code=422,
+            headers=admin_reader_briefs_router.contract_headers(request_id),
+        )
     if _is_podcast_text_reader_path(request.url.path):
         return StarletteJSONResponse(
             {
@@ -1864,6 +1917,7 @@ app.include_router(ingest_push_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)
+app.include_router(admin_reader_briefs_router.router)
 app.include_router(taxonomy_router.router)
 app.include_router(analysis_ops_router.router)
 app.include_router(articles_router.router)
@@ -2205,6 +2259,17 @@ def is_public_subscription_path(path: str) -> bool:
 
 @app.middleware("http")
 async def require_admin_session(request: Request, call_next):
+    if request.method != "OPTIONS" and request.url.path in BRIEFS_PATHS:
+        async def _protected(req: Request):
+            return await _require_admin_session_impl(req, call_next)
+
+        return await admin_reader_briefs_router.handle_request(
+            request, _protected, current_auth_session
+        )
+    return await _require_admin_session_impl(request, call_next)
+
+
+async def _require_admin_session_impl(request: Request, call_next):
     path = request.url.path
     if request.method == "OPTIONS" or is_public_auth_path(path) or is_public_health_path(path):
         return await call_next(request)
@@ -3055,7 +3120,7 @@ def load_tasks_to_scheduler():
     _ensure_interval_job(
         "personal_digest_pending",
         execute_personal_digest_pending_job,
-        minutes=1,
+        seconds=30,
         max_instances=1,
     )
     # 事件分配兜底(issue #121):分析周期末尾已调一次 assign_pending,这里每 10 分钟补扫 ledger。
@@ -3154,16 +3219,16 @@ def execute_personal_digest_schedule_job():
 
     try:
         personal_briefs_router.start_scheduled_editions(db_sink.engine)
-        personal_briefs_router.process_pending_editions(db_sink.engine)
+        personal_briefs_router.process_pending_editions(db_sink.engine, recovery=False)
     except Exception as exc:  # noqa: BLE001
         _dorami_logger.warning("个人早报 08:30 编排失败: %s", exc)
 
 
 def execute_personal_digest_pending_job():
-    """Generate pending editions immediately from available content (去等待, issue #22)."""
+    """Recover stranded pending/generating editions every 30s with lease & grace fencing."""
 
     try:
-        personal_briefs_router.process_pending_editions(db_sink.engine)
+        personal_briefs_router.process_pending_editions(db_sink.engine, recovery=True)
     except Exception as exc:  # noqa: BLE001
         _dorami_logger.warning("个人早报就绪巡检失败: %s", exc)
 

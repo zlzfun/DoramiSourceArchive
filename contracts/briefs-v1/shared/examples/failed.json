@@ -1,0 +1,16 @@
+{
+  "employee_number": "l00976966",
+  "username": "dorami-demo-owner",
+  "status": "failed",
+  "pushable": false,
+  "fallback_hint": "public",
+  "edition": {
+    "report_date": "2026-11-09",
+    "revision": 1,
+    "status": "failed",
+    "degraded_reason": null,
+    "selection_stats": {},
+    "generated_at": null,
+    "items": []
+  }
+}
