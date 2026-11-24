@@ -176,6 +176,14 @@ class PremiumGuideTextProvider(Protocol):
 
 
 class PremiumGuideTtsProvider(Protocol):
+    """A provider's blocking work, and any queueing for it, is the provider's business.
+
+    ``synthesize`` and the optional ``check_capacity(characters)`` are both
+    coroutines. The guide flow never moves a provider call to a thread itself:
+    many guides run at once, and a call that waits for a lock there holds a
+    thread of the shared pool for as long as it waits (issue #334).
+    """
+
     async def synthesize(self, text: str) -> SynthesizedAudio: ...
 
 
@@ -1040,9 +1048,9 @@ async def run_premium_guide(
         if blog_artifact is None:
             # Capacity is checked before any paid text generation. The provider
             # performs the locked final check immediately before TTS submission.
-            if should_synthesize_audio and callable(getattr(tts_provider, "ensure_capacity", None)):
+            if should_synthesize_audio and callable(getattr(tts_provider, "check_capacity", None)):
                 try:
-                    await asyncio.to_thread(tts_provider.ensure_capacity,
+                    await tts_provider.check_capacity(
                         min(plan.max_chars, config.premium_narration_max_chars))
                 except BailianSpeechError:
                     _set_episode_status(engine, episode_id, "synthesizing")
@@ -1101,9 +1109,9 @@ async def run_premium_guide(
 
         narration_char_budget = min(plan.max_chars, config.premium_narration_max_chars)
         if reusable_narration is None:
-            if callable(getattr(tts_provider, "ensure_capacity", None)):
+            if callable(getattr(tts_provider, "check_capacity", None)):
                 try:
-                    await asyncio.to_thread(tts_provider.ensure_capacity, narration_char_budget)
+                    await tts_provider.check_capacity(narration_char_budget)
                 except BailianSpeechError:
                     _set_episode_status(engine, episode_id, "synthesizing")
                     raise
