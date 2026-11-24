@@ -144,18 +144,12 @@ def _source_infos(
     private = user_sources.user_source_ids(session) if reader_scope else set()
     names = friendly_source_names(wanted, session)
     # 行已经取了(下面的凭证 / 私有判定要用),交给源目录复用,不再查一遍。
-    views = source_catalog.describe(
-        session,
-        wanted,
-        content_types={sid: sources.get(sid) or "" for sid in wanted},
-        rows=configs,
-    )
+    layers = source_catalog.layers(session, wanted, rows=configs)
     infos: dict[str, _SourceInfo] = {}
     for source_id in wanted:
         config = configs.get(source_id)
-        view = views[source_id]
-        role = source_catalog.info_role(view)
-        shape = view.shape
+        role = source_catalog.info_role(layers[source_id])
+        shape = source_catalog.reader_shape(layers[source_id], sources.get(source_id) or "")
         visible = True
         if reader_scope:
             visible = not (

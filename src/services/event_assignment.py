@@ -339,15 +339,15 @@ class SourceMeta:
 
 
 def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, SourceMeta]:
-    """source_id → (角色, 形态, 主体),经源目录读服务(issue #262 R1a;与早报重大事件通道同口径)。"""
+    """source_id → (角色, 形态, 主体),经源目录读服务(issue #262 R1a):预设类优先给形态与主体,
+    源行优先给角色(与早报重大事件通道同口径)。"""
     wanted = sorted({str(sid) for sid in source_ids if sid})
     if not wanted:
         return {}
-    views = source_catalog.describe(session, wanted)
-    # 既无源行也无预设源的 id(只在归档里出现):形态按其条目的 content_type 判定,
+    layers = source_catalog.layers(session, wanted)
+    # 既无源行也无预设类的 id(只在归档里出现):形态按其条目的 content_type 判定,
     # 与事件榜展示、早报同口径——此前一律当 article,推文可被选成代表稿(issue #262 B8)。
-    # 这里的证据是「条目数最多的形态」,要先数一遍,所以不走 describe 的 content_types 参数。
-    unregistered = [sid for sid in wanted if not (views[sid].configured or views[sid].registered)]
+    unregistered = [sid for sid in wanted if not layers[sid].anchored]
     fallback_shapes: dict[str, str] = {}
     if unregistered:
         counts: dict[str, dict[str, int]] = {}
@@ -367,13 +367,18 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
             )[0]
     result: dict[str, SourceMeta] = {}
     for source_id in wanted:
-        view = views[source_id]
-        anchored = view.configured or view.registered
-        result[source_id] = SourceMeta(
-            role=source_catalog.info_role(view),
-            shape=view.shape if anchored else fallback_shapes.get(source_id, "article"),
-            owner=view.publisher if anchored else "",
-        )
+        source = layers[source_id]
+        record, preset = source.record, source.preset
+        if preset is not None:
+            shape = preset.shape
+        elif record is not None:
+            shape = source_catalog.row_shape(record)
+        else:
+            shape = fallback_shapes.get(source_id, "article")
+        owner = preset.source_owner.strip() if preset is not None else ""
+        if not owner and record is not None:
+            owner = str(record.source_owner or "").strip()
+        result[source_id] = SourceMeta(role=source_catalog.info_role(source), shape=shape, owner=owner)
     return result
 
 

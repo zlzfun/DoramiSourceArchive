@@ -2,8 +2,9 @@
 
 业务代码不再直接读抓取器注册表,统一经 ``services.source_catalog``。这是纯重构:本文件前半
 (``test_consumer_*``)钉住的是**改前就成立**的口径——各消费方在每一种来路的源上给出的角色 /
-形态 / 主体 / 名称 / feed 地址;判据是文件里照改前算法写的对照实现(直接读注册表与源行),
-所以这些用例在改动前后的代码上都应通过。后半(``test_catalog_*``)是读服务自身的新接口。
+形态 / 主体 / 名称 / feed 地址,以及收录的形态门禁;判据是文件里照改前算法写的对照实现(直接读
+注册表与源行),所以这些用例在改动前后的代码上都应通过。后半(``test_catalog_*``)是读服务
+自身的新接口。
 """
 
 import datetime as dt
@@ -226,14 +227,25 @@ def _legacy_shape_of_content_type(content_type):
     return {"social_post": "social", "podcast_episode": "podcast"}.get(content_type or "", "article")
 
 
+def _legacy_normalize_shape(shape):
+    value = (shape or "").strip().lower()
+    value = {"bulletin": "article"}.get(value, value)
+    return value if value in {"article", "social", "podcast"} else ""
+
+
 def _legacy_row_shape(row):
-    explicit = {"bulletin": "article"}.get(str(row.shape or "").strip().lower(), str(row.shape or "").strip().lower())
-    if explicit in {"article", "social", "podcast"}:
+    """改前 ``api.sources.row_shape``:显式列(归一)> 绑定类的形态(归一,不合法就继续)> 类型。"""
+    explicit = _legacy_normalize_shape(str(getattr(row, "shape", "") or ""))
+    if explicit:
         return explicit
-    cls = fetcher_registry.get_class(row.fetcher_id) if row.fetcher_id else None
-    if cls is not None:
-        return str(getattr(cls, "content_shape", "article"))
-    source_type = (row.source_type or "").strip().lower()
+    fetcher_id = str(getattr(row, "fetcher_id", "") or "")
+    if fetcher_id:
+        cls = fetcher_registry.get_class(fetcher_id)
+        if cls is not None:
+            shape = _legacy_normalize_shape(str(getattr(cls, "content_shape", "article")))
+            if shape:
+                return shape
+    source_type = str(getattr(row, "source_type", "") or "").strip().lower()
     if source_type in {"x", "twitter", "x_timeline", "social"}:
         return "social"
     if source_type in {"podcast", "podcast_rss"}:
@@ -287,31 +299,85 @@ def _legacy_assignment(session, ids, rows):
     return result
 
 
+def _legacy_system_feeds(public_feed_rows):
+    """改前 ``user_sources.system_feed_urls``:预设按注册顺序、同地址后者覆盖前者,再由配置行覆盖。"""
+    from services import user_sources
+
+    result = {}
+    for source_id, cls in fetcher_registry._fetchers.items():
+        feed_url = getattr(cls, "feed_url", "") or ""
+        if not feed_url or getattr(cls, "is_template", False):
+            continue
+        try:
+            result[user_sources.canonical_feed_url(feed_url)] = {
+                "source_id": source_id,
+                "name": getattr(cls, "name", source_id),
+                "content_kind": (
+                    "podcast" if str(getattr(cls, "content_shape", "article")).lower() == "podcast" else "article"
+                ),
+            }
+        except ValueError:
+            continue
+    for record in public_feed_rows:
+        if not record.url:
+            continue
+        try:
+            result[user_sources.canonical_feed_url(record.url)] = {
+                "source_id": record.source_id,
+                "name": record.name,
+                "content_kind": user_sources.source_content_kind(record),
+            }
+        except ValueError:
+            continue
+    return result
+
+
+def _fake_fetcher(source_id, **attrs):
+    """借通用 RSS 模板派生一个假抓取器类(只当类属性的载体,不实例化)。"""
+    base = fetcher_registry.get_class("generic_rss")
+    defaults = dict(
+        source_id=source_id, name=source_id, is_template=False, feed_url="", listing_url="", source_url="",
+        content_shape="article", content_type="rss_article", platform="", default_kind="",
+        source_scope="", provenance_tier="", source_owner="", admission_status="admitted",
+    )
+    defaults.update(attrs)
+    return type(f"Fake_{source_id}", (base,), defaults)
+
+
 # ── 消费方口径(改动前后都成立) ───────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("model", ["compat", "full"])
 @pytest.mark.parametrize("world", ["bare", "families"])
-def test_consumer_role_shape_owner_match_the_pre_refactor_rules(tmp_path, world):
-    from services import event_assignment, event_board, personal_digest
+def test_consumer_role_shape_owner_match_the_pre_refactor_rules(tmp_path, world, model):
+    """三个消费方的口径与 ``[sources] model`` 无关:两种读法下都等于改前的算法。"""
+    from services import event_assignment, event_board, personal_digest, source_catalog
+
+    # 对照实现里「只有类」时形态取类属性原值:前提是注册表里的形态都合法
+    assert {str(cls.content_shape) for cls in fetcher_registry._fetchers.values()} <= {"article", "social", "podcast"}
 
     sink = _bare(tmp_path) if world == "bare" else _families(tmp_path)[0]
-    with Session(sink.engine) as session:
-        ids, evidence, rows = _universe(session)
-        expected = _legacy_digest(ids, evidence, rows)
+    source_catalog.configure(model=model)
+    try:
+        with Session(sink.engine) as session:
+            ids, evidence, rows = _universe(session)
+            expected = _legacy_digest(ids, evidence, rows)
 
-        assert personal_digest._source_role_and_shape(session, evidence) == expected
-        # 只给 id、不给条目类型:没有行也没有类的 id 一律按 article
-        assert personal_digest._source_role_and_shape(session, ids) == _legacy_digest(ids, {}, rows)
+            assert personal_digest._source_role_and_shape(session, evidence) == expected
+            # 只给 id、不给条目类型:没有行也没有类的 id 一律按 article
+            assert personal_digest._source_role_and_shape(session, ids) == _legacy_digest(ids, {}, rows)
 
-        for reader_scope in (True, False):
-            infos = event_board._source_infos(session, dict(evidence), reader_scope=reader_scope)
-            assert {sid: (info.role, info.shape) for sid, info in infos.items()} == expected
+            for reader_scope in (True, False):
+                infos = event_board._source_infos(session, dict(evidence), reader_scope=reader_scope)
+                assert {sid: (info.role, info.shape) for sid, info in infos.items()} == expected
 
-        metas = event_assignment.load_source_meta(session, ids)
-        assert {
-            sid: (meta.role, meta.shape, meta.owner) for sid, meta in metas.items()
-        } == _legacy_assignment(session, ids, rows)
-    sink.engine.dispose()
+            metas = event_assignment.load_source_meta(session, ids)
+            assert {
+                sid: (meta.role, meta.shape, meta.owner) for sid, meta in metas.items()
+            } == _legacy_assignment(session, ids, rows)
+    finally:
+        source_catalog.configure(model="compat")
+        sink.engine.dispose()
 
 
 def test_consumer_spot_checks_one_source_per_origin(tmp_path):
@@ -476,6 +542,12 @@ def test_consumer_feed_and_identity_lookups(tmp_path):
                         "generic_rss", "rss_admin_blog", "podcast_admin_show", installed, uninstalled, "zz_unknown")
         }
         system_feeds = user_sources.system_feed_urls(session)
+        public_feed_rows = session.exec(
+            select(SourceConfigRecord).where(
+                SourceConfigRecord.owner_username == "",
+                SourceConfigRecord.source_type.in_(["rss", "atom", "podcast", "podcast_rss"]),
+            )
+        ).all()
         x_index = source_identity.x_identity_index(session)
         web_index = ingest_push._web_index(session)
     sink.engine.dispose()
@@ -493,15 +565,7 @@ def test_consumer_feed_and_identity_lookups(tmp_path):
     assert outline[uninstalled] is None and outline["zz_unknown"] is None
 
     # 系统源撞库:全部带 feed 的预设(注册顺序,同地址后者覆盖前者)+ 公共 RSS / 播客行
-    expected_presets = {}
-    for source_id, cls in fetcher_registry._fetchers.items():
-        feed_url = getattr(cls, "feed_url", "") or ""
-        if feed_url and not getattr(cls, "is_template", False):
-            expected_presets[user_sources.canonical_feed_url(feed_url)] = source_id
-    assert expected_presets
-    for url, source_id in expected_presets.items():
-        if system_feeds[url]["source_id"] == source_id:   # 没被同地址的配置行覆盖
-            assert system_feeds[url]["name"] == fetcher_registry.get_class(source_id).name
+    assert system_feeds == _legacy_system_feeds(public_feed_rows)
     assert system_feeds["https://openai.com/news/rss.xml"] == {
         "source_id": "rss_openai_news", "name": "OpenAI 新闻", "content_kind": "article",
     }
@@ -570,6 +634,188 @@ def test_consumer_daily_job_and_x_probe_follow_registry_order(tmp_path):
     assert probe["resource_type"] == "user"
 
 
+def test_consumer_enumeration_order_with_a_fake_registry(monkeypatch, tmp_path):
+    """枚举顺序敏感的四处都按注册顺序,不按字母序:注册表换成一组「注册顺序与字母序相反」的假类。"""
+    import mcp_server
+    from ensure_daily_collection_job import selected_fetcher_ids
+
+    from api.routers import x_api
+    from services import user_sources
+
+    fakes = [
+        _fake_fetcher("zz_feed_first", name="先注册", feed_url="https://dup.test/feed.xml"),
+        _fake_fetcher("aa_feed_second", name="后注册", feed_url="https://dup.test/feed.xml",
+                      content_shape="podcast"),
+        _fake_fetcher("mm_feed_shadowed", name="被配置行覆盖", feed_url="https://shadow.test/feed.xml"),
+        _fake_fetcher("zz_x_first", platform="x", content_shape="social", content_type="social_post",
+                      handle="zzfirst", user_id="111"),
+        _fake_fetcher("aa_x_second", platform="x", content_shape="social", content_type="social_post",
+                      handle="aasecond", user_id="222"),
+        _fake_fetcher("kk_incubating", admission_status="incubating"),
+        _fake_fetcher("bb_template", is_template=True),
+    ]
+    monkeypatch.setattr(fetcher_registry, "_fetchers", {cls.source_id: cls for cls in fakes})
+
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'fake_registry.db'}")
+    with Session(sink.engine) as session:
+        session.add(_row("cfg_shadow", name="配置行", url="https://shadow.test/feed.xml", fetcher_id="generic_rss"))
+        session.commit()
+        feeds = user_sources.system_feed_urls(session)
+        rows = session.exec(select(SourceConfigRecord)).all()
+        probe = x_api._probe_resource(session)
+    assert feeds == _legacy_system_feeds(rows)
+    assert feeds["https://dup.test/feed.xml"] == {
+        "source_id": "aa_feed_second", "name": "后注册", "content_kind": "podcast",
+    }
+    assert feeds["https://shadow.test/feed.xml"]["source_id"] == "cfg_shadow"       # 配置行压预设
+    assert (probe["source_id"], probe["resource_id"]) == ("zz_x_first", "111")       # 注册顺序里的第一个
+
+    order = [cls.source_id for cls in fakes]
+    assert [item["source_id"] for item in mcp_server._list_sources_impl(sink)] == order
+    assert selected_fetcher_ids(include_advanced=True) == order
+    assert selected_fetcher_ids() == [sid for sid in order if sid not in {"kk_incubating", "bb_template"}]
+    sink.engine.dispose()
+
+
+def test_consumer_row_shape_matches_baseline_on_odd_bound_classes(monkeypatch, tmp_path):
+    """绑定类的形态是空值 / 旧别名 / 带大小写与空白 / 非法值时,阅读侧的行形态判法与改前一致。"""
+    from api import sources as api_sources
+    from services import event_assignment, event_board, personal_digest
+
+    odd_shapes = {
+        "odd_none": None, "odd_empty": "", "odd_alias": "Bulletin ", "odd_case": " Social",
+        "odd_podcast": "PODCAST", "odd_weird": "carousel",
+    }
+    fakes = {sid: _fake_fetcher(sid, content_shape=shape) for sid, shape in odd_shapes.items()}
+    monkeypatch.setattr(fetcher_registry, "_fetchers", {**fetcher_registry._fetchers, **fakes})
+
+    cases = []
+    for fetcher_id in [*odd_shapes, "no_such_fetcher", ""]:
+        for source_type in ("rss", " X ", "social", "podcast_rss", "wechat", ""):
+            for explicit in ("", "bulletin", " Podcast", "carousel"):
+                cases.append(_row(
+                    f"row_{len(cases):03d}", source_type=source_type, fetcher_id=fetcher_id, shape=explicit,
+                ))
+    for row in cases:
+        assert api_sources.row_shape(row) == _legacy_row_shape(row), (row.source_type, row.fetcher_id, row.shape)
+    # 抽几条字面值,免得两边错成一样
+    assert api_sources.row_shape(_row("a", source_type="rss", fetcher_id="odd_alias")) == "article"
+    assert api_sources.row_shape(_row("b", source_type="rss", fetcher_id="odd_case")) == "social"
+    assert api_sources.row_shape(_row("c", source_type="x", fetcher_id="odd_weird")) == "social"     # 非法值:按类型
+    assert api_sources.row_shape(_row("d", source_type="podcast", fetcher_id="odd_none")) == "podcast"
+    assert api_sources.row_shape(_row("e", source_type="x", fetcher_id="odd_empty")) == "social"
+    assert api_sources.row_shape(_row("f", source_type="x", shape="bulletin")) == "article"          # 显式列优先
+
+    # 三个消费方拿这些行时同样走阅读侧判法
+    sink = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'odd.db'}")
+    with Session(sink.engine) as session:
+        for row in cases:
+            session.add(row)
+        session.commit()
+        stored = {row.source_id: row for row in session.exec(select(SourceConfigRecord)).all()}
+        ids = sorted(stored)
+        expected = {sid: ("media", _legacy_row_shape(stored[sid])) for sid in ids}
+        assert personal_digest._source_role_and_shape(session, ids) == expected
+        infos = event_board._source_infos(session, {sid: "" for sid in ids}, reader_scope=False)
+        assert {sid: (info.role, info.shape) for sid, info in infos.items()} == expected
+        metas = event_assignment.load_source_meta(session, ids)
+        assert {sid: (meta.role, meta.shape) for sid, meta in metas.items()} == expected
+    sink.engine.dispose()
+
+
+def test_consumer_outputs_ignore_the_read_model_switch(tmp_path):
+    """上游同步来的预设行与本机类不一致时:角色跟行(空值就是空值,不回退到类),形态早报 / 事件榜
+    跟行、事件归并跟类,主体跟类——compat 与 full 两种读法下都一样。"""
+    from services import event_assignment, event_board, personal_digest, source_catalog
+
+    sink, _installed, _uninstalled = _families(tmp_path)
+    hf = fetcher_registry.get_class("rss_hf_blog")
+    karpathy = fetcher_registry.get_class("x_karpathy")
+    assert source_naming.source_role("rss_hf_blog") == "official" and hf.content_shape == "article"
+    try:
+        with Session(sink.engine) as session:
+            row = session.get(SourceConfigRecord, "rss_hf_blog")
+            row.collection_authority_id = "authority-up"
+            row.source_scope = ""
+            row.provenance_tier = ""
+            row.source_owner = "UpstreamOwner"
+            row.shape = "podcast"
+            session.add(row)
+            row = session.get(SourceConfigRecord, "x_karpathy")
+            row.source_scope = ""
+            row.provenance_tier = "tier1_curated"
+            session.add(row)
+            session.commit()
+
+            for model in ("compat", "full"):
+                source_catalog.configure(model=model)
+                digest = personal_digest._source_role_and_shape(session, ["rss_hf_blog", "x_karpathy"])
+                assert digest == {"rss_hf_blog": ("media", "podcast"), "x_karpathy": ("media", "social")}, model
+                infos = event_board._source_infos(
+                    session, {"rss_hf_blog": "rss_article", "x_karpathy": "social_post"}, reader_scope=False
+                )
+                assert {sid: (info.role, info.shape) for sid, info in infos.items()} == digest, model
+                metas = event_assignment.load_source_meta(session, ["rss_hf_blog", "x_karpathy"])
+                assert (metas["rss_hf_blog"].role, metas["rss_hf_blog"].shape) == ("media", "article"), model
+                assert metas["rss_hf_blog"].owner == hf.source_owner.strip() != "UpstreamOwner", model
+                assert (metas["x_karpathy"].role, metas["x_karpathy"].owner) == (
+                    "media", karpathy.source_owner.strip()
+                ), model
+    finally:
+        source_catalog.configure(model="compat")
+        sink.engine.dispose()
+
+
+def test_consumer_ingest_gate_follows_the_local_class_when_a_synced_row_disagrees(tmp_path):
+    """收录的形态门禁读合并视图:预设类与上游同步来的行形态不同时(compat)以本机类为准。"""
+    from types import SimpleNamespace
+
+    from services import ingest_push, source_catalog
+
+    sink, _installed, _uninstalled = _families(tmp_path)
+    with Session(sink.engine) as session:
+        row = session.get(SourceConfigRecord, "rss_openai_news")
+        assert row is not None and row.shape == "article"
+        row.collection_authority_id = "authority-up"
+        row.shape = "social"
+        session.add(row)
+        session.commit()
+
+        ctx = SimpleNamespace(session=session)
+        assert source_catalog.get(session, "rss_openai_news").shape == "article"
+        assert ingest_push._shape_mismatch(ctx, "rss_openai_news", "article") is None
+        assert "不收" in ingest_push._shape_mismatch(ctx, "rss_openai_news", "social_post")
+        # 没有预设类的源:行说了算
+        assert ingest_push._shape_mismatch(ctx, "x_pushed_account", "social_post") is None
+        assert ingest_push._shape_mismatch(ctx, "x_pushed_account", "article")
+    sink.engine.dispose()
+
+
+def test_consumer_two_row_shape_rules_are_kept_apart():
+    """行形态有两套存量判法——阅读侧(``api.sources.row_shape``)与目录视图(``view_from_row``,
+    源管理的无绑定源与收录门禁用)。它们在 ``social`` 字面类型、旧别名 ``bulletin`` 上不同;
+    本波不统一,各自的结果钉在这里。"""
+    from api import sources as api_sources
+    from services import source_catalog
+
+    cases = [
+        # (行, 阅读侧, 目录视图的形态, 目录视图的 content_type)
+        (dict(source_type="social"), "social", "article", ""),
+        (dict(source_type="x_timeline", shape="bulletin"), "article", "social", "social_post"),
+        (dict(source_type="rss", shape="bulletin", fetcher_id="generic_podcast_rss"),
+         "article", "podcast", "podcast_episode"),
+        (dict(source_type="rss", shape="bulletin", fetcher_id="generic_rss"), "article", "article", "rss_article"),
+        (dict(source_type="x", shape="social"), "social", "social", "social_post"),
+        (dict(source_type="preset", fetcher_id="x_openai"), "social", "social", "social_post"),
+        (dict(source_type="podcast_rss"), "podcast", "podcast", "podcast_episode"),
+    ]
+    for kwargs, reader_side, catalog_shape, catalog_type in cases:
+        row = _row("shape_case", **kwargs)
+        view = source_catalog.view_from_row(row)
+        assert api_sources.row_shape(row) == reader_side, kwargs
+        assert (view.shape, view.content_type) == (catalog_shape, catalog_type), kwargs
+
+
 # ── 读服务自身的接口(本波新增) ───────────────────────────────────────────────
 
 
@@ -630,107 +876,56 @@ def test_catalog_views_follow_live_class_attributes(monkeypatch):
     assert source_naming.friendly_source_name("x_openai") == before.name
 
 
-def test_catalog_describe_reuses_rows_and_applies_evidence_only_without_row_or_class(tmp_path):
+def test_catalog_layers_hand_out_row_and_preset_without_merging(tmp_path):
     from services import source_catalog
 
-    sink, installed, uninstalled = _families(tmp_path)
+    sink, _installed, uninstalled = _families(tmp_path)
     statements: list[str] = []
 
     def count(_conn, _cursor, statement, *_args):
         statements.append(statement)
 
     with Session(sink.engine) as session:
-        wanted = ["rss_openai_news", "rss_admin_blog", "x_openrouter", uninstalled, "zz_unknown"]
+        wanted = ["rss_openai_news", "rss_admin_blog", "generic_rss", "x_openrouter", uninstalled, "zz_unknown"]
         rows = {
             row.source_id: row for row in session.exec(
                 select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(wanted))
             ).all()
         }
-        loaded = source_catalog.describe(session, wanted)
+        loaded = source_catalog.layers(session, wanted)
         event.listen(sink.engine, "before_cursor_execute", count)
         try:
-            reused = source_catalog.describe(session, wanted, rows=rows)
+            reused = source_catalog.layers(session, wanted, rows=rows)
         finally:
             event.remove(sink.engine, "before_cursor_execute", count)
         assert statements == []                                          # 给了行就不再查库
-        assert reused == loaded
+        assert {sid: (item.record is not None, item.preset) for sid, item in reused.items()} == {
+            sid: (item.record is not None, item.preset) for sid, item in loaded.items()
+        }
 
-        # 证据只对没有行也没有类的 id 生效
-        evidence = {sid: "social_post" for sid in wanted}
-        with_evidence = source_catalog.describe(session, wanted, content_types=evidence)
-        assert with_evidence["rss_openai_news"].shape == "article"       # 有类有行:不看证据
-        assert with_evidence["rss_admin_blog"].shape == "article"        # 有行:不看证据
-        assert with_evidence["x_openrouter"].shape == "social"           # 墓碑有行(对账建的)
-        assert with_evidence[uninstalled].shape == "social"              # 内建目录 id、没有行:证据优先
-        assert with_evidence["zz_unknown"].shape == "social"
-        assert loaded[uninstalled].shape == "podcast"                    # 没给证据:内建视图自带的形态
-        assert source_catalog.describe(session, [uninstalled], content_types={uninstalled: ""})[uninstalled].shape == "article"
-        assert source_catalog.get(session, uninstalled).shape == "podcast"
-        assert source_catalog.get(session, "zz_unknown", content_type="podcast_episode").shape == "podcast"
-        assert loaded["zz_unknown"].origin == source_catalog.ORIGIN_ARCHIVE and not loaded["zz_unknown"].known
+        both = loaded["rss_openai_news"]
+        assert both.record is not None and both.preset is source_catalog.registry_view("rss_openai_news")
+        assert loaded["rss_admin_blog"].preset is None and loaded["rss_admin_blog"].record is not None
+        assert loaded["generic_rss"].record is None and loaded["generic_rss"].preset.is_template
+        assert loaded["x_openrouter"].record is not None and loaded["x_openrouter"].preset is None   # 墓碑行
+        for source_id in (uninstalled, "zz_unknown"):
+            assert not loaded[source_id].anchored
+        assert all(loaded[sid].anchored for sid in wanted[:4])
 
-        # 键按调用方给的原样:带空白的脏 id 也有视图(占位),不会让按条目回查的消费方 KeyError
-        dirty = source_catalog.describe(session, [" rss_openai_news ", " ", "", None, "rss_openai_news"])
+        # 键按调用方给的原样;describe 仍去空白(既有行为)
+        dirty = source_catalog.layers(session, [" rss_openai_news ", " ", "", None, "rss_openai_news"])
         assert set(dirty) == {" rss_openai_news ", " ", "rss_openai_news"}
-        assert not dirty[" rss_openai_news "].known and dirty["rss_openai_news"].registered
+        assert not dirty[" rss_openai_news "].anchored and dirty["rss_openai_news"].anchored
+        assert set(source_catalog.describe(session, [" rss_openai_news ", " "])) == {"rss_openai_news"}
+
+        # 没有行也没有类:形态看条目类型;内建 id 的合并视图不受影响
+        assert source_catalog.reader_shape(loaded[uninstalled], "podcast_episode") == "podcast"
+        assert source_catalog.reader_shape(loaded[uninstalled]) == "article"
+        assert source_catalog.reader_shape(loaded["zz_unknown"], "social_post") == "social"
+        assert source_catalog.reader_shape(loaded["generic_rss"], "social_post") == "article"        # 有类:不看条目
+        assert source_catalog.describe(session, [uninstalled])[uninstalled].shape == "podcast"
+        assert source_catalog.layers(session, []) == {}
     sink.engine.dispose()
-
-
-def test_catalog_compat_merge_takes_shape_and_curation_scope_from_the_row(tmp_path):
-    """类与行并存:形态、策展范围、信源层级取行(改前早报 / 事件榜 / 阅读器目录的口径),其余取类;
-    事件归并原先形态取类,本波起与另外两家一致——只在上游同步来的行与本机类不同时分得出先后。"""
-    from services import event_assignment, event_board, personal_digest, source_catalog
-
-    sink, _installed, _uninstalled = _families(tmp_path)
-    with Session(sink.engine) as session:
-        # 上游把 rss_hf_blog 改成了播客形态、换了策展范围;本机类还是旧的
-        row = session.get(SourceConfigRecord, "rss_hf_blog")
-        assert row is not None and row.origin == "catalog"
-        row.collection_authority_id = "authority-up"
-        row.shape = "podcast"
-        row.source_scope = "personal_commentary"
-        row.source_owner = "UpstreamOwner"
-        row.name = "上游改的名字"
-        session.add(row)
-        session.commit()
-
-        view = source_catalog.describe(session, ["rss_hf_blog"])["rss_hf_blog"]
-        cls = fetcher_registry.get_class("rss_hf_blog")
-        assert (view.shape, view.source_scope) == ("podcast", "personal_commentary")
-        assert view.name == cls.name and view.source_owner == cls.source_owner
-        assert view.synced and view.configured and view.registered
-        assert source_catalog.info_role(view) == "personal"
-
-        assert personal_digest._source_role_and_shape(session, ["rss_hf_blog"])["rss_hf_blog"] == ("personal", "podcast")
-        info = event_board._source_infos(session, {"rss_hf_blog": "rss_article"}, reader_scope=False)["rss_hf_blog"]
-        assert (info.role, info.shape, info.name) == ("personal", "podcast", cls.name)
-        meta = event_assignment.load_source_meta(session, ["rss_hf_blog"])["rss_hf_blog"]
-        assert (meta.role, meta.shape, meta.owner) == ("personal", "podcast", cls.source_owner)
-
-        # 类上没写主体时才用行上的
-        monkey_owner = source_catalog._merge(
-            source_catalog.SourceView(source_id="p", origin="catalog", name="P", registered=True),
-            source_catalog.SourceView(source_id="p", origin="catalog", name="Q", source_owner="RowOwner", configured=True),
-        )
-        assert monkey_owner.source_owner == "RowOwner" and monkey_owner.name == "P"
-    sink.engine.dispose()
-
-
-def test_catalog_full_model_reads_identity_from_the_row(tmp_path):
-    from services import source_catalog
-
-    sink, _installed, _uninstalled = _families(tmp_path)
-    try:
-        with Session(sink.engine) as session:
-            compat = source_catalog.describe(session, ["x_karpathy"])["x_karpathy"]
-            source_catalog.configure(model="full")
-            full = source_catalog.describe(session, ["x_karpathy"])["x_karpathy"]
-        assert compat.name == "X · Andrej Karpathy" and compat.source_owner == "andrej_karpathy"
-        assert full.name == "上游版本的名字" and full.source_owner == "UpstreamOwner"
-        assert compat.source_scope == full.source_scope == "ai_media"
-    finally:
-        source_catalog.configure(model="compat")
-        sink.engine.dispose()
 
 
 def test_catalog_row_shape_is_one_implementation():
@@ -751,9 +946,9 @@ def test_catalog_row_shape_is_one_implementation():
         row = _row("shape_case", **kwargs)
         assert source_catalog.row_shape(row) == expected, kwargs
         assert api_sources.row_shape(row) == expected, kwargs
-        assert source_catalog.view_from_row(row).shape == expected, kwargs
     assert api_sources.normalize_shape("bulletin") == source_catalog.normalize_shape("bulletin") == "article"
     assert api_sources.normalize_shape(None) == "" and source_catalog.normalize_shape(" X ") == ""
+    assert api_sources.configured_source_shape("social") == source_catalog.binding_shape("social") == "social"
     assert api_sources.configured_source_content_type("social", "") == "social_post"
     assert api_sources.configured_source_content_type("rss", "x_openai") == "social_post"
     assert api_sources.configured_source_platform("social", "") == ""
@@ -762,15 +957,25 @@ def test_catalog_row_shape_is_one_implementation():
     assert set(api_sources._registry_source_meta()) == set(fetcher_registry._fetchers)
 
 
-def test_catalog_info_role_keeps_reader_sources_out_of_custom(tmp_path):
+def test_catalog_info_role_reads_the_row_first_and_never_says_custom(tmp_path):
     from services import source_catalog
 
-    sink, _installed, _uninstalled = _families(tmp_path)
+    sink, installed, uninstalled = _families(tmp_path)
     with Session(sink.engine) as session:
-        views = source_catalog.describe(session, ["user_rss_aaaaaaaaaaaa", "generic_rss", "x_openrouter"])
+        ids = ["user_rss_aaaaaaaaaaaa", "generic_rss", "x_openrouter", "rss_openai_news", "x_karpathy",
+               "empty_meta_src", installed, uninstalled, "zz_unknown"]
+        layers = source_catalog.layers(session, ids)
+        views = source_catalog.describe(session, ids)
     sink.engine.dispose()
-    reader = views["user_rss_aaaaaaaaaaaa"]
-    assert reader.role == "custom"                                       # 阅读器目录的分组
-    assert source_catalog.info_role(reader) == "media"                   # 评分 / 早报 / 事件层的角色
-    assert source_catalog.info_role(views["generic_rss"]) == "official"  # 只有模板类、没有行
-    assert source_catalog.info_role(views["x_openrouter"]) == "media"
+    role = {sid: source_catalog.info_role(layers[sid]) for sid in ids}
+    assert views["user_rss_aaaaaaaaaaaa"].role == "custom"               # 阅读器目录的分组
+    assert role["user_rss_aaaaaaaaaaaa"] == "media"                      # 评分 / 早报 / 事件层的角色
+    assert role["generic_rss"] == "official"                             # 只有模板类、没有行(存量口径)
+    assert role["x_openrouter"] == "media"
+    assert role["rss_openai_news"] == "official"
+    assert role["x_karpathy"] == "media"                                 # 行上是 ai_media;类上是个人评论
+    assert role["empty_meta_src"] == "media"                             # 行上两项都空:不给官方
+    assert role[uninstalled] == source_naming.source_role(uninstalled)   # 没有行:走静态路径
+    assert role["zz_unknown"] == "media"
+
+

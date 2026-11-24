@@ -384,16 +384,25 @@ shape = "article"
 
 实现方 Claude Code(Fable 5.2)。范围 = §5「注册表被当成源目录」一行里除执行层以外的全部读点。纯重构:不改数据、无迁移、不动任何同步流。
 
-- **读服务补齐**(`services/source_catalog.py`):`preset_views`(预设源视图,按注册顺序)、`preset_binding`(预设源的采集绑定事实——feed 地址 / 列表页 / 主页 / X 账号;今天在类属性上,R2 / R3 搬进目录文件与行上的绑定参数后只改这里)、`preset_metadata`(注册元数据字典)、`preset_default_kinds`、`template_ids`、`fetcher_class`、`podcast_catalog_source`、`info_role`(评分 / 早报 / 事件层用的四种角色,不含阅读器的 custom);`row_shape` / `binding_shape` / `binding_content_type` / `binding_platform` 成为形态 / 类型 / 平台的唯一实现(`api.sources` 的同名函数委托过来);`describe` 可复用调用方已取的行(`rows=`),事件榜不必为同一批 id 查两遍。
-- **迁移的消费方**:取名与角色(`source_naming`)、路由层门面(`api/sources.py`)、早报(`personal_digest._source_role_and_shape`)、事件榜(`event_board._source_infos`)、事件归并(`event_assignment.load_source_meta`)、内容类型先验(`content_classification.source_default_kinds`)、MCP `list_sources`、OPML 导出、X 配额探针、系统源撞库检测、source-builder 的已有 id 集合、收录的保留 id / 站点索引 / X 身份解析 / 镜像行身份键 / 判重资格 / 条目链接身份、每日采集任务脚本。
-- **留在注册表上的**(守卫名单,逐个登记理由):注册表本身、`source_catalog`、`collection_nodes`(绑定解析与参数表)、`api/app.py`(采集执行)、两个要实例化抓取器的脚本。`monitoring` 与 MCP 按 `SourceStateRecord.fetcher_id` 关联状态属 R3a,不在本波。
-- **类与行并存时的取舍**(compat):名称 / 简介 / 图标 / 类型 / 平台 / 内容类型先验 / 准入取类;形态、策展范围、信源层级取行;发布主体取类、类上为空才取行——这是改前早报、事件榜、阅读器目录的口径。此前 `_merge` 的 compat 分支一律取类,但没有任何读角色 / 形态的消费方用过它。
+- **读服务补齐**(`services/source_catalog.py`,只加接口):`preset_views`(预设源视图,按注册顺序)、`preset_binding`(预设源的采集绑定事实——feed 地址 / 列表页 / 主页 / X 账号;今天在类属性上,R2 / R3 搬进目录文件与行上的绑定参数后只改这里)、`preset_metadata`(注册元数据字典)、`preset_default_kinds`、`template_ids`、`fetcher_class`、`podcast_catalog_source`;`layers` → `SourceLayers`(源行与预设类两层,不合并;可复用调用方已取的行,事件榜不必为同一批 id 查两遍);口径函数 `info_role`(评分 / 早报 / 事件层的四种角色,不含阅读器的 custom)与 `reader_shape`;`row_shape` / `binding_shape` / `binding_content_type` / `binding_platform` 自 `api/sources.py` 原样搬来(`api.sources` 的同名函数委托过来)。
+- **迁移的消费方**:取名与角色(`source_naming`)、路由层门面(`api/sources.py`)、早报(`personal_digest._source_role_and_shape`)、事件榜(`event_board._source_infos`)、事件归并(`event_assignment.load_source_meta`)、内容类型先验(`content_classification.source_default_kinds`)、MCP `list_sources`、OPML 导出、X 配额探针、系统源撞库检测、source-builder 的已有 id 集合、收录的保留 id / 站点索引 / X 身份解析 / 镜像行身份键 / 判重资格 / 条目链接身份、采集节点目录与源管理目录的预设枚举(`collection_nodes`)、每日采集任务脚本。
+- **留在注册表上的**(守卫名单,逐个登记理由):注册表本身、`source_catalog`;执行层 `collection_nodes`(校验绑定、执行前解析)、`api/app.py`(采集执行)与两个要实例化抓取器的脚本——执行层只许 `fetcher_registry.get_class`,不许枚举、不许读注册元数据。`monitoring` 与 MCP 按 `SourceStateRecord.fetcher_id` 关联状态属 R3a,不在本波。
+- **不改任何既有取舍**:合并视图(`describe` / `get` / `_merge`)与目录视图(`view_from_row`)同改前逐字相同。早报、事件榜、事件归并历来不用合并视图,而是各自拿源行与预设类两层按自己的顺序取——角色看行(行上两项都空就是 media,不回退到同名的类);形态早报与事件榜看行、事件归并看类;主体看类、类上为空才看行。`layers` 把两层原样交出去,这些顺序收进 `info_role` / `reader_shape` 与事件归并自己的几行,与 `[sources] model` 无关。
 - **视图缓存**:按类缓存,每次取用对照类上的当前属性(没变就复用同一对象)。原先的进程级一次性缓存若恰好建在类属性被临时改写的那一刻,后面的调用全被带偏;既有用例 `test_promoting_one_inherited_incubating_source_only_admits_that_source` 改写类的准入状态后即撞上。
-- **守卫** `tests/test_source_catalog_boundary.py`:`src/` 与 `scripts/` 里引用 `fetcher_registry` 的文件必须在名单里,名单里已不引用的要划掉;放到改前代码上是红的。
-- **口径测试** `tests/test_source_catalog_consumers.py`:前半用「照改前算法直接读注册表与源行」的对照实现,在空源表与各来路齐全两种库上,对注册表全部 69 个 id 与各来路的源逐个比较早报 / 事件榜 / 事件归并的角色、形态、主体,另钉取名、OPML、撞库、身份键、站点索引、保留 id、每日任务、X 探针;这一半(9 条)放到改前代码上同样全过。后半是读服务的新接口。
-- **对拍**(脚本在会话草稿区,未入库):基线 `01ffaa11` 与分支各跑一遍,同一份库,比较 46 组函数级输出与 35 个只读接口 × 管理员 / 读者 / 匿名三种身份的响应。本机开发库副本(迁到最新并跑过启动对账:114 个源行、7194 篇文章、74 个来源 id):零差异。空源表合成库:消费方零差异。各来路齐全的合成库:只有下面第 1 条。阅读器目录(99 个源)、源管理(107)、源健康(121)、文章列表、内容看板这些接口两边都有实际内容;开发库的文章停在 2026-09-17、没有事件数据,事件榜与精选两边都是空板(榜单只有「历史高分」一栏有条目),这几处的比较说明不了多少——依据是上面的口径测试与既有的 `test_event_board` / `test_event_assignment` / `test_digest_selection`。
-- **与改前不同的两处**(真实数据里都不出现):
-  1. `source_type=social`、没有显式形态、没有采集绑定的源行,源管理 / 源健康里的形态由 article 改判 social(类型由 web_article 改判 social_post)——与阅读器目录、早报、事件榜一直以来的判法一致。对账、收录、回填建的行都带显式形态,不受影响。
-  2. 事件归并的形态,类与行并存且两者不同时由「取类」改为「取行」,与早报、事件榜一致。本机对账维护的镜像行与类逐字段相等;只有行来自上游同步、上游与本机版本不同、且该预设的形态在两个版本间改过时才分得出先后。
-- **部署顺序与混版本**:不触及同步流的字段、枚举、导出范围或删除语义,两端任意顺序。有上游的节点上,预设源的镜像行来自上游、对账不碰;这类行与本机类不一致时,角色与形态以行为准(早报 / 事件榜改前已是如此,事件归并的形态是新对齐的),名称仍取本机类。
-- **没做**:信任兜底(`user_sources.source_content_may_leave_deployment`、`article_analysis` 里的「无配置行 = 平台源」)与前端 `sourceTaxonomy.js` 的角色兜底——等「缺行即错」的严格不变量启用(`[sources] model = full`)时一起收;`friendly_source_name` / `source_role` 在 `full` 模式下仍先取预设源目录,R2 目录文件落地时改为取行。
+- **守卫** `tests/test_source_catalog_boundary.py`:`src/` 与 `scripts/` 里引用 `fetcher_registry` 的文件必须在名单里,名单里已不引用的要划掉,执行层文件只许调 `get_class`;放到改前代码上是红的。
+- **口径测试** `tests/test_source_catalog_consumers.py`:前半用「照改前算法直接读注册表与源行」的对照实现,在空源表与各来路齐全两种库、compat 与 full 两种读法下,对注册表全部 69 个 id 与各来路的源逐个比较早报 / 事件榜 / 事件归并的角色、形态、主体;另钉取名、OPML、撞库(整张映射比较)、身份键、站点索引、保留 id、每日任务、X 探针,收录的形态门禁(预设类与同步行形态冲突时),两套行形态判法各自的结果,以及一组「注册顺序与字母序相反」的假注册表和形态不规范的假抓取器类。这一半(16 条)放到改前代码上同样全过。后半是读服务的新接口。
+- **对拍**(脚本在会话草稿区,未入库):基线 `01ffaa11` 与分支各跑一遍,同一份库,比较 46 组函数级输出(含读服务自身的 `describe` 与源管理目录)与 35 个只读接口 × 管理员 / 读者 / 匿名三种身份的响应。本机开发库副本(迁到最新并跑过启动对账:114 个源行、7194 篇文章、74 个来源 id)、空源表合成库、各来路齐全的合成库(含与预设同 id 的上游同步行、`source_type=social`、旧形态别名 `bulletin`):**三份都是零差异**。阅读器目录(99 个源)、源管理(107)、源健康(121)、文章列表、内容看板这些接口两边都有实际内容;开发库的文章停在 2026-09-17、没有事件数据,事件榜与精选两边都是空板(榜单只有「历史高分」一栏有条目),这几处的比较说明不了多少——依据是上面的口径测试与既有的 `test_event_board` / `test_event_assignment` / `test_digest_selection`。
+- **与改前不同的地方**:没有。首稿为了让三个消费方口径一致,把合并规则与目录视图的形态判定各改了一处,检视指出它们波及收录的形态门禁与 full 模式下的角色(见下「检视」),已全部撤回。
+- **部署顺序与混版本**:不触及同步流的字段、枚举、导出范围或删除语义,对外行为无变化,两端任意顺序。
+- **没做**:口径的统一——两套行形态判法(阅读侧 `row_shape` 认 `source_type=social` 与旧别名 `bulletin`,目录视图 `view_from_row` 不认)、三个消费方各自的取舍顺序、信任兜底(`user_sources.source_content_may_leave_deployment`、`article_analysis` 里的「无配置行 = 平台源」)、前端 `sourceTaxonomy.js` 的角色兜底,都等「缺行即错」的严格不变量启用(`[sources] model = full`)时一起收;`friendly_source_name` / `source_role` 在 `full` 模式下仍先取预设源目录,R2 目录文件落地时改为取行。
+
+**R1a 余项的检视(2026-11-24)**:检视方 Codex CLI,`gpt-6-astra`,`model_reasoning_effort=ultra`,只读沙箱;实现方 Claude Code(Fable 5.2)。检视方用真正的基线函数与分支在内存库上对拍(空源表 128 个 id、各来路齐全 136 个 id),pytest 因只读沙箱未能启动。首轮 1 P1 + 2 P2 + 3 P3,全部接受、无分歧;#1 / #2 / #4 同根(首稿在读服务里动了两处既有语义),按「读服务只加接口、不改语义」一次改形,不逐条打补丁。
+
+| # | 级 | 问题 | 修订 |
+|---|---|---|---|
+| 1 | P1 | 首稿把 compat 合并规则改成「形态取行」,收录的形态门禁(`ingest_push._shape_mismatch` 读合并视图)在预设类与上游同步行形态不同时接受 / 拒绝对调;方案里「没有消费方经合并视图读形态」不成立 | 合并规则恢复原样;三个消费方改用 `layers` + 口径函数,不经合并视图;补收录门禁用例 |
+| 2 | P2 | 三个消费方改用 `describe()` 后被带进 full 模式的「行上为空回退到类」:同步行策展元数据为空时角色由 media 变 official,主体由类变行 | 同上:口径函数与读法开关无关;对照测试在 compat / full 两种读法下都跑,另补专门用例 |
+| 3 | P2 | 守卫名单放行的 `collection_nodes` 仍用 `get_all_metadata()` 把名称 / 形态 / 主体送进节点目录与源管理目录 | 两处枚举改经 `preset_metadata()`;守卫新增「执行层文件只许调 `get_class`」 |
+| 4 | P3 | 首稿让目录视图的形态改走阅读侧判法,`bulletin` 与绑定 / 类型矛盾的行形态变了、与 `content_type` 不再一致 | 目录视图的形态恢复原判法;两套判法各自的结果钉进测试,统一留到 full 模式 |
+| 5 | P3 | 撞库检测的断言在源 id 不符时直接跳过 | 改为按基线算法构造整张预期映射比较;加假注册表用例(同地址两个预设、注册顺序与字母序相反、配置行覆盖) |
+| 6 | P3 | 形态对照实现没有复刻基线的归一与非法值兜底 | 完整复刻;用假抓取器类补空值 / 别名 / 大小写与空白 / 非法值 |

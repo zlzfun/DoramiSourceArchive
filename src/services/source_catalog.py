@@ -7,12 +7,9 @@
 
 - **行优先的字段**:可见性与运维相关的事实只在行上——``owner_username``、
   ``collection_authority_id``、``ai_analysis_enabled``、``is_active``、``retired_at``、绑定。
-- **身份 / 呈现 / 策展字段**(类与行并存时,``[sources] model = compat``):沿用改前各消费方
-  的口径——名称 / 简介 / 图标 / 类型 / 平台 / 内容类型先验 / 准入取类;**形态与策展范围、信源
-  层级取行**(早报、事件榜、阅读器目录历来以行为准,角色由后两项推出);发布主体取类、类上为空
-  才取行。本机对账维护的镜像行与类属性逐字段相等,这些顺序只在「行来自上游同步、上游与本机
-  版本不同」时才分得出先后。``full`` 模式一律以行为准。
-- **只有类 / 只有行**:各用各的;都没有但属于内建 id(日报、下线墓碑、播客目录)用内建视图。
+- **身份 / 呈现 / 策展字段**:注册表类 > 行 > 内建兜底(日报、下线墓碑、播客目录)。
+  本机对账维护的镜像行与类属性逐字段相等,所以这条顺序通常不改变结果;分得出先后的只有
+  「行来自上游同步、上游与本机版本不同」的时候。
 - **都没有**:返回 ``origin="archive"`` 的占位视图——名称是裸 id、角色 ``media``、
   形态按调用方给的 ``content_type`` 证据推断。占位只在这里生成,消费方不再各写兜底。
 
@@ -20,10 +17,16 @@
 
 **读注册表身份的唯一入口**(R1a 余项):业务代码(``api/`` ``services/`` ``mcp_server``、治理脚本)
 不再直接 ``import fetcher_registry`` 去读「哪些源、叫什么、什么形态、feed 地址是什么」,一律经这里的
-``preset_views`` / ``preset_binding`` / ``preset_metadata`` / ``fetcher_class`` / ``describe``。
+``preset_views`` / ``preset_binding`` / ``preset_metadata`` / ``fetcher_class`` / ``describe`` /
+``layers``。
 直接碰注册表的只剩执行层(``api/app.py`` 的采集执行、``collection_nodes`` 的绑定解析、抓取器
 自身)与本模块;守卫 ``tests/test_source_catalog_boundary.py``。R2 / R3 把身份与绑定参数搬出类
 属性时,只改这一个模块的取值来源。
+
+**两层与口径函数**:早报、事件榜、事件归并历来不用上面的合并视图,而是各自拿「源行」与「预设类」
+两层按自己的顺序取(角色看行、形态早报与事件榜看行而事件归并看类、主体看类)。``layers`` 把两层
+原样交出去,``info_role`` / ``reader_shape`` 是这些口径的唯一写法,与 ``[sources] model`` 无关。
+把它们统一成「一律以行为准」是 full 模式的事,不在 R1a。
 """
 
 from __future__ import annotations
@@ -493,7 +496,8 @@ def binding_platform(source_type: str, fetcher_id: str = "") -> str:
 
 
 def row_shape(row: object) -> str:
-    """源行的形态:显式 ``shape`` 列(R1c)> 绑定的抓取器类 > ``source_type``。"""
+    """源行的形态(阅读侧口径:阅读器目录、早报、事件榜、榜单、文章列表):显式 ``shape`` 列
+    (R1c)> 绑定的抓取器类 > ``source_type``。自 ``api.sources`` 原样搬来。"""
     explicit = normalize_shape(getattr(row, "shape", ""))
     if explicit:
         return explicit
@@ -501,6 +505,25 @@ def row_shape(row: object) -> str:
         str(getattr(row, "source_type", "") or ""),
         str(getattr(row, "fetcher_id", "") or ""),
     )
+
+
+# 目录视图(``view_from_row``:源管理里无绑定的源、收录的形态门禁)自己的判法。与上面的阅读侧
+# 判法在三处不同:不认 ``source_type=social``、不认旧别名 ``bulletin``、绑定类的形态不合法时不
+# 归一。存量如此,R1a 不动;两套并成一套留到 full 模式(backlog)。
+def _row_shape(row: SourceConfigRecord, source_type: str) -> str:
+    explicit = str(getattr(row, "shape", "") or "").strip().lower()
+    if explicit in SHAPES:
+        return explicit
+    cls = _bound_class(row.fetcher_id or "")
+    if cls is not None:
+        shape = str(getattr(cls, "content_shape", "") or "").strip().lower()
+        if shape in SHAPES:
+            return shape
+    if source_type in X_SOURCE_TYPES:
+        return "social"
+    if source_type in PODCAST_SOURCE_TYPES:
+        return "podcast"
+    return "article"
 
 
 def _row_content_type(row: SourceConfigRecord, source_type: str, shape: str) -> str:
@@ -541,7 +564,7 @@ def _row_origin(row: SourceConfigRecord) -> str:
 
 def view_from_row(row: SourceConfigRecord) -> SourceView:
     source_type = (row.source_type or "").strip().lower()
-    shape = row_shape(row)
+    shape = _row_shape(row, source_type)
     return SourceView(
         source_id=row.source_id,
         origin=_row_origin(row),
@@ -591,25 +614,14 @@ _IDENTITY_FIELDS = (
 )
 
 
-# compat 下类与行并存时以行为准的身份字段(改前口径,见模块说明)。
-_COMPAT_ROW_FIELDS = ("shape", "source_scope", "provenance_tier")
-
-
 def _merge(registry: SourceView, row: SourceView) -> SourceView:
-    """注册表类与行并存:运维与可见性事实取行;身份 / 呈现 / 策展字段 full 模式取行,
-    compat 模式沿用改前各消费方的口径(见模块说明)。"""
+    """注册表类与行并存:身份 / 呈现 / 策展取类(compat)或取行(full),运维与可见性事实取行。"""
     if _model == MODEL_FULL:
         identity = {
             name: getattr(row, name) if getattr(row, name) not in ("", None) else getattr(registry, name)
             for name in _IDENTITY_FIELDS
         }
         registry = replace(registry, **identity)
-    else:
-        registry = replace(
-            registry,
-            source_owner=registry.source_owner.strip() or row.source_owner,
-            **{name: getattr(row, name) for name in _COMPAT_ROW_FIELDS},
-        )
     merged = replace(
         registry,
         configured=True,
@@ -620,17 +632,6 @@ def _merge(registry: SourceView, row: SourceView) -> SourceView:
     if not merged.admission_status:
         merged = replace(merged, admission_status=row.admission_status)
     return merged
-
-
-def info_role(view: SourceView) -> str:
-    """信息角色 official / media / personal / leaderboard(评分、早报、事件层用;不含阅读器的 custom)。
-
-    只有注册表类、没有源行、策展元数据又全空的 id(即模板 ``generic_*`` 本身)沿用改前口径记官方;
-    源表成为全集之后这种 id 不会有条目,R3 抓取器去身份时连同这条一起删。
-    """
-    if not (view.source_scope or view.provenance_tier) and view.registered and not view.configured:
-        return "official"
-    return role_from_metadata(view.source_scope, view.provenance_tier)
 
 
 def archive_placeholder(source_id: str, content_type: str = "") -> SourceView:
@@ -655,30 +656,20 @@ def describe(
     source_ids: Iterable[str],
     *,
     content_types: Optional[Mapping[str, str]] = None,
-    rows: Optional[Mapping[str, SourceConfigRecord]] = None,
 ) -> dict[str, SourceView]:
     """批量取源视图:一次 IN 查询取行,注册表与内建兜底走进程内缓存。
 
-    ``content_types``(source_id → 该源条目的 content_type)是形态证据,只对**既没有行也没有
-    注册表类**的 id 生效:键在映射里就按证据判形态(空证据 = article),包括日报 / 墓碑 / 播客目录
-    这些内建 id——与改前各消费方「查不到就看条目类型」同口径;键不在映射里才用内建视图自带的形态。
-
-    ``rows``:调用方已经取好的源行(source_id → 行,须覆盖本次要查的全部 id;没有的 id 视为没有行)。
-    传了就不再查库——事件榜、事件归并本来就要拿行做凭证 / 私有判定,不必同一批 id 查两遍。
+    ``content_types``(source_id → 该源条目的 content_type)只用于给占位视图推断形态。
     """
-    # 键按调用方给的原样(不去空白):消费方拿条目上的 source_id 回查,带空白的脏 id 也得查得到
-    # ——它没有行也没有类,落成占位视图。
-    wanted = sorted({str(sid) for sid in source_ids if sid})
+    wanted = sorted({str(sid).strip() for sid in source_ids if str(sid or "").strip()})
     if not wanted:
         return {}
-    if rows is None:
-        loaded: dict[str, SourceConfigRecord] = {}
-        for chunk in _chunks(wanted):
-            for row in session.exec(
-                select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(chunk))
-            ).all():
-                loaded[row.source_id] = row
-        rows = loaded
+    rows: dict[str, SourceConfigRecord] = {}
+    for chunk in _chunks(wanted):
+        for row in session.exec(
+            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(chunk))
+        ).all():
+            rows[row.source_id] = row
     content_types = content_types or {}
     result: dict[str, SourceView] = {}
     for source_id in wanted:
@@ -691,25 +682,88 @@ def describe(
         elif registry is not None:
             result[source_id] = registry
         else:
-            builtin = _builtin_view(source_id)
-            if builtin is None:
-                result[source_id] = archive_placeholder(source_id, content_types.get(source_id, ""))
-            elif source_id in content_types:
-                result[source_id] = replace(
-                    builtin, shape=shape_from_content_type(content_types[source_id])
-                )
-            else:
-                result[source_id] = builtin
+            result[source_id] = _builtin_view(source_id) or archive_placeholder(
+                source_id, content_types.get(source_id, "")
+            )
     return result
 
 
 def get(session: Session, source_id: str, *, content_type: str = "") -> SourceView:
     sid = str(source_id or "").strip()
-    if not sid:
-        return archive_placeholder("")
-    # 没给条目类型就不当作证据传(否则内建 id 的形态会被空证据压成 article)。
-    evidence = {sid: content_type} if content_type else None
-    return describe(session, [sid], content_types=evidence)[sid]
+    return describe(session, [sid], content_types={sid: content_type})[sid] if sid else archive_placeholder("")
+
+
+# ── 两层与口径函数(早报 / 事件榜 / 事件归并) ────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SourceLayers:
+    """一个源的两层来历,不合并:消费方按各自沿用的口径取。"""
+
+    source_id: str
+    record: Optional[SourceConfigRecord]   # 源行(没有为 None)
+    preset: Optional[SourceView]           # 预设类的视图(注册表里没有同名类为 None)
+
+    @property
+    def anchored(self) -> bool:
+        """有行或有预设类;两者都没有的 id 只在归档里出现(或是内建 id)。"""
+        return self.record is not None or self.preset is not None
+
+
+def layers(
+    session: Session,
+    source_ids: Iterable[str],
+    *,
+    rows: Optional[Mapping[str, SourceConfigRecord]] = None,
+) -> dict[str, SourceLayers]:
+    """批量取两层。键按调用方给的原样(不去空白):消费方拿条目上的 ``source_id`` 回查,
+    带空白的脏 id 也要查得到——它没有行也没有类。
+
+    ``rows``:调用方已经取好的源行(source_id → 行,须覆盖本次要查的全部 id)。传了就不再查库
+    ——事件榜本来就要拿行做凭证 / 私有判定,不必同一批 id 查两遍。
+    """
+    wanted = sorted({str(sid) for sid in source_ids if sid})
+    if not wanted:
+        return {}
+    if rows is None:
+        loaded: dict[str, SourceConfigRecord] = {}
+        for chunk in _chunks(wanted):
+            for row in session.exec(
+                select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(chunk))
+            ).all():
+                loaded[row.source_id] = row
+        rows = loaded
+    return {
+        source_id: SourceLayers(source_id, rows.get(source_id), registry_view(source_id))
+        for source_id in wanted
+    }
+
+
+def info_role(source: SourceLayers) -> str:
+    """信息角色 official / media / personal / leaderboard(评分、早报、事件层用;不含阅读器的 custom)。
+
+    有行:行上的策展范围与信源层级说了算,空值就是空值(两项都空 = 身份不可考 = media),
+    不回退到同名的预设类。没有行:预设类 → 播客精选目录 → media。
+    """
+    from services.source_naming import source_role
+
+    record = source.record
+    if record is not None:
+        return source_role(
+            source.source_id,
+            source_scope=record.source_scope or "",
+            provenance_tier=record.provenance_tier or "",
+        )
+    return source_role(source.source_id)
+
+
+def reader_shape(source: SourceLayers, content_type: str = "") -> str:
+    """早报 / 事件榜用的形态:有行看行(``row_shape``),没行看预设类,都没有看条目的 ``content_type``。"""
+    if source.record is not None:
+        return row_shape(source.record)
+    if source.preset is not None:
+        return source.preset.shape
+    return shape_from_content_type(content_type)
 
 
 def provisional_source_ids(session: Session) -> set[str]:

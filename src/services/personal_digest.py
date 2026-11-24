@@ -982,10 +982,12 @@ def _source_role_and_shape(
     wanted = sorted(sid for sid in content_types if sid)
     if not wanted:
         return {}
-    views = source_catalog.describe(session, wanted, content_types=content_types)
     return {
-        source_id: (source_catalog.info_role(view), view.shape)
-        for source_id, view in views.items()
+        source_id: (
+            source_catalog.info_role(source),
+            source_catalog.reader_shape(source, content_types.get(source_id, "")),
+        )
+        for source_id, source in source_catalog.layers(session, wanted).items()
     }
 
 
