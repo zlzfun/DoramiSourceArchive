@@ -207,7 +207,7 @@ def test_tts_cache_preflight_blocks_before_text_generation(tmp_path):
             pytest.fail("LLM must not run when the TTS cache is blocked")
 
     class NoTts(TtsProvider):
-        def ensure_capacity(self, _characters):
+        async def check_capacity(self, _characters):
             raise BailianSpeechError("tts_receipt_cache_full")
 
         async def synthesize(self, _text):
@@ -226,6 +226,42 @@ def test_tts_cache_preflight_blocks_before_text_generation(tmp_path):
         assert guide["failed_stage"] == "synthesizing"
         assert "回执缓存不足" in guide["error"]
         assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is None
+
+
+def test_tts_cache_is_checked_again_before_the_narration_is_written(tmp_path):
+    """导读正文已有、口播稿还没写时,容量不足同样先于付费的文本生成被发现。"""
+    from services.bailian_speech_client import BailianSpeechError
+
+    sink = DatabaseStorage(f"sqlite:///{tmp_path / 'second-check.db'}")
+    _seed_force_candidate(sink)
+    checks = []
+
+    class NoNarration(TextProvider):
+        async def create_narration(self, **_kwargs):
+            pytest.fail("the narration must not be written when the TTS cache is blocked")
+
+    class FullOnSecondCheck(TtsProvider):
+        async def check_capacity(self, characters):
+            checks.append(characters)
+            if len(checks) == 2:
+                raise BailianSpeechError("tts_receipt_cache_full")
+
+        async def synthesize(self, _text):
+            pytest.fail("TTS must not be submitted")
+
+    with pytest.raises(BailianSpeechError, match="tts_receipt_cache_full"):
+        asyncio.run(run_premium_guide(
+            sink.engine, None, episode_id="episode-force", config=_external_config(),
+            text_provider=NoNarration(), tts_provider=FullOnSecondCheck(), selection_override=True,
+        ))
+    assert len(checks) == 2
+    with Session(sink.engine) as session:
+        guide = json.loads(session.get(ArticleRecord, "episode-force").extensions_json)["premium_guide"]
+        assert guide["status"] == "retry_wait"
+        assert guide["error_code"] == "tts_receipt_cache_full"
+        assert guide["failed_stage"] == "synthesizing"
+        assert session.get(PodcastTextPublicationRecord, "episode-force:digest_blog_zh") is not None
+        assert session.get(PodcastTextPublicationRecord, "episode-force:narration_script_zh") is None
 
 
 def _pcm_wav() -> bytes:
