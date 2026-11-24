@@ -22,7 +22,7 @@ import zlib
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, text as sql_text
+from sqlalchemy import func, or_, text as sql_text
 from sqlmodel import Session, select
 from config_bailian import BailianSpeechConfig
 from models.db import ArticleRecord, BailianTtsCallRecord, PodcastArtifactRecord
@@ -366,9 +366,45 @@ class BailianPremiumGuideTtsProvider:
         if not disk_ok:
             raise BailianSpeechError("tts_receipt_disk_full")
 
+    def _require_submission_entitlement(self, now):
+        deadline = self.config.tts_entitlement_ends_at
+        if deadline and now >= dt.datetime.fromisoformat(deadline):
+            raise BailianSpeechError("tts_entitlement_expired")
+
+    def _check_budget(self, session, now, *, additional_minor=0):
+        """Called under BEGIN IMMEDIATE, including immediately before each POST.
+
+        Unfinished calls retain their reservations across calendar boundaries.
+        A legacy receipt without a proven authorization day is counted on every
+        day until reconciled; its creation date is not proof of its POST date.
+        """
+        cfg = self.config
+        period = now.astimezone(ZoneInfo("Asia/Singapore")).strftime("%Y-%m")
+        day = now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        unsettled = BailianTtsCallRecord.status.in_(["reserved", "authorized", "generated"])
+        base = select(func.coalesce(func.sum(BailianTtsCallRecord.cost_minor), 0)).where(
+            BailianTtsCallRecord.account_scope == cfg.account_scope,
+            BailianTtsCallRecord.status != "rejected",
+        )
+        month_cost = session.exec(base.where(or_(
+            BailianTtsCallRecord.budget_period == period, unsettled,
+        ))).one()
+        if month_cost + additional_minor > cfg.tts_monthly_budget_minor:
+            raise BailianSpeechError("tts_monthly_budget_exceeded")
+        if cfg.tts_daily_budget_minor:
+            day_cost = session.exec(base.where(or_(
+                BailianTtsCallRecord.budget_day == day,
+                BailianTtsCallRecord.budget_day == "",
+                unsettled,
+            ))).one()
+            if day_cost + additional_minor > cfg.tts_daily_budget_minor:
+                raise BailianSpeechError("tts_daily_budget_exceeded")
+        return period, day
+
     def _reserve(self, chunks, keys, now):
         cfg = self.config
         period = now.astimezone(ZoneInfo("Asia/Singapore")).strftime("%Y-%m")
+        day = now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
         with Session(self.engine) as session:
             session.exec(sql_text("BEGIN IMMEDIATE"))
             ambiguous = session.exec(
@@ -396,6 +432,7 @@ class BailianPremiumGuideTtsProvider:
                         episode_id=self.episode_id,
                         account_scope=cfg.account_scope,
                         budget_period=period,
+                        budget_day=day,
                         created_at=now.isoformat(),
                         reserved_characters=units,
                         cost_minor=(
@@ -407,28 +444,36 @@ class BailianPremiumGuideTtsProvider:
                         pricing_revision=cfg.pricing_revision,
                     )
                 )
+            # Restoring/replaying already-paid receipts cannot create charges.
+            # In particular, expiry or a lowered budget must not block recovery.
+            if not new and all(row.status in {"generated", "succeeded"} for row in existing):
+                return
+            self._require_submission_entitlement(now)
             total_run = sum(r.cost_minor for r in existing if r) + sum(
                 r.cost_minor for r in new
             )
             if total_run > cfg.tts_per_run_budget_minor:
                 raise BailianSpeechError("tts_per_run_budget_exceeded")
-            charged = session.exec(
-                select(BailianTtsCallRecord).where(
-                    BailianTtsCallRecord.account_scope == cfg.account_scope,
-                    or_(
-                        BailianTtsCallRecord.budget_period == period,
-                        BailianTtsCallRecord.status.in_(
-                            ["reserved", "authorized", "generated"]
-                        ),
-                    ),
-                )
-            ).all()
-            if (
-                sum(r.cost_minor for r in charged) + sum(r.cost_minor for r in new)
-                > cfg.tts_monthly_budget_minor
-            ):
-                raise BailianSpeechError("tts_monthly_budget_exceeded")
+            self._check_budget(session, now, additional_minor=sum(r.cost_minor for r in new))
             session.add_all(new)
+            session.commit()
+
+    def _authorize(self, key):
+        """Recheck durable limits after acquiring the writer lock, then fence POST."""
+        with Session(self.engine) as session:
+            session.exec(sql_text("BEGIN IMMEDIATE"))
+            now = self.clock()
+            self._require_submission_entitlement(now)
+            row = session.get(BailianTtsCallRecord, key)
+            if not row or row.status != "reserved":
+                raise BailianSpeechError("tts_receipt_conflict")
+            # _reserve checked the entire run against this immutable config;
+            # subsequent settlement can only lower that conservative run cost.
+            period, day = self._check_budget(session, now)
+            row.budget_period = period
+            row.budget_day = day
+            row.status = "authorized"
+            session.add(row)
             session.commit()
 
     def _row(self, key):
@@ -509,7 +554,7 @@ class BailianPremiumGuideTtsProvider:
                     row = self._row(key)
                     receipt, audio_path = root / f"{key}.json", root / f"{key}.wav"
                     if row.status == "reserved":
-                        self._update(key, "reserved", status="authorized")
+                        self._authorize(key)
                         try:
                             payload = client.synthesize(chunk)
                         except BailianSpeechError as exc:

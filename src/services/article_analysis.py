@@ -26,6 +26,7 @@ import datetime as dt
 import hashlib
 import inspect
 import json
+import math
 import logging
 import re
 import unicodedata
@@ -46,6 +47,8 @@ from llm.article_analysis_prompt import (
     ARTICLE_ANALYSIS_PROMPT_VERSION,
     ARTICLE_ANALYSIS_SCORING_VERSION,
     analysis_contract_versions,
+    analysis_contract_is_reusable,
+    reusable_analysis_prompt_versions,
     analysis_system_prompt,
     build_article_analysis_user_prompt,
     content_value_contract_version,
@@ -682,8 +685,7 @@ def queue_article_analysis(
     same_content = bool(record is not None and record.content_hash == content_hash)
     is_current = bool(
         same_content
-        and record.prompt_version == prompt_version
-        and record.scoring_version == scoring_version
+        and analysis_contract_is_reusable(article.content_type, record.prompt_version, record.scoring_version)
         and _podcast_people_are_current(article, record)
     )
     if not force and is_current and record.status != AnalysisStatus.SKIPPED.value:
@@ -795,14 +797,14 @@ def scan_analysis_backfill(
             and_(
                 ArticleRecord.content_type == "podcast_episode",
                 or_(
-                    ArticleAnalysisRecord.prompt_version != PODCAST_ANALYSIS_PROMPT_VERSION,
+                    ArticleAnalysisRecord.prompt_version.not_in(reusable_analysis_prompt_versions("podcast_episode")),
                     ArticleAnalysisRecord.scoring_version != PODCAST_ANALYSIS_SCORING_VERSION,
                 ),
             ),
             and_(
                 ArticleRecord.content_type != "podcast_episode",
                 or_(
-                    ArticleAnalysisRecord.prompt_version != ARTICLE_ANALYSIS_PROMPT_VERSION,
+                    ArticleAnalysisRecord.prompt_version.not_in(reusable_analysis_prompt_versions("")),
                     ArticleAnalysisRecord.scoring_version != ARTICLE_ANALYSIS_SCORING_VERSION,
                 ),
             ),
@@ -976,14 +978,18 @@ def recover_expired_leases(
     *,
     now: Optional[dt.datetime] = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    article_ids=None,
 ) -> int:
     """Turn abandoned running attempts into timeout rows eligible for retry."""
 
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     now_utc = _as_utc(now)
     expired = list(
         session.exec(
             select(ArticleAnalysisRecord).where(
                 ArticleAnalysisRecord.status == AnalysisStatus.RUNNING.value,
+                ArticleAnalysisRecord.article_id.in_(article_ids) if article_ids is not None else True,
                 ArticleAnalysisRecord.lease_expires_at.is_not(None),
                 ArticleAnalysisRecord.lease_expires_at <= _iso(now_utc),
             )
@@ -1027,9 +1033,12 @@ def claim_analysis_tasks(
     limit: int = DEFAULT_BATCH_SIZE,
     now: Optional[dt.datetime] = None,
     lease_seconds: int = ANALYSIS_LEASE_SECONDS,
+    article_ids=None,
 ) -> list[ClaimedAnalysisTask]:
     """Atomically lease eligible work; newest article wins every claim cycle."""
 
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     worker = (worker_id or "").strip()
     if not worker:
         raise ValueError("worker_id is required")
@@ -1061,7 +1070,8 @@ def claim_analysis_tasks(
         query = (
             select(ArticleAnalysisRecord.article_id, ArticleRecord.fetched_date)
             .join(ArticleRecord, ArticleRecord.id == ArticleAnalysisRecord.article_id)
-            .where(eligible, ArticleRecord.analysis_authority_id == "")
+            .where(eligible, ArticleRecord.analysis_authority_id == "",
+                   ArticleRecord.id.in_(article_ids) if article_ids is not None else True)
         )
         if cursor_initialized:
             query = query.where(
@@ -1390,31 +1400,40 @@ def validate_analysis_payload(
     if not isinstance(raw_features, list):
         raw_features = []
         warnings.append("content_features_not_list")
-    features = tuple(
-        dict.fromkeys(
-            value
-            for value in (_clean_text(item, max_chars=80) for item in raw_features[:12])
-            if value
-        )
-    )
+    if len(raw_features) > 12:
+        warnings.append("content_features_too_many")
+    features = []
+    for item in raw_features[:12]:
+        if not isinstance(item, str):
+            warnings.append("content_feature_not_string")
+        elif not item.strip():
+            warnings.append("content_feature_empty")
+        elif len(item) > 80:
+            warnings.append("content_feature_too_long")
+        else:
+            value = _clean_text(item, max_chars=80)
+            if value not in features:
+                features.append(value)
     raw_entities = payload.get("entities", [])
     if not isinstance(raw_entities, list):
         raw_entities = []
         warnings.append("entities_not_list")
+    if len(raw_entities) > 12:
+        warnings.append("entities_too_many")
     entities: list[dict[str, object]] = []
     for raw in raw_entities[:12]:
         if not isinstance(raw, dict):
             warnings.append("invalid_entity")
             continue
-        name = _clean_text(raw.get("name"), max_chars=120)
-        entity_type = _clean_text(raw.get("type"), max_chars=60)
-        try:
-            relevance = min(1.0, max(0.0, float(raw.get("relevance", 0.0))))
-        except (TypeError, ValueError):
+        name, entity_type, relevance = raw.get("name"), raw.get("type"), raw.get("relevance")
+        if (not isinstance(name, str) or not name.strip() or len(name) > 120
+                or not isinstance(entity_type, str) or not entity_type.strip() or len(entity_type) > 60
+                or type(relevance) not in (int, float) or not math.isfinite(relevance)
+                or not 0 <= relevance <= 1):
             warnings.append("invalid_entity")
             continue
-        if name:
-            entities.append({"name": name, "type": entity_type, "relevance": relevance})
+        entities.append({"name": _clean_text(name, max_chars=120),
+                         "type": _clean_text(entity_type, max_chars=60), "relevance": float(relevance)})
 
     try:
         result = ArticleAnalysisResultDTO(
@@ -1425,7 +1444,7 @@ def validate_analysis_payload(
             primary_tag_code=selected_primary,
             tag_assignments=tuple(assignments),
             tag_candidates=tuple(candidates),
-            content_features=features,
+            content_features=tuple(features),
             entities=tuple(entities),
             **content_fields,
         )
@@ -1866,43 +1885,10 @@ def _candidate_cutoff(day: dt.date, days: int) -> dt.date:
 
 
 def _refresh_candidate_stats(session: Session, candidate: CmsTagCandidateRecord, now: dt.datetime) -> None:
-    evidence = list(
-        session.exec(
-            select(CmsTagCandidateEvidenceRecord).where(
-                CmsTagCandidateEvidenceRecord.candidate_id == candidate.id
-            )
-        ).all()
-    )
-    today = now.date()
-    for days in (7, 30):
-        cutoff = _candidate_cutoff(today, days)
-        scoped = []
-        for item in evidence:
-            parsed = _parse_datetime(item.published_date)
-            if parsed is None:
-                try:
-                    published_day = dt.date.fromisoformat((item.published_date or "")[:10])
-                except ValueError:
-                    published_day = today
-            else:
-                published_day = parsed.date()
-            if published_day >= cutoff:
-                scoped.append((item, published_day))
-        setattr(candidate, f"support_article_count_{days}d", len(scoped))
-        setattr(
-            candidate,
-            f"distinct_source_count_{days}d",
-            len({item.source_owner_or_domain or item.source_id for item, _ in scoped}),
-        )
-        setattr(candidate, f"distinct_day_count_{days}d", len({day for _, day in scoped}))
-    candidate.mean_confidence = (
-        sum(item.confidence for item in evidence) / len(evidence) if evidence else 0.0
-    )
-    candidate.sample_article_ids_json = json.dumps(
-        [item.article_id for item in evidence[-10:]], ensure_ascii=False
-    )
-    candidate.updated_at = _iso(now)
-    session.add(candidate)
+    from services.taxonomy import aggregate_candidate
+    from services.candidate_governance import wake_candidate
+    aggregate_candidate(session, int(candidate.id), now=now, commit=False)
+    wake_candidate(session, int(candidate.id), now=now)
 
 
 def _delete_candidate_evidence(
@@ -1981,14 +1967,25 @@ def _persist_candidates(
     touched: list[CmsTagCandidateRecord] = _delete_candidate_evidence(
         session, article.article_id, now=now
     )
+    from services.taxonomy import normalize_label
     for item in candidates:
-        normalized = _normalize_label(item.label)
+        normalized = normalize_label(item.label)
         candidate = session.exec(
             select(CmsTagCandidateRecord).where(
                 CmsTagCandidateRecord.proposed_kind == str(item.proposed_kind),
                 CmsTagCandidateRecord.normalized_label == normalized,
             )
         ).first()
+        if candidate is None:
+            from services.taxonomy import AmbiguousTagError, resolve_tag
+            try:
+                known = resolve_tag(session, item.label, kind=str(item.proposed_kind))
+            except AmbiguousTagError:
+                known = None
+            if known is not None:
+                # Resolve against the complete directory, not only prompt Top N.
+                # The display snapshot retains the label; identity is not relevance.
+                continue
         if candidate is None:
             candidate = CmsTagCandidateRecord(
                 label=item.label,
@@ -2660,7 +2657,7 @@ def in_version_refresh_window(
     if record is None or record.status != AnalysisStatus.SUCCEEDED.value:
         return False
     prompt_version, scoring_version = analysis_contract_versions(article.content_type)
-    if record.prompt_version == prompt_version and record.scoring_version == scoring_version:
+    if analysis_contract_is_reusable(article.content_type, record.prompt_version, record.scoring_version):
         return False
     now_utc = _as_utc(now)
     since_time = now_utc - dt.timedelta(days=max(1, lookback_days))
@@ -2745,6 +2742,9 @@ def _prepare_analysis_cycle(
     scan_limit: int,
     backfill_owner: str,
     now: dt.datetime,
+    article_ids=None,
+    backfill_job_ids=None,
+    scan_live=True,
 ) -> tuple[bool, int | None] | None:
     """Recover/scan in a worker; return scalars, never live ORM records."""
 
@@ -2764,8 +2764,9 @@ def _prepare_analysis_cycle(
             if candidate_enabled is None
             else candidate_enabled
         )
-        recover_expired_leases(session, now=now)
-        scan_analysis_backfill(session, enabled=True, now=now, limit=scan_limit)
+        recover_expired_leases(session, now=now, article_ids=article_ids)
+        if scan_live:
+            scan_analysis_backfill(session, enabled=True, now=now, limit=scan_limit)
         # Local import avoids a module cycle: the backfill coordinator reuses
         # queue_article_analysis rather than owning a second execution queue.
         from services import analysis_backfill as backfill_service
@@ -2774,6 +2775,7 @@ def _prepare_analysis_cycle(
             session,
             lease_owner=backfill_owner,
             now=now,
+            job_ids=backfill_job_ids,
         )
         if backfill_job is not None:
             backfill_job = backfill_service.reconcile_full_analysis_backfill(
@@ -2794,6 +2796,7 @@ def _claim_analysis_batch(
     backfill_job_id: int | None,
     backfill_owner: str,
     batch_now: dt.datetime,
+    article_ids=None,
 ) -> list[ClaimedAnalysisTask]:
     from services import analysis_backfill as backfill_service
 
@@ -2820,6 +2823,7 @@ def _claim_analysis_batch(
             worker_id=worker_id,
             limit=concurrency,
             now=batch_now,
+            article_ids=article_ids,
         )
         remaining = max(0, concurrency - len(tasks))
         if (
@@ -2833,6 +2837,7 @@ def _claim_analysis_batch(
                 lease_owner=backfill_owner,
                 limit=remaining,
                 now=batch_now,
+                article_ids=article_ids,
             )
             if dispatched:
                 tasks.extend(
@@ -2841,6 +2846,7 @@ def _claim_analysis_batch(
                         worker_id=worker_id,
                         limit=remaining,
                         now=batch_now,
+                        article_ids=article_ids,
                     )
                 )
     return tasks
@@ -2880,6 +2886,9 @@ async def run_analysis_cycle(
     now_fn: Callable[[], dt.datetime] = _utc_now,
     image_notes_provider: ImageNotesProvider = default_image_notes_provider,
     assign_events: bool | None = None,
+    article_ids=None,
+    backfill_job_ids=None,
+    scan_live: bool = True,
 ) -> list[ProcessResult]:
     """Scheduler integration point for the all-in-one V1 runtime.
 
@@ -2897,11 +2906,19 @@ async def run_analysis_cycle(
     ``True`` / ``False`` 覆盖该判定。
     """
 
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
+    backfill_job_ids = scoped_ids(backfill_job_ids, integer=True)
+    if type(scan_live) is not bool or (article_ids is not None and scan_live):
+        raise ValueError('scoped analysis requires scan_live=False')
+    if article_ids is not None and backfill_job_ids is None:
+        raise ValueError('scoped analysis requires explicit backfill job IDs')
     backfill_owner = f"{worker_id}:full-analysis"
     prepared = await asyncio.to_thread(
         _prepare_analysis_cycle, engine, enabled=enabled,
         candidate_enabled=candidate_enabled, max_batches=max_batches,
         scan_limit=scan_limit, backfill_owner=backfill_owner, now=_as_utc(now_fn()),
+        article_ids=article_ids, backfill_job_ids=backfill_job_ids, scan_live=scan_live,
     )
     if prepared is None:
         return []
@@ -2932,7 +2949,7 @@ async def run_analysis_cycle(
         batch_now = _as_utc(now_fn())
         tasks = await asyncio.to_thread(
             _claim_analysis_batch, engine, worker_id=worker_id,
-            concurrency=concurrency, backfill_job_id=backfill_job_id,
+            concurrency=concurrency, backfill_job_id=backfill_job_id, article_ids=article_ids,
             backfill_owner=backfill_owner, batch_now=batch_now,
         )
 
@@ -2972,7 +2989,7 @@ async def run_analysis_cycle(
         try:
             from services import event_assignment  # 延迟导入:event_assignment → daily_brief → 本模块
 
-            await asyncio.to_thread(event_assignment.assign_pending, engine, llm_config)
+            await asyncio.to_thread(event_assignment.assign_pending, engine, llm_config, article_ids=article_ids)
         except Exception as exc:  # noqa: BLE001 - 事件分配永不影响分析周期
             logger.warning("事件分配失败(不影响本轮分析结果):%s", exc)
     return results

@@ -10,6 +10,7 @@
 | [`import_podcast_catalog.py`](./import_podcast_catalog.py) | 预览或幂等导入精选播客目录；默认 dry-run，`--apply` 写入公共采集节点。 | 可选写当前或显式数据库；Feed 健康状态只用于审查。 |
 | [`export_shendeng_daily_news.py`](./export_shendeng_daily_news.py) | 导出公共日报的结构化条目和可选 Markdown，不调用 LLM；兼容 adapter off/on 的持久化条目。 | API 只读，文件写到指定输出路径。 |
 | [`compare_web_backends.py`](./compare_web_backends.py) | 比较 legacy 与 crawl4ai 网页正文提取结果。 | 只访问目标网页并写对比产物，不写业务库。 |
+| [`issue298_observation.py`](./issue298_observation.py) | #298 独立 72h 观察的准备、监督、状态、停机与报告。 | 只写显式新建的实验目录与数据库；prepare 默认关闭付费和采集，run 需就绪证据及固定截止时间，不修改生产或历史账本。 |
 | [`migrate_media_oss.py`](./migrate_media_oss.py) | 图片/音频 OSS 迁移、校验、恢复、停机缓存回收与孤立对象盘点，见 [说明](../docs/ops/oss-storage.md)。 | 默认只读 dry-run；真实操作须停机并传 `--apply --offline`，远端删除另需备份保留期核验与维护权限。 |
 | [`storage_backup.py`](./storage_backup.py) | 创建、查看、校验、下载备份并离线恢复，见 [说明](../docs/ops/storage-backups.md)。 | 默认关闭；`create` 显式启用后写私有快照并可上传独立 OSS 前缀；不调用付费生成接口。恢复需已知 SHA-256、`--offline` 与空目录，不覆盖原生产路径。 |
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import datetime as dt
 import re
 from urllib.parse import urlsplit, urlunsplit
 
@@ -80,10 +81,11 @@ async def download_result(url, config, *, max_bytes):
 
 
 class BailianSpeechClient:
-    def __init__(self, config: BailianSpeechConfig, *, transport=None):
+    def __init__(self, config: BailianSpeechConfig, *, transport=None, clock=None):
         if not config.asr_poll_configured:
             raise BailianSpeechError("credentials_missing")
         self.config = config
+        self.clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
         self.http = httpx.Client(
             timeout=config.request_timeout_seconds,
             transport=transport,
@@ -93,6 +95,17 @@ class BailianSpeechClient:
 
     def close(self):
         self.http.close()
+
+    def _check_submission_deadline(self, value, *, required=False):
+        if not value and not required:
+            return
+        try:
+            ends = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            now = self.clock()
+            if ends.utcoffset() is None or now.utcoffset() is None or now >= ends:
+                raise ValueError()
+        except (TypeError, ValueError, AttributeError):
+            raise BailianSpeechError("spending_authorization_expired") from None
 
     def request(self, method, path, *, body=None, asynchronous=False):
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
@@ -138,6 +151,7 @@ class BailianSpeechClient:
         return payload
 
     def submit_asr(self, file_url):
+        self._check_submission_deadline(self.config.asr_entitlement_ends_at, required=True)
         return self.request(
             "POST",
             "/services/audio/asr/transcription",
@@ -155,6 +169,7 @@ class BailianSpeechClient:
     def synthesize(self, text):
         if not text.strip() or len(text) > 600:
             raise BailianSpeechError("invalid_text_length")
+        self._check_submission_deadline(self.config.tts_entitlement_ends_at)
         return self.request(
             "POST",
             "/services/aigc/multimodal-generation/generation",

@@ -1,3 +1,5 @@
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
+import { blockedInterestQuery, canFilterCustomInterests } from '../../utils/readerInterestQuery';
 import { Fragment, useMemo, useState } from 'react';
 import { CheckCheck, Circle, CircleDot, CloudOff, Inbox, Loader2, Star, Tags } from 'lucide-react';
 import LayerPage from '../layer/LayerPage';
@@ -40,27 +42,37 @@ export default function MobileSubsFlow({
   playingState = '',
   playingAi = false,
   subscribeSourceById,
+  onOpenInterest = null,
 }) {
   const {
     isGuest, shapeOfSource, sourceMap, sourceNameMap, subscribedIds, subscribedSources, favoriteIds, favTogglingId,
     handleToggleFavorite, handleSubscribe, pinningId, isArticleUnread, selectArticle, schedulePrefetch, cancelPrefetch,
     socialReadToggling, handleToggleSocialRead, markingRead, markListAllRead, platformCount,
-    socialTranslations, toggleSocialTranslation, listRegistry,
+    socialTranslations, toggleSocialTranslation, listRegistry, interestCapabilities, interestRevision, sessionKey, customInterests,
   } = rs;
   const kind = spec.kind;
   const views = pushViewItems(kind);
-  const [view, setView] = useState(views ? views[0][0] : 'article');
+  const [unionContract, setUnionContract] = useState(Boolean(spec.union));
+  if (kind === 'interest' && canFilterCustomInterests(interestCapabilities) && !unionContract) setUnionContract(true);
+  const [view, setView] = useState(spec.initialMode || (views ? views[0][0] : 'article'));
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput, 300);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const mode = pushMode(spec, view, shapeOfSource);
-  const query = useMemo(() => pushListQuery(spec, { mode, unreadOnly }), [spec, mode, unreadOnly]);
+  const customInterestUnavailable = kind === 'custom' && !customInterests.some((item) => String(item.id) === spec.id && item.status === 'active');
+  const query = useMemo(() => pushListQuery({ ...spec, union: unionContract }, { mode, unreadOnly, searchQuery, interestCapabilities, interestRevision, sessionKey, customInterestUnavailable }),
+    [spec, unionContract, mode, unreadOnly, searchQuery, interestCapabilities, interestRevision, sessionKey, customInterestUnavailable]);
   const source = kind === 'source' ? (sourceMap[spec.id] || null) : null;
-  const hidden = Boolean(source?.hidden);
-  const list = useArticleList(query, { registry: listRegistry, hidden, showToast });
-  const { articles, articlesLoading, loadingMore, hasMore, handleLoadMore, listRef, sentinelRef } = list;
+  const hidden = Boolean(source?.hidden) || blockedInterestQuery(query);
+  const list = useArticleList(query, { registry: listRegistry, hidden, showToast,
+    onWindowReplaced: () => { if (rs.activeArticle?.id) rs.refreshActiveArticle(rs.activeArticle.id); },
+  });
+  const { articles, articlesLoading, loadingMore, hasMore, handleLoadMore, listRef, sentinelRef, pageFailed, loadArticles } = list;
+  const retry = () => blockedInterestQuery(query) ? rs.refreshInterests() : loadArticles(0, false);
   const listPlan = useMemo(() => buildListPlan(articles, true), [articles]);
-  const plan = pushMarkReadPlan(spec, mode);
-  const interestish = kind === 'interest' || kind === 'tag';
+  const plan = pushMarkReadPlan({ ...spec, union: unionContract }, mode, interestCapabilities);
+  const interestish = kind === 'interest' || kind === 'tag' || kind === 'custom';
   const social = mode === 'social';
   const podcast = mode === 'podcast';
 
@@ -90,6 +102,9 @@ export default function MobileSubsFlow({
   } else if (kind === 'interest') {
     title = '全部兴趣内容';
     sub = spec.count ? `全站 · ${spec.count} 个兴趣` : '全站';
+  } else if (kind === 'custom') {
+    title = spec.name || '自定义兴趣';
+    sub = hidden ? '暂不可用' : '自定义兴趣';
   } else if (kind === 'tag') {
     title = spec.name || '兴趣';
     sub = `兴趣 · ${FACET_LABEL[spec.facet] || '标签'}`;
@@ -129,11 +144,13 @@ export default function MobileSubsFlow({
   ) : null;
 
   let emptyText;
-  if (hidden) emptyText = kind === 'source' && social ? '该账号暂时不可用' : '该来源暂时不可用';
+  if (blockedInterestQuery(query) || pageFailed) emptyText = '兴趣暂不可用';
+  else if (hidden) emptyText = kind === 'source' && social ? '该账号暂时不可用' : '该来源暂时不可用';
   else if (unreadOnly) emptyText = social ? '没有未读动态，都看完啦' : '没有未读内容，都看完啦';
   else if (kind === 'source') emptyText = social ? '暂无动态' : '该来源暂无内容';
   else if (kind === 'fav') emptyText = '当前范围还没有收藏，阅读时点星标即可收藏';
-  else if (kind === 'tag') emptyText = '还没有命中这个兴趣的内容';
+  else if (searchQuery) emptyText = '没有找到相关内容';
+  else if (kind === 'tag' || kind === 'custom') emptyText = '还没有命中这个兴趣的内容';
   else if (kind === 'interest') emptyText = '还没有命中兴趣的内容';
   else emptyText = social ? '暂无动态' : podcast ? '暂无播客' : '暂无文章';
   const EmptyIcon = hidden ? CloudOff : kind === 'fav' ? Star : interestish ? Tags : Inbox;
@@ -214,7 +231,10 @@ export default function MobileSubsFlow({
       ) : (
         <div key="list" className="m-flow-scroll" ref={listRef}>
           {hero}
+          {interestish && <div className="reader-interest-search"><input type="search" className="form-input" value={searchInput}
+            aria-label="在这个兴趣中搜索" placeholder="搜索" onChange={(event) => setSearchInput(event.target.value)} /></div>}
           {banner}
+          {pageFailed && articles.length > 0 && <button type="button" className="reader-fresh-pill reader-interest-retry" onClick={retry}>重新加载</button>}
           <div key={mode} className="m-flow-body">
             {articlesLoading ? (
               <ArticleCardsSkeleton card={podcast ? 'podcast' : 'article'} />
@@ -222,6 +242,7 @@ export default function MobileSubsFlow({
               <div className="reader-empty">
                 <EmptyIcon className="h-6 w-6 text-slate-300" />
                 <span>{emptyText}</span>
+                {(blockedInterestQuery(query) || pageFailed) && <button type="button" className="action-button action-button-quiet reader-interest-retry" onClick={retry}>重新加载</button>}
               </div>
             ) : (
               <>
@@ -233,6 +254,7 @@ export default function MobileSubsFlow({
                       {entry.showLabel && <div className="m-day">{dayLabelOf(entry.dayKey)}</div>}
                       <div className="m-press" {...pressBind(article)}>
                         <ArticleRow
+                          interestCapabilities={interestCapabilities} onOpenInterest={onOpenInterest} guest={isGuest}
                           article={article}
                           active={false}
                           isUnread={isArticleUnread(article)}
@@ -240,7 +262,7 @@ export default function MobileSubsFlow({
                           entryPodcast={podcast}
                           showLabel={false}
                           dayKey={entry.dayKey}
-                          searchQuery=""
+                          searchQuery={searchQuery}
                           source={sourceMap[article.source_id]}
                           sourceName={sourceNameMap[article.source_id] || article.source_id}
                           onSelect={selectArticle}

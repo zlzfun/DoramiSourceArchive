@@ -14,13 +14,14 @@ import FullAnalysisBackfillCard from './FullAnalysisBackfillCard';
 import { Kpi, KpiState } from './Kpi';
 import StaleNotice from './StaleNotice';
 import TaxonomyLedger from './TaxonomyLedger';
+import TaxonomyReviewPanel from './TaxonomyReviewPanel';
 import { formatStamp } from './adminUtils';
 import { opsBlockId } from '../../utils/opsNav';
 
 const FLAG_META = {
   article_analysis_enabled: ['文章分析', '关闭只停止创建与消费分析任务，不删已有结果'],
   taxonomy_candidate_enabled: ['候选证据', '关闭后不再记录公共内容里的未知概念'],
-  taxonomy_auto_activation_enabled: ['候选自动激活', '开启前需目录 v1 已发布并结束引导期；开启时确认'],
+  taxonomy_auto_activation_enabled: ['精确归并', '仅归并已有正式名称或唯一别名；新概念进入审核'],
   personal_digest_enabled: ['个人早报', '关闭只停止早报 API 与调度，不删已有版本'],
 };
 const pct = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
@@ -108,7 +109,7 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
   const flags = config.data?.feature_flags;
   const toggleFlag = async (key, enabled) => {
     if (key === 'taxonomy_auto_activation_enabled' && enabled
-      && !(await confirm({ title: '开启候选自动激活', message: '开启前请确认目录 v1 已审核并结束引导期；满足组合阈值的低风险候选会自动成为规范标签。', confirmText: '开启', tone: 'primary' }))) return;
+      && !(await confirm({ title: '开启精确归并', message: '已有正式名称或唯一别名的精确匹配将自动归并。近义关系与新概念仍需审核。', confirmText: '开启精确归并', tone: 'primary' }))) return;
     setFlagBusy(key);
     try {
       const data = await updateAnalysisConfig({ [key]: enabled });
@@ -171,7 +172,8 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
         {flags ? (
           <section className="surface-card ai-switchboard is-wrap rounded-[var(--r-card)]" aria-label="分析发布开关">
             {Object.entries(FLAG_META).map(([key, [label, hint]], index) => {
-              const enabled = Boolean(flags[key]);
+              const unavailable = key === 'taxonomy_auto_activation_enabled' && !taxonomyState.data?.exact_merge_available;
+              const enabled = Boolean(flags[key]) && !unavailable;
               return (
                 <span key={key} className="sw-group">
                   {index > 0 && <span className="ai-divider" />}
@@ -183,8 +185,8 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
                       role="switch"
                       aria-checked={enabled}
                       aria-label={label}
-                      title={hint}
-                      disabled={flagBusy === key}
+                      title={unavailable ? '精确归并未在服务端启用' : hint}
+                      disabled={flagBusy === key || unavailable}
                       onClick={() => toggleFlag(key, !enabled)}
                       className={`ledger-switch ${enabled ? 'is-on' : ''}`}
                     />
@@ -267,13 +269,14 @@ export default function AdminTaxonomyPanel({ showToast, days = 7, refreshTick = 
                 tone={Number(gov.unresolved_candidate_count) > 0 ? 'is-warn' : undefined}
                 sub={`候选记录 ${Number(gov.candidate_count ?? 0).toLocaleString()}`}
               />
-              <Kpi num={Number(taxonomyMetrics?.alias_count ?? 0).toLocaleString()} label="别名" sub={`自动激活 ${Number(taxonomyMetrics?.active_automatic_count ?? 0).toLocaleString()}`} />
+              <Kpi num={Number(taxonomyMetrics?.alias_count ?? 0).toLocaleString()} label="别名" sub={`历史自动激活 ${Number(taxonomyMetrics?.active_automatic_count ?? 0).toLocaleString()}`} />
             </>
           ) : (
             <KpiState label="目录版本" error={taxonomyState.status === 'error' ? taxonomyState.error : taxonomyState.status === 'unavailable' ? '当前后端版本没有目录状态端点' : ''} onRetry={loadTaxonomyState} />
           )}
         </section>
 
+        <TaxonomyReviewPanel showToast={showToast} refreshTick={ledgerTick} />
         <TaxonomyLedger
           showToast={showToast}
           refreshTick={ledgerTick}

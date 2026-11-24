@@ -921,6 +921,8 @@ def mark_scope_read(
     request: Request,
     shape: Optional[str] = None,
     interest_tag_id: Optional[int] = None,
+    custom_interest_id: Optional[int] = None,
+    interest_kinds: Optional[str] = None,
     session: Session = Depends(deps.get_session),
 ):
     """兴趣轴的「全部标读」(issue #27 五稿返修):把当前范围内**未读**的兴趣命中逐篇标已读。
@@ -932,6 +934,10 @@ def mark_scope_read(
     响应回报 ``marked`` 与更新后的订阅源未读统计(与 ``/mark-all-read`` 同形)。
     可见范围与 ``GET /api/articles`` 同尺:读者会话排除隐藏源与非我订阅的私有自定源,admin 会话不受限。
     """
+    kinds = reader_interests_service.parse_interest_query(scope='only', kinds=interest_kinds,
+        tag_id=interest_tag_id, custom_id=custom_interest_id)
+    if 'custom' in kinds or custom_interest_id is not None:
+        raise HTTPException(status_code=400, detail='自定义兴趣范围暂不支持批量标读')
     shape_value = _mark_read_shape(shape)
     app = _app()
     username = app.current_username(request)

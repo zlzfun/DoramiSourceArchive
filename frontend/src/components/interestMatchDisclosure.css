@@ -1,0 +1,42 @@
+.interest-match-trigger {
+  position: relative;
+  z-index: 1;
+  min-width: var(--tap, 44px);
+  min-height: var(--tap, 44px);
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--dorami-accent-ink);
+  font: inherit;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .interest-match-trigger:hover { background: var(--dorami-hover); }
+}
+.interest-match-modal { color: var(--dorami-ink); }
+.interest-match-modal > .interest-match-heading { padding: 16px; flex-shrink: 0; }
+.interest-match-modal .interest-match-body { min-height: 0; overflow-y: auto; padding: 0 16px; }
+.bp-item-meta .bp-why.is-interest, .bp-meta .bp-why.is-interest { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.interest-match-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.interest-match-heading h2, .interest-match-heading h3 { margin: 0; overflow-wrap: anywhere; }
+.interest-match-heading .icon-button { margin-left: auto; min-width: var(--tap, 44px); min-height: var(--tap, 44px); }
+.interest-match-body { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; color: var(--dorami-ink-2); }
+.interest-match-body p { margin: 8px 0; }
+.interest-match-list { margin: 0; padding: 0; list-style: none; }
+.interest-match-list > li { padding: 16px 0; border-top: 1px solid var(--dorami-border); }
+.interest-match-list blockquote { margin: 12px 0; padding: 0 12px; border-left: 2px solid var(--dorami-border-strong); white-space: pre-wrap; }
+.interest-match-drilldown { min-height: var(--tap, 44px); margin-top: 4px; }
+.m-sheet.interest-match-sheet { display: flex; flex-direction: column; max-height: calc(var(--vh-full) - var(--sat) - var(--m-float)); }
+.interest-match-sheet .m-sheet-head { flex-shrink: 0; }
+.interest-match-sheet .interest-match-body { min-height: 0; overflow-y: auto; padding: 0 16px max(16px, var(--sab)); }
+.interest-match-sheet .m-sheet-head .section-title { margin: 0 16px 12px; }
+
+.reader-current-interests { padding-inline: .75rem; padding-block: .25rem; }
+.reader-interest-search { padding: .75rem; }
+.reader-interest-search .form-input { width: 100%; min-height: var(--tap); font-size: var(--m-fs-lg); }
+
+.reader-interest-retry { min-height: var(--tap, 44px); }

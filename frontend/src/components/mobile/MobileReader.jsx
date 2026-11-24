@@ -1,3 +1,4 @@
+import { canFilterCustomInterests } from '../../utils/readerInterestQuery';
 import PodcastGuideFilter from '../PodcastGuideFilter';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -131,7 +132,7 @@ export default function MobileReader({
     socialView, podcastView,
     goView, goContainerAll, alignModeToArticle,
     kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
-    scope, activeTagId, refreshInterests,
+    scope, activeTagId, activeCustomInterestId, interestCapabilities, refreshInterests,
     grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
@@ -157,7 +158,7 @@ export default function MobileReader({
   // 按 id 打开一篇(早报卡 / 榜单 / 播放条 / 深链)会把主列表临时收窄到那篇的来源(useReaderState.openArticleById);
   // 手机内容 Tab 没有来源筛选(收窄都在订阅 Tab 的推入页,issue #230 批 3a),离开正文时把这层收窄撤掉,
   // 回到那个容器的订阅聚合——否则内容 Tab 会悄悄只剩一个来源、又没有任何地方写着
-  const residualNarrowing = Boolean(activeSourceId || activeTagId);
+  const residualNarrowing = Boolean(activeSourceId || activeTagId || activeCustomInterestId);
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
     if (briefReturn?.from === 'rankings') {
@@ -252,7 +253,15 @@ export default function MobileReader({
   };
   // 兴趣段「我的兴趣」:每行读它的条目流,「全部兴趣内容」读全站兴趣命中(InterestPage 的手机嵌入档传上来)
   const readInterestTag = (tag) => openFlow({ kind: 'tag', id: tag.id, name: tag.name_zh, facet: tag.kind });
-  const readInterestAll = (count) => openFlow({ kind: 'interest', count });
+  const readInterestAll = (count) => openFlow({ kind: 'interest', count, union: canFilterCustomInterests(interestCapabilities) });
+  const openMatchedInterest = (ref, article = null) => {
+    const target = rs.resolveInterestNavigation(ref);
+    if (!target) return;
+    const initialMode = article?.source_id ? shapeOfSource(article.source_id) : 'article';
+    setBriefReturn(null); selectArticle(null); closeDiscover(); setTab('subs');
+    if (residualNarrowing) goContainerAll();
+    openFlow({ ...target, initialMode });
+  };
   const tabRef = useRef(mTab);
   useEffect(() => { tabRef.current = mTab; }, [mTab]);
   const onSubsInterestSaved = ({ onboardingCompleted, briefRebuildStatus } = {}) => {
@@ -417,7 +426,7 @@ export default function MobileReader({
   // ── 内容 Tab 的列表位置(批 3a):切去早报 / 订阅 / 榜单时列表不渲染,回来按同一份查询落回原处——推入页与内容 Tab 各记各的。
   //    离开时记下页头下沿第一条的序号与离滚动区顶的距离;回来先落 scrollTop,再按那一条对齐。刚挂载的几帧里版面还有几像素的微动,
   //    浏览器的滚动锚定会跟着把位置挪开约 10px:对齐窗口内先关掉锚定,版面落定后再对齐一次、还原;要在下面的镀层重算之前 ──
-  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, scope, searchQuery, unreadOnly, kindFilter, podcastGuideFilter]);
+  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, activeCustomInterestId, rs.interestRevision, rs.sessionKey, scope, searchQuery, unreadOnly, kindFilter, podcastGuideFilter]);
   const contentScrollRef = useRef(null);
   const contentScroller = () => shellRef.current?.querySelector('.m-content :is(.m-list, .reader-social-scroll)') || null;
   const saveContentPlace = () => {
@@ -567,6 +576,8 @@ export default function MobileReader({
       >
         {mTab === 'brief' ? (
           <PersonalBriefPage
+            interestCapabilities={interestCapabilities}
+            onOpenInterest={openMatchedInterest}
             mobile
             mobileLead={avatar}
             sourceMap={sourceMap}
@@ -645,6 +656,9 @@ export default function MobileReader({
               onDiscover={discoverFromSubs}
               interestPanel={personalDigestEnabled && !rs.isGuest ? (
                 <InterestPage
+                  interestCapabilities={interestCapabilities}
+                  onReadCustom={openMatchedInterest}
+                  guest={rs.isGuest}
                   mobile
                   embedded
                   onboarding={onboardingRequired}
@@ -763,7 +777,7 @@ export default function MobileReader({
                 )}
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`}>
+              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${activeCustomInterestId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`}>
                 {listPlan.map((entry) => {
                   const { article } = entry;
                   // 夜航卡(批 4c,样页 c-card / c-day):日期组头在长按包装之外、不吸顶;卡与卡间距由 .m-press 给
@@ -772,6 +786,7 @@ export default function MobileReader({
                       {entry.showLabel && <div className="m-day">{dayLabelOf(entry.dayKey)}</div>}
                       <div className="m-press" {...pressBind(article)}>
                         <ArticleRow
+                          interestCapabilities={interestCapabilities} onOpenInterest={openMatchedInterest} guest={rs.isGuest}
                           article={article}
                           active={false}
                           isUnread={isArticleUnread(article)}
@@ -865,6 +880,9 @@ export default function MobileReader({
               onShapeChange={setDiscoverShape}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
+                  interestCapabilities={interestCapabilities}
+                  onReadCustom={openMatchedInterest}
+                  guest={rs.isGuest}
                   mobile
                   embedded
                   onboarding={onboardingRequired}
@@ -892,6 +910,7 @@ export default function MobileReader({
       {/* ── 订阅 Tab 的推入页(批 3a):来源 / 全部 / 收藏 / 兴趣各一条流,独立的列表实例;盖住底栏,正文页叠在它之上 ── */}
       {flow && (
         <MobileSubsFlow
+          onOpenInterest={openMatchedInterest}
           key={pushSpecKey(flow)}
           spec={flow}
           rs={rs}
@@ -911,6 +930,7 @@ export default function MobileReader({
       {/* ── 正文页(push 全屏,无 TabBar) ── */}
       {readOpen && (
         <MobileArticlePage
+          onOpenInterest={openMatchedInterest}
           rs={readRs}
           guestAccessEnabled={guestAccessEnabled}
           aiEnabled={aiEnabled}

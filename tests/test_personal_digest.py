@@ -492,7 +492,7 @@ def test_no_qualified_content_is_honest_degraded_latest_five(storage):
         assert all(json.loads(item.snapshot_json)["is_latest_update"] for item in result.items)
 
 
-def test_interest_only_pool_reports_unfillable_ratio_and_keeps_fallback_lanes_honest(storage):
+def test_all_subscribed_articles_can_match_without_consuming_interest_promotions(storage):
     with Session(storage.engine) as session:
         tag = _tag("agents")
         session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
@@ -520,12 +520,15 @@ def test_interest_only_pool_reports_unfillable_ratio_and_keeps_fallback_lanes_ho
 
         result = generate_personal_digest(session, "alice", now=NOW)
 
-        assert result.status == "degraded"
-        assert result.edition.degraded_reason == "insufficient_non_interest_content"
-        assert len(result.items) == 5
-        assert {item.selection_lane for item in result.items} == {"interest"}
+        assert result.status == "ready"
+        assert result.edition.degraded_reason is None
+        assert len(result.items) == 9
+        assert {item.selection_lane for item in result.items} == {"quality"}
         assert all(json.loads(item.matched_interest_codes_json) == ["agents"] for item in result.items)
-        assert all("不计入正式精选" in item.selection_reason for item in result.items)
+        stats = json.loads(result.edition.selection_stats_json)
+        assert stats['interest_hits'] == 9
+        assert stats['interest_promoted_count'] == 0
+        assert stats['interest_max_ratio'] == 0.3
 
 
 def test_degraded_area_does_not_wait_for_tagging(storage):
@@ -820,6 +823,8 @@ def test_pending_edition_freezes_interests_before_later_preference_changes(stora
         tag = session.exec(select(CmsTagRecord)).one()
         interested = _seed_article(session, 1, score=9.0)
         quality = _seed_article(session, 2, score=8.5)
+        _seed_article(session, 3, score=8.0)
+        _seed_article(session, 4, score=7.5)
         session.flush()
         interest = UserInterestTagRecord(
             owner_username="alice",
@@ -860,12 +865,13 @@ def test_pending_edition_freezes_interests_before_later_preference_changes(stora
             "alice",
             now=NOW + dt.timedelta(minutes=1),
             pending_edition_id=pending.edition.id,
-            policy=DigestSelectionPolicy(target_items=2),
+            policy=DigestSelectionPolicy(target_items=4),
         )
 
         assert result.status == "ready"
         by_id = {item.article_id: item for item in result.items}
-        assert by_id[interested.id].selection_lane == "interest"
+        assert by_id[interested.id].selection_lane == "quality"
+        assert json.loads(by_id[interested.id].matched_interest_codes_json) == ["agents"]
         assert by_id[quality.id].selection_lane == "quality"
 
 
@@ -1427,18 +1433,20 @@ def test_interest_only_edition_with_nothing_qualifying_is_honest_and_empty(stora
 
 
 def test_subscribed_relevance_threshold_matches_the_reader_lens(storage):
-    """订阅内的兴趣命中也只认主标签或相关度 ≥ 0.8 的指派(与阅读器透镜同一尺)。"""
+    """订阅内也要求相关度 ≥ 0.8；primary 不能把弱标签提升为兴趣。"""
     with Session(storage.engine) as session:
         tag = _tag("agents")
         session.add_all([_user(), _subscribe("alice", "rss_a"), tag])
         session.flush()
         weak = _seed_article(session, 1, source="rss_a", score=9.5)
         primary = _seed_article(session, 2, source="rss_a", score=6.0)
+        strong = _seed_article(session, 9, source="rss_a", score=6.0)
         for number in range(3, 9):
             _seed_article(session, number, source="rss_a", score=7.0)
         session.flush()
         _assign_topic(session, weak, tag, relevance=0.4)
         _assign_topic(session, primary, tag, relevance=0.3, primary=True)
+        _assign_topic(session, strong, tag, relevance=0.8, primary=False)
         _follow(session, "alice", tag)
         session.commit()
 
@@ -1446,7 +1454,10 @@ def test_subscribed_relevance_threshold_matches_the_reader_lens(storage):
 
         lanes = {item.article_id: item.selection_lane for item in result.items}
         assert lanes["article-01"] == "quality"   # 弱指派:仍入选,但不算命中
-        assert lanes["article-02"] == "interest"  # 主标签:命中
+        assert lanes["article-02"] == "quality"  # 弱 primary:可凭内容入选，但不算兴趣命中
+        assert lanes["article-09"] == "quality"  # 凭新闻价值入选，仍保留真实兴趣匹配
+        strong_item = next(item for item in result.items if item.article_id == "article-09")
+        assert json.loads(strong_item.matched_interest_codes_json) == ["agents"]
 
 
 def test_external_knobs_are_read_from_kv(storage):

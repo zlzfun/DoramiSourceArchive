@@ -48,6 +48,7 @@ from models.analysis_contracts import (
     SelectionLane,
     TagStatus,
     UserInterestDTO,
+    InterestRef,
 )
 from models.db import (
     AppSettingRecord,
@@ -66,6 +67,7 @@ from models.db import (
     UserInterestTagRecord,
 )
 from services import source_catalog, source_visibility
+from services import custom_interests as custom_interest_service
 from services.article_display_tags import load_display_tags
 from services.article_time import in_time_window
 from services.content_recommendations import recommendation_value
@@ -87,6 +89,7 @@ from services.digest_selection import (
     eligible_for_selection,
     event_key,
     interest_codes_of,
+    interest_keys_of,
     interest_only_policy,
     section_for_genre,
     section_rank,
@@ -95,14 +98,14 @@ from services.digest_selection import (
     select_value_lane,
     value_lane_accepts,
 )
-from services.reader_interests import INTEREST_MATCH_MIN_RELEVANCE
+from services.interest_relevance import public_interest_qualifies, public_interest_predicate
 from services.source_naming import friendly_source_name, source_role
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 # v2(issue #103):同事件去重消费事件层归属——事件键跨三条通道共享、昨天版面出现过的事件整组抑制、
 # 条目快照带「另见」成员;历史版本的 v1 快照无 event_id / related_sources 键。
-POLICY_VERSION = "personal-digest-v2"
+POLICY_VERSION = "personal-digest-v3"
 # 「另见 N 篇」每条最多记的同事件成员数(快照体量上限;事件层成员本就以可见成员为准)
 RELATED_SOURCES_LIMIT = 10
 # 跨期事件抑制看最近几期(按日期取每天最新完成版):事件按首篇 48h 关窗,只看昨天会出现
@@ -516,18 +519,18 @@ def _load_interests(session: Session, username: str) -> list[UserInterestDTO]:
         )
     ).all()
     # v3.56(issue #27):兴趣只剩「关注」一极;stance 列保留为旧库兼容字段(CHECK 收窄为 follow)。
-    return [UserInterestDTO(tag_code=tag.code) for interest, tag in rows]
+    return [UserInterestDTO(tag_code=tag.code) for interest, tag in rows] + [
+        UserInterestDTO(custom_interest_id=row.id, revision=row.revision, name=row.name,
+                        condition=json.loads(row.condition_json))
+        for row in custom_interest_service.list_conditions(session, username, active_only=True)
+    ]
 
 
 def _serialize_interests(interests: Sequence[UserInterestDTO]) -> str:
-    return _json([
-        {
-            "tag_code": item.tag_code,
-            "stance": str(getattr(item.stance, "value", item.stance)),
-            "priority": str(getattr(item.priority, "value", item.priority)),
-        }
-        for item in interests
-    ])
+    return _json([item.model_dump(mode="json") if item.custom_interest_id is not None else {
+        "tag_code": item.tag_code, "stance": str(getattr(item.stance, "value", item.stance)),
+        "priority": str(getattr(item.priority, "value", item.priority)),
+    } for item in interests])
 
 
 def _deserialize_interests(raw: str) -> list[UserInterestDTO]:
@@ -593,6 +596,12 @@ def claim_personal_digest_generation(
 
 
 def _interest_version(session: Session, username: str) -> int:
+    # New monotonic state uses a distinct negative namespace; legacy CRC snapshots
+    # remain nonnegative and can never accidentally compare equal to a revision.
+    from models.custom_interests import UserInterestStateRecord
+    state = session.get(UserInterestStateRecord, username)
+    if state is not None:
+        return -(int(state.revision) + 1)
     rows = session.exec(
         select(UserInterestTagRecord).where(UserInterestTagRecord.owner_username == username)
     ).all()
@@ -600,6 +609,14 @@ def _interest_version(session: Session, username: str) -> int:
         f"{row.tag_id}:{row.stance}:{row.priority}:{row.updated_at}" for row in rows
     ))
     return zlib.crc32(payload.encode("utf-8")) if payload else 0
+
+
+def _interest_revision_condition(username: str, version: int):
+    from models.custom_interests import UserInterestStateRecord as State
+    base = select(State.owner_username).where(State.owner_username == username)
+    if version < 0:
+        return exists(base.where(State.revision == -version - 1))
+    return ~exists(base)
 
 
 def edition_freshness(
@@ -624,19 +641,18 @@ def edition_freshness(
 def _interest_display_names(
     session: Session, interests: Sequence[UserInterestDTO]
 ) -> dict[str, str]:
-    codes = sorted({item.tag_code for item in interests})
+    codes = sorted({item.tag_code for item in interests if item.tag_code})
+    names = {item.ref.key: item.name for item in interests if item.custom_interest_id is not None}
     if not codes:
-        return {}
+        return names
     rows = session.exec(
         select(CmsTagRecord).where(
             CmsTagRecord.code.in_(codes),
             CmsTagRecord.status == TagStatus.ACTIVE.value,
         )
     ).all()
-    return {
-        tag.code: (tag.name_zh or tag.name_en or tag.code)
-        for tag in rows
-    }
+    names.update({tag.code: (tag.name_zh or tag.name_en or tag.code) for tag in rows})
+    return names
 
 
 def _source_display_names(
@@ -812,7 +828,7 @@ def _tag_maps(
 
 
 def _followed_codes(interests: Iterable[UserInterestDTO]) -> set[str]:
-    return {item.tag_code for item in interests}
+    return {item.tag_code for item in interests if item.tag_code}
 
 
 def _qualifying_interest_codes(
@@ -821,16 +837,14 @@ def _qualifying_interest_codes(
 ) -> dict[str, tuple[str, ...]]:
     """article_id → codes whose assignment qualifies as an interest hit.
 
-    v3.54:与阅读器兴趣透镜同一尺(``reader_interests``)——只认主标签或相关度 ≥
-    ``INTEREST_MATCH_MIN_RELEVANCE`` 的指派。
+    与阅读器共用相关度门槛；主标签不豁免弱相关指派。
     """
 
     result: dict[str, tuple[str, ...]] = {}
     for article_id in article_ids:
         codes = {
             str(item["code"]) for item in tag_snapshots.get(article_id, [])
-            if bool(item.get("is_primary"))
-            or float(item.get("relevance") or 0.0) >= INTEREST_MATCH_MIN_RELEVANCE
+            if public_interest_qualifies(item.get('relevance'))
         }
         result[article_id] = tuple(sorted(codes))
     return result
@@ -872,11 +886,12 @@ def _query_candidate_rows(
     exclude_content_types: Sequence[str] = (),
     min_content_value: float | None = None,
     min_podcast_value: float | None = None,
+    article_ids: Sequence[str] | None = None,
 ) -> list[tuple[ArticleRecord, ArticleAnalysisRecord]]:
     """Shared window query.  ``source_ids=None`` means every non-private source.
 
-    ``interest_tag_codes`` narrows to articles with a qualifying assignment(primary
-    or relevance ≥ ``INTEREST_MATCH_MIN_RELEVANCE``)for one of those codes——the
+    ``interest_tag_codes`` narrows to articles with a qualifying relevance assignment
+    for one of those codes——the
     全站 interest pool must be bounded in SQL, not loaded and filtered in Python.
     ``content_types`` / ``exclude_content_types`` 按数据结构收窄(新闻通道排除播客、「播客精选」只要播客);
     ``min_content_value`` 只认当前尺子版本的内容价值(缺失即缺席,issue #178 第三波)。
@@ -901,6 +916,10 @@ def _query_candidate_rows(
             ArticleAnalysisRecord.quality_score.is_not(None),
         )
     )
+    if article_ids is not None:
+        if not article_ids:
+            return []
+        query = query.where(ArticleRecord.id.in_(article_ids))
     # 公共日报记录在两个分支都排除:范围解析已把它剔出订阅池,这里是机械双保险(issue #74 之前
     # 只有全站分支排除,订阅了日报的读者会在订阅池里吃到它)。
     query = query.where(ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID)
@@ -952,10 +971,7 @@ def _query_candidate_rows(
                 ArticleTagAssignmentRecord.article_id == ArticleRecord.id,
                 CmsTagRecord.status == TagStatus.ACTIVE.value,
                 CmsTagRecord.code.in_(codes),
-                or_(
-                    ArticleTagAssignmentRecord.is_primary.is_(True),
-                    ArticleTagAssignmentRecord.relevance >= INTEREST_MATCH_MIN_RELEVANCE,
-                ),
+                public_interest_predicate(),
             )
         )
         query = query.where(exists(qualifying))
@@ -1110,6 +1126,55 @@ def load_interest_candidates(
     rows = _reader_visible_rows(session, rows)
     meta = _source_role_and_shape(session, {article.source_id: article.content_type or "" for article, _a in rows})
     return _candidates_from_rows(session, rows, source_meta=meta, followed_codes=codes, subscribed=False)
+
+
+def load_custom_interest_candidates(
+    session: Session, *, username: str, interests: Sequence[UserInterestDTO],
+    subscribed_source_ids: Sequence[str], cutoff_at: dt.datetime,
+    window_hours: int, min_score: float | None = None, value_lane=None, value_policy=None,
+) -> list[DigestArticleCandidateDTO]:
+    frozen = {item.custom_interest_id: item for item in interests if item.custom_interest_id is not None}
+    if not frozen:
+        return []
+    matches = custom_interest_service.current_matches(session, username, condition_ids=frozen)
+    by_article: dict[str, list] = {}
+    for match, condition, article in matches:
+        if condition.revision != frozen[condition.id].revision:
+            continue
+        by_article.setdefault(article.id, []).append((match, condition))
+    filters = _value_filters(value_lane, value_policy) if value_lane is not None else {
+        "exclude_content_types": (PODCAST_CONTENT_TYPE,), "min_score": min_score,
+    }
+    # Current ACL has already been checked, including reader-owned private sources.
+    source_ids = sorted({article.source_id for _, _, article in matches})
+    rows = _query_candidate_rows(session, source_ids=source_ids, cutoff_at=cutoff_at,
+                                 window_hours=window_hours, article_ids=list(by_article), **filters)
+    candidates = _candidates_from_rows(session, rows, followed_codes=(), subscribed=False)
+    subscribed = set(subscribed_source_ids)
+    enriched = []
+    for candidate in candidates:
+        enriched.append(candidate.model_copy(update={
+            "subscribed": candidate.source_id in subscribed,
+            "custom_interest_refs": tuple(InterestRef(kind="custom", id=str(c.id)) for _, c in by_article[candidate.article_id]),
+            "custom_interest_evidence": {str(c.id): {"revision": c.revision, "fingerprint": m.fingerprint,
+                "matcher_version": m.matcher_version, **json.loads(m.evidence_json)} for m,c in by_article[candidate.article_id]},
+        }))
+    return [c for c in enriched if value_lane is None or value_lane_accepts(c, value_lane)]
+
+
+def _merge_custom_pool(pool, custom):
+    positions = {candidate.article_id: index for index, candidate in enumerate(pool)}
+    for candidate in custom:
+        if candidate.article_id in positions:
+            index = positions[candidate.article_id]
+            pool[index] = pool[index].model_copy(update={
+                "custom_interest_refs": candidate.custom_interest_refs,
+                "custom_interest_evidence": candidate.custom_interest_evidence,
+            })
+        else:
+            positions[candidate.article_id] = len(pool)
+            pool.append(candidate)
+    return pool
 
 
 def _value_filters(lane: SelectionLane | str, policy: ValueLanePolicy) -> dict[str, object]:
@@ -1717,7 +1782,7 @@ def start_personal_digest_edition(
         scheduled_source_ids=scheduled_source_ids,
     )
     # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣,仍出报(只有兴趣半);两者都空才走空订阅分支
-    if not scope.expected_source_ids and not _followed_codes(_load_interests(session, username)):
+    if not scope.expected_source_ids and not _load_interests(session, username):
         # v3.51.1(issue #33 §5):退订到一个来源都不剩,今日已有的版本仍是不可变快照——
         # 普通打开(first_open)复用它并由 scope_stale 提示「下次编排生效」;只有显式
         # 重编/定时/系统触发才把当日版本清成 empty_subscriptions。
@@ -2131,10 +2196,11 @@ def generate_personal_digest(
         if pending_edition is not None
         else _load_interests(session, username)
     )
+    frozen_interest_version = pending_edition.interest_version if pending_edition is not None else _interest_version(session, username)
     followed_codes = _followed_codes(interests)
     # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
     interest_only = not scope.expected_source_ids
-    if interest_only and not followed_codes:
+    if interest_only and not interests:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
     if pending_edition is None and not force_new_revision and reason not in REBUILD_REASON_VALUES:
         existing = _latest_completed_edition(session, username, report_date)
@@ -2201,6 +2267,11 @@ def generate_personal_digest(
                 window_hours=window_hours,
                 min_score=policy.external_min_quality_score,
             ))
+        _merge_custom_pool(pool, load_custom_interest_candidates(
+            session, username=username, interests=interests,
+            subscribed_source_ids=scope.expected_source_ids, cutoff_at=current,
+            window_hours=window_hours, min_score=policy.min_quality_score,
+        ))
         return _without_previous_events(
             (candidate for candidate in pool if candidate.article_id not in previous_article_ids),
             previous_event_dropped,
@@ -2320,6 +2391,13 @@ def generate_personal_digest(
             )
             if lane_policy.max_items > 0 else []
         )
+        if lane_policy.max_items > 0:
+            _merge_custom_pool(lane_pool, load_custom_interest_candidates(
+                session, username=username, interests=interests,
+                subscribed_source_ids=scope.expected_source_ids, cutoff_at=current,
+                window_hours=lane_policy.window_days * 24,
+                value_lane=value_lane, value_policy=lane_policy,
+            ))
         lane_names = _source_display_names(
             session, sorted({candidate.source_id for candidate in lane_pool})
         )
@@ -2361,10 +2439,10 @@ def generate_personal_digest(
     selection_degraded = not had_own_selections
     degraded_reason: str | None = None
     if selection_degraded:
-        followed_map = {code: 1 for code in followed_codes}
+        followed_map = {interest.ref.key: 1 for interest in interests}
         qualified_interest_exists = any(
             eligible_for_selection(candidate, policy=policy, followed=followed_map)
-            and bool(followed_codes.intersection(interest_codes_of(candidate)))
+            and bool({i.ref.key for i in interests}.intersection(interest_keys_of(candidate)))
             for candidate in candidates
         )
         degraded_reason = (
@@ -2404,12 +2482,14 @@ def generate_personal_digest(
         "subscribed_candidate_count": sum(1 for candidate in candidates if candidate.subscribed),
         "external_candidate_count": sum(1 for candidate in candidates if not candidate.subscribed),
         "window_hours": candidate_window_hours,
-        "followed_count": len(followed_codes),
+        "followed_count": len(interests),
         "selected_count": len(own_selections),
-        "interest_hits": sum(1 for selection in own_selections if selection.matched_interest_codes),
+        "interest_hits": sum(1 for selection in own_selections if selection.matched_interest_codes or selection.matched_interest_refs),
+        "interest_promoted_count": sum(selection.lane == SelectionLane.INTEREST.value for selection in own_selections),
+        "interest_max_ratio": policy.interest_max_ratio,
         "external_hits": sum(
             1 for selection in own_selections
-            if selection.matched_interest_codes
+            if (selection.matched_interest_codes or selection.matched_interest_refs)
             and selection.article_id in candidate_by_id
             and not candidate_by_id[selection.article_id].subscribed
         ),
@@ -2451,8 +2531,40 @@ def generate_personal_digest(
         "generation_token": None,
         "generation_lease_expires_at": None,
     }
+    has_custom = any(item.custom_interest_id is not None for item in interests)
+    matches_stale = False
+    if has_custom or frozen_interest_version < 0:
+        # Acquire the SQLite write lock before the final ACL/fingerprint check.
+        # This fence remains held through item inserts and the terminal commit.
+        custom_interest_service.lock_mutation(session)
+        session.expire_all()
+        custom_candidates = {aid: pool_by_id[aid] for aid in selected_ids
+                             if aid in pool_by_id and pool_by_id[aid].custom_interest_refs}
+        current_match_map = {(article.id, str(condition.id)): match.fingerprint
+            for match, condition, article in custom_interest_service.current_matches(
+                session, username, article_ids=list(custom_candidates))}
+        matches_stale = any(
+            current_match_map.get((aid, ref.id)) != candidate.custom_interest_evidence.get(ref.id, {}).get("fingerprint")
+            for aid, candidate in custom_candidates.items() for ref in candidate.custom_interest_refs
+        )
+    if pending_edition is None and (_interest_version(session, username) < 0
+            and _interest_version(session, username) != frozen_interest_version or matches_stale):
+        session.rollback()
+        raise ValueError("兴趣或匹配证据已更新，请重新编排")
     if pending_edition is not None:
         assert pending_edition.id is not None and generation_token is not None
+        if matches_stale or _interest_version(session, username) < 0 and _interest_version(session, username) != frozen_interest_version:
+            session.exec(update(PersonalDigestEditionRecord).where(
+                PersonalDigestEditionRecord.id == pending_edition.id,
+                PersonalDigestEditionRecord.generation_token == generation_token,
+            ).values(status=PersonalDigestStatus.PENDING.value,
+                     interest_version=_interest_version(session, username),
+                     interest_snapshot_json=_serialize_interests(_load_interests(session, username)),
+                     generation_token=None, generation_lease_expires_at=None,
+                     updated_at=generated_at))
+            session.commit()
+            session.refresh(pending_edition)
+            return PersonalDigestGenerationResult(status=pending_edition.status, edition=pending_edition)
         if first_open is not None:
             final_values["first_open_at"] = (
                 pending_edition.first_open_at or first_open.isoformat()
@@ -2466,6 +2578,7 @@ def generate_personal_digest(
                 PersonalDigestEditionRecord.id == pending_edition.id,
                 PersonalDigestEditionRecord.status == PersonalDigestStatus.GENERATING.value,
                 PersonalDigestEditionRecord.generation_token == generation_token,
+                _interest_revision_condition(username, frozen_interest_version),
             )
             .values(**final_values)
         )
@@ -2542,6 +2655,8 @@ def generate_personal_digest(
         if candidate is None:
             return {"event_id": None, "same_event_merged": 0}
         return {
+            "custom_interest_refs": [ref.model_dump() for ref in candidate.custom_interest_refs],
+            "custom_interest_evidence": candidate.custom_interest_evidence,
             "event_id": candidate.event_id,
             "same_event_merged": merged_by_key.get(event_key(candidate), 0),
         }
@@ -2649,6 +2764,7 @@ def generate_personal_digest(
                 ranking_features_json=_json({
                     "policy_version": POLICY_VERSION,
                     "subscribed": in_scope,
+                    "selection_contribution": selection.selection_contribution,
                     **_event_features(dto),
                 }),
                 coverage_adjustments_json=_json(list(selection.coverage_adjustments)),
@@ -2787,6 +2903,7 @@ def generate_personal_digest(
                         "subscribed": in_scope,
                         "content_kind": kind,
                         "content_value": snapshot["content_value"],
+                        "selection_contribution": selection.selection_contribution,
                         **_event_features(dto),
                     }),
                     coverage_adjustments_json="[]",

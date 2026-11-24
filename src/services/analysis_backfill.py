@@ -21,7 +21,9 @@ Selections (issue #178 wave 2 adds the last two):
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
@@ -36,6 +38,7 @@ from llm.article_analysis_prompt import (
     CONTENT_VALUE_SCORING_VERSION,
     MAX_ANALYSIS_BODY_CHARS,
     analysis_contract_versions,
+    analysis_contract_is_reusable,
     content_value_contract_version,
 )
 from models.analysis_contracts import AnalysisOperation, AnalysisStatus, TaggingStatus
@@ -192,8 +195,7 @@ def _eligible_rows(
             and analysis.status == AnalysisStatus.SUCCEEDED.value
             and analysis.tagging_status != TaggingStatus.FAILED.value
             and analysis.content_hash == content_hash
-            and analysis.prompt_version == expected_prompt
-            and analysis.scoring_version == expected_scoring
+            and analysis_contract_is_reusable(article.content_type, analysis.prompt_version, analysis.scoring_version)
             and int(analysis.taxonomy_version) == int(taxonomy_version)
         )
         if selection == "missing_or_outdated" and is_current:
@@ -227,23 +229,215 @@ def _eligible_rows(
     return targets, since, until
 
 
+PUBLICATION_COHORT_SCHEMA = 1
+MAX_PUBLICATION_COHORT_IDS = 5000
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _publication_bound(value: Any) -> dt.datetime:
+    try:
+        if not isinstance(value, dt.datetime) and (
+            not isinstance(value, str) or not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value
+            )
+        ):
+            raise ValueError()
+        parsed = value if isinstance(value, dt.datetime) else dt.datetime.fromisoformat(value)
+    except (ValueError, TypeError) as exc:
+        raise AnalysisBackfillError("publication bounds require timezone-aware RFC3339 timestamps") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise AnalysisBackfillError("publication bounds require timezone-aware RFC3339 timestamps")
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _input_fingerprint(article: ArticleRecord) -> str:
+    return _digest({key: getattr(article, key) for key in (
+        "id", "title", "content", "extensions_json", "source_id", "source_url",
+        "content_type", "publish_date", "analysis_authority_id", "has_content",
+    )})
+
+
+def _cohort_result_current(analysis, frozen: dict[str, Any], taxonomy_version: int) -> bool:
+    return bool(analysis is not None
+                and analysis.status == AnalysisStatus.SUCCEEDED.value
+                and analysis.tagging_status != TaggingStatus.FAILED.value
+                and analysis.content_hash == frozen["content_hash"]
+                and (analysis.prompt_version == frozen["prompt_version"]
+                     or (frozen["prompt_version"] == analysis_contract_versions(frozen["content_type"])[0]
+                         and analysis_contract_is_reusable(frozen["content_type"], analysis.prompt_version, analysis.scoring_version)))
+                and analysis.scoring_version == frozen["scoring_version"]
+                and analysis.taxonomy_version == taxonomy_version)
+
+
+def _publication_cohort(session: Session, *, days, selection, source_ids, article_ids,
+                        publish_after, publish_before, taxonomy_version, now):
+    """Build both the estimate and creation commitment; never use fetched_date."""
+    if all(value is None for value in (article_ids, publish_after, publish_before)):
+        return None
+    if (days is not None or article_ids is None or publish_after is None
+            or publish_before is None):
+        raise AnalysisBackfillError("publication cohort requires article_ids, both bounds and days=null")
+    if selection != "missing_or_outdated":
+        raise AnalysisBackfillError("publication cohort requires selection=missing_or_outdated")
+    if (isinstance(article_ids, (str, bytes)) or not 1 <= len(article_ids) <= MAX_PUBLICATION_COHORT_IDS
+            or any(not isinstance(aid, str) or not aid.strip() for aid in article_ids)):
+        raise AnalysisBackfillError("publication cohort requires 1..5000 nonblank article IDs")
+    ids = sorted(aid.strip() for aid in article_ids)
+    if len(set(ids)) != len(ids):
+        raise AnalysisBackfillError("publication cohort contains duplicate article IDs")
+    after, before = _publication_bound(publish_after), _publication_bound(publish_before)
+    if after > before or before > _utc(now):
+        raise AnalysisBackfillError("publication bounds require after <= before <= current time")
+    sources = sorted({sid.strip() for sid in source_ids if sid.strip()})
+    rows = {}
+    for offset in range(0, len(ids), 500):
+        rows.update({row.id: row for row in session.exec(select(ArticleRecord).where(
+            ArticleRecord.id.in_(ids[offset:offset + 500]))).all()})
+    invalid = {}
+    for aid in ids:
+        article = rows.get(aid)
+        if article is None:
+            invalid[aid] = "article_not_found"
+        elif sources and article.source_id not in sources:
+            invalid[aid] = "source_outside_cohort"
+        else:
+            published = _article_time(article.publish_date)
+            if published is None or not after <= _utc(published) <= before:
+                invalid[aid] = "publication_outside_cohort"
+    if invalid:
+        raise AnalysisBackfillError("invalid publication cohort IDs: " + json.dumps(invalid, sort_keys=True))
+    targets, items = [], {}
+    for aid in ids:
+        article = rows[aid]
+        prompt, scoring = analysis_contract_versions(article.content_type)
+        frozen = {"input_fingerprint": _input_fingerprint(article),
+                  "content_hash": compute_content_hash(article), "source_id": article.source_id,
+                  "publish_date": article.publish_date, "content_type": article.content_type,
+                  "prompt_version": prompt, "scoring_version": scoring}
+        if not article.has_content or not article.content:
+            disposition = "no_content"
+        elif (block := _local_execution_block(session, article)):
+            disposition = block
+        elif not source_allows_analysis(session, article.source_id):
+            disposition = "source_ai_analysis_disabled"
+        elif _cohort_result_current(session.get(ArticleAnalysisRecord, aid), frozen, taxonomy_version):
+            disposition = "reused_current"
+        else:
+            disposition = "target"
+            targets.append(BackfillTarget(article, frozen["content_hash"]))
+        items[aid] = {**frozen, "disposition": disposition}
+    snapshot = {"schema": PUBLICATION_COHORT_SCHEMA, "requested_ids": ids,
+                "target_ids": [item.article.id for item in targets], "items": items,
+                "publish_after": after.isoformat(), "publish_before": before.isoformat(),
+                "source_ids": sources, "selection": selection, "taxonomy_version": taxonomy_version}
+    snapshot["cohort_hash"] = _digest(snapshot)
+    return targets, snapshot
+
+
+def _frozen_cohort(scope: dict[str, Any]):
+    if "publication_cohort" not in scope:
+        return None
+    snapshot = scope["publication_cohort"]
+    try:
+        if not isinstance(snapshot, dict) or snapshot["schema"] != PUBLICATION_COHORT_SCHEMA:
+            raise ValueError()
+        payload = {key: value for key, value in snapshot.items() if key != "cohort_hash"}
+        ids, targets, items = snapshot["requested_ids"], snapshot["target_ids"], snapshot["items"]
+        if (snapshot["cohort_hash"] != _digest(payload)
+                or not isinstance(ids, list) or not 1 <= len(ids) <= MAX_PUBLICATION_COHORT_IDS
+                or any(not isinstance(aid, str) or not aid.strip() for aid in ids)
+                or len(set(ids)) != len(ids) or not isinstance(targets, list)
+                or len(set(targets)) != len(targets) or not set(targets) <= set(ids)
+                or not isinstance(items, dict) or set(items) != set(ids)
+                or snapshot["selection"] != "missing_or_outdated"
+                or scope.get("selection") != "missing_or_outdated" or scope.get("days") is not None
+                or not isinstance(snapshot["taxonomy_version"], int)
+                or _publication_bound(snapshot["publish_after"]) > _publication_bound(snapshot["publish_before"])):
+            raise ValueError()
+        for aid in ids:
+            row = items[aid]
+            if not all(isinstance(row[key], str) for key in (
+                    "input_fingerprint", "content_hash", "source_id", "publish_date", "content_type",
+                    "prompt_version", "scoring_version", "disposition")):
+                raise ValueError()
+            if (row["disposition"] == "target") != (aid in targets):
+                raise ValueError()
+        return snapshot
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AnalysisBackfillError("publication cohort snapshot is invalid") from exc
+
+
+def _cohort_item_error(session, job, scope, cohort, item, article):
+    frozen = cohort["items"].get(item.article_id_snapshot)
+    if (item.article_id_snapshot not in cohort["target_ids"] or not frozen
+            or item.article_id != item.article_id_snapshot
+            or item.target_content_hash != frozen["content_hash"]):
+        return "cohort_scope_changed"
+    if (job.taxonomy_version != cohort["taxonomy_version"]
+            or current_taxonomy_version(session) != cohort["taxonomy_version"]
+            or not _target_versions_match(job, scope)
+            or analysis_contract_versions(article.content_type)
+            != (frozen["prompt_version"], frozen["scoring_version"])):
+        return "cohort_version_changed"
+    if (article.source_id != frozen["source_id"] or article.publish_date != frozen["publish_date"]):
+        return "cohort_scope_changed"
+    if _input_fingerprint(article) != frozen["input_fingerprint"]:
+        return "cohort_input_changed"
+    return None
+
+
+def _fail_cohort_item(session, item, error, stamp, current):
+    # Revoke only the queued matching input, never an unrelated newer analysis.
+    analysis = session.get(ArticleAnalysisRecord, item.article_id) if item.article_id else None
+    if (item.status == "queued" and analysis is not None
+            and analysis.status == AnalysisStatus.PENDING.value
+            and analysis.content_hash == item.target_content_hash):
+        revoke_queued_analysis(session, item.article_id, reason=error, now=current)
+    item.status, item.last_error = "failed", error
+    item.completed_at = item.updated_at = stamp
+    session.add(item)
+
+
+def _record_cohort_versions(scope, item, analysis):
+    scope.setdefault("cohort_execution_observations", {})[item.article_id_snapshot] = {
+        "prompt_version": analysis.prompt_version, "scoring_version": analysis.scoring_version,
+        "taxonomy_version": analysis.taxonomy_version, "content_hash": analysis.content_hash,
+    }
+
+
 def estimate_full_analysis_backfill(
     session: Session,
     *,
     days: Optional[int],
     selection: str,
     source_ids: Sequence[str] = (),
+    article_ids: Optional[Sequence[str]] = None,
+    publish_after: Optional[str] = None,
+    publish_before: Optional[str] = None,
     now: Optional[dt.datetime] = None,
 ) -> dict[str, Any]:
     taxonomy_version = current_taxonomy_version(session)
-    targets, since, until = _eligible_rows(
-        session,
-        days=days,
-        selection=selection,
-        source_ids=source_ids,
-        taxonomy_version=taxonomy_version,
-        now=now,
+    publication = _publication_cohort(
+        session, days=days, selection=selection, source_ids=source_ids, article_ids=article_ids,
+        publish_after=publish_after, publish_before=publish_before,
+        taxonomy_version=taxonomy_version, now=now,
     )
+    if publication is not None:
+        targets, cohort = publication
+        since, until = cohort["publish_after"], cohort["publish_before"]
+    else:
+        targets, since, until = _eligible_rows(
+            session,
+            days=days,
+            selection=selection,
+            source_ids=source_ids,
+            taxonomy_version=taxonomy_version,
+            now=now,
+        )
     bounded_chars = sum(
         min(MAX_ANALYSIS_BODY_CHARS, len(item.article.content or ""))
         + len(item.article.title or "")
@@ -252,7 +446,7 @@ def estimate_full_analysis_backfill(
     # This is intentionally a capacity estimate rather than a money promise:
     # configured OpenAI-compatible providers do not expose a stable price table.
     estimated_input_tokens = (bounded_chars + 3) // 4
-    return {
+    result = {
         "selection": selection,
         "days": days,
         "since": since,
@@ -282,6 +476,12 @@ def estimate_full_analysis_backfill(
         ],
     }
 
+    if publication is not None:
+        result.update({"cohort_hash": cohort["cohort_hash"], "article_ids": cohort["requested_ids"],
+                       "target_ids": cohort["target_ids"], "publish_after": since, "publish_before": until,
+                       "dispositions": {aid: row["disposition"] for aid, row in cohort["items"].items()}})
+    return result
+
 
 def _active_full_job(session: Session) -> Optional[TagRetagJobRecord]:
     return session.exec(
@@ -302,24 +502,52 @@ def create_full_analysis_backfill(
     source_ids: Sequence[str] = (),
     actor_id: str,
     confirmation: str,
+    article_ids: Optional[Sequence[str]] = None,
+    publish_after: Optional[str] = None,
+    publish_before: Optional[str] = None,
+    expected_cohort_hash: Optional[str] = None,
     now: Optional[dt.datetime] = None,
 ) -> TagRetagJobRecord:
     if confirmation != FULL_ANALYSIS_CONFIRMATION:
         raise AnalysisBackfillError("full-analysis confirmation text does not match")
+    if any(value is not None for value in (article_ids, publish_after, publish_before)):
+        # Serialize the rebuild/commit decision against archive writers on SQLite.
+        connection = session.connection()
+        if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
     if _active_full_job(session) is not None:
         raise AnalysisBackfillError("another full-analysis backfill is unfinished")
 
     taxonomy_version = current_taxonomy_version(session)
     if taxonomy_version <= 0:
         raise AnalysisBackfillError("an active taxonomy version is required")
-    targets, since, until = _eligible_rows(
-        session,
-        days=days,
-        selection=selection,
-        source_ids=source_ids,
-        taxonomy_version=taxonomy_version,
-        now=now,
-    )
+    try:
+        publication = _publication_cohort(
+            session, days=days, selection=selection, source_ids=source_ids, article_ids=article_ids,
+            publish_after=publish_after, publish_before=publish_before,
+            taxonomy_version=taxonomy_version, now=now,
+        )
+    except AnalysisBackfillError as exc:
+        if expected_cohort_hash is not None and str(exc).startswith("invalid publication cohort IDs:"):
+            raise AnalysisBackfillError("cohort_changed: " + str(exc)) from exc
+        raise
+
+    if publication is not None:
+        targets, cohort = publication
+        since, until = cohort["publish_after"], cohort["publish_before"]
+        if expected_cohort_hash != cohort["cohort_hash"]:
+            raise AnalysisBackfillError("cohort_changed: estimate and confirm the current publication cohort")
+    else:
+        if expected_cohort_hash is not None:
+            raise AnalysisBackfillError("expected_cohort_hash requires publication cohort")
+        targets, since, until = _eligible_rows(
+            session,
+            days=days,
+            selection=selection,
+            source_ids=source_ids,
+            taxonomy_version=taxonomy_version,
+            now=now,
+        )
     if not targets:
         raise AnalysisBackfillError("no eligible articles in the selected scope")
 
@@ -343,6 +571,8 @@ def create_full_analysis_backfill(
         "target_taxonomy_version": taxonomy_version,
         "target_content_value_version": CONTENT_VALUE_SCORING_VERSION,
     }
+    if publication is not None:
+        scope["publication_cohort"] = cohort
     job = TagRetagJobRecord(
         taxonomy_version=taxonomy_version,
         operation=AnalysisOperation.FULL_ANALYSIS.value,
@@ -393,7 +623,10 @@ def claim_full_analysis_backfill(
     lease_owner: str,
     lease_seconds: int = LEASE_SECONDS,
     now: Optional[dt.datetime] = None,
+    job_ids=None,
 ) -> Optional[TagRetagJobRecord]:
+    from services.worker_scope import scoped_ids
+    job_ids = scoped_ids(job_ids, integer=True)
     owner = lease_owner.strip()
     if not owner:
         raise AnalysisBackfillError("lease_owner is required")
@@ -403,6 +636,7 @@ def claim_full_analysis_backfill(
         select(TagRetagJobRecord)
         .where(
             TagRetagJobRecord.operation == AnalysisOperation.FULL_ANALYSIS.value,
+            TagRetagJobRecord.id.in_(job_ids) if job_ids is not None else True,
             or_(
                 TagRetagJobRecord.status == "queued",
                 (TagRetagJobRecord.status == "running")
@@ -472,6 +706,7 @@ def reconcile_full_analysis_backfill(
     current = _utc(now)
     stamp = now_iso(current)
     scope = _scope(job)
+    cohort = _frozen_cohort(scope)
     selection = scope.get("selection")
     content_value_job = selection == CONTENT_VALUE_SELECTION
     queued = list(
@@ -479,7 +714,7 @@ def reconcile_full_analysis_backfill(
             select(TagRetagJobItemRecord)
             .where(
                 TagRetagJobItemRecord.job_id == job.id,
-                TagRetagJobItemRecord.status == "queued",
+                TagRetagJobItemRecord.status.in_(["pending", "queued"] if cohort else ["queued"]),
             )
             .order_by(TagRetagJobItemRecord.id)
         ).all()
@@ -494,6 +729,13 @@ def reconcile_full_analysis_backfill(
             continue
         article = session.get(ArticleRecord, item.article_id)
         analysis = session.get(ArticleAnalysisRecord, item.article_id)
+        if cohort is not None and article is not None:
+            error = _cohort_item_error(session, job, scope, cohort, item, article)
+            if error:
+                _fail_cohort_item(session, item, error, stamp, current)
+                continue
+            if item.status == "pending":
+                continue
         if article is None:
             item.status = "skipped"
             item.last_error = "article_deleted"
@@ -530,8 +772,7 @@ def reconcile_full_analysis_backfill(
                     analysis.status == AnalysisStatus.SUCCEEDED.value
                     and analysis.tagging_status != TaggingStatus.FAILED.value
                     and analysis.content_hash == current_hash
-                    and analysis.prompt_version == expected_prompt
-                    and analysis.scoring_version == expected_scoring
+                    and analysis_contract_is_reusable(article.content_type, analysis.prompt_version, analysis.scoring_version)
                     and int(analysis.taxonomy_version) == int(job.taxonomy_version)
                 )
             terminal_failure = bool(
@@ -554,7 +795,10 @@ def reconcile_full_analysis_backfill(
             )
             if current_result:
                 item.status = "succeeded"
-                item.target_content_hash = current_hash
+                if cohort is None:
+                    item.target_content_hash = current_hash
+                else:
+                    _record_cohort_versions(scope, item, analysis)
                 item.last_error = None
             elif not local_execution_allowed:
                 # 目标未完成而本机已无执行权(归档同步接管 / 接收端停写):没有可等待的本地任务(codex R1)。
@@ -587,6 +831,8 @@ def reconcile_full_analysis_backfill(
         item.updated_at = stamp
         session.add(item)
 
+    if cohort is not None:
+        job.scope_json = json.dumps(scope, ensure_ascii=False, sort_keys=True)
     session.flush()
     counts = _item_counts(session, int(job.id))
     job.succeeded_count = counts["succeeded"]
@@ -617,12 +863,17 @@ def dispatch_full_analysis_backfill(
     lease_owner: str,
     limit: int = DEFAULT_DISPATCH_LIMIT,
     now: Optional[dt.datetime] = None,
+    article_ids=None,
 ) -> int:
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     if job.status != "running" or job.lease_owner != lease_owner:
         return 0
     current = _utc(now)
     stamp = now_iso(current)
-    selection = _scope(job).get("selection")
+    scope = _scope(job)
+    cohort = _frozen_cohort(scope)
+    selection = scope.get("selection")
     content_value_job = selection == CONTENT_VALUE_SELECTION
     rows = list(
         session.exec(
@@ -631,6 +882,7 @@ def dispatch_full_analysis_backfill(
             .where(
                 TagRetagJobItemRecord.job_id == job.id,
                 TagRetagJobItemRecord.status == "pending",
+                TagRetagJobItemRecord.article_id.in_(article_ids) if article_ids is not None else True,
             )
             .order_by(ArticleRecord.fetched_date.desc(), TagRetagJobItemRecord.id)
             .limit(max(1, limit * 3))
@@ -655,13 +907,22 @@ def dispatch_full_analysis_backfill(
             item.updated_at = stamp
             session.add(item)
             continue
+        if cohort is not None:
+            error = _cohort_item_error(session, job, scope, cohort, item, article)
+            if error:
+                _fail_cohort_item(session, item, error, stamp, current)
+                continue
         # 共同外层顺序:目标已完成 → 本机执行权 → 等待 / 入队(codex R1 / R2-1)。
         analysis = session.get(ArticleAnalysisRecord, article.id)
-        if _dispatch_target_done(selection, article, analysis):
+        if (_cohort_result_current(analysis, cohort["items"][article.id], cohort["taxonomy_version"])
+                if cohort is not None else _dispatch_target_done(selection, article, analysis)):
             # 建任务后到派发前,别的路径(实时补偿扫描、版本巡检、远端同步)已经达成目标:不再重评。
             item.status = "succeeded"
+            if cohort is not None:
+                _record_cohort_versions(scope, item, analysis)
             item.last_error = "already_analyzed" if selection == MISSING_SELECTION else None
-            item.target_content_hash = compute_content_hash(article)
+            if cohort is None:
+                item.target_content_hash = compute_content_hash(article)
             item.completed_at = stamp
             item.updated_at = stamp
             session.add(item)
@@ -681,7 +942,8 @@ def dispatch_full_analysis_backfill(
             ):
                 # 已在途:关联它的结果,不重新入队、不重置尝试次数。
                 item.status = "queued"
-                item.target_content_hash = compute_content_hash(article)
+                if cohort is None:
+                    item.target_content_hash = compute_content_hash(article)
                 item.last_error = None
                 item.queued_at = stamp
                 item.updated_at = stamp
@@ -703,7 +965,8 @@ def dispatch_full_analysis_backfill(
         if content_value_job and outcome == "unchanged":
             # 已有当前内容价值(例如版本巡检的整篇重跑顺带产出了它):目标已完成。
             item.status = "succeeded"
-            item.target_content_hash = compute_content_hash(article)
+            if cohort is None:
+                item.target_content_hash = compute_content_hash(article)
             item.last_error = None
             item.completed_at = stamp
         elif outcome in {"ineligible", "remote_authority", "consumer_quiesced", "skipped", "unchanged"}:
@@ -712,12 +975,15 @@ def dispatch_full_analysis_backfill(
             item.completed_at = stamp
         else:
             item.status = "queued"
-            item.target_content_hash = compute_content_hash(article)
+            if cohort is None:
+                item.target_content_hash = compute_content_hash(article)
             item.last_error = None
             item.queued_at = stamp
             dispatched += 1
         item.updated_at = stamp
         session.add(item)
+    if cohort is not None:
+        job.scope_json = json.dumps(scope, ensure_ascii=False, sort_keys=True)
     job.updated_at = stamp
     session.add(job)
     session.commit()
@@ -797,6 +1063,7 @@ def resume_full_analysis_backfill(
 ) -> TagRetagJobRecord:
     if job.operation != AnalysisOperation.FULL_ANALYSIS.value or job.status != "paused":
         raise AnalysisBackfillError("only a paused full-analysis backfill can be resumed")
+    _frozen_cohort(_scope(job))
     job.status = "queued"
     job.updated_at = now_iso(_utc(now))
     session.add(job)
@@ -843,6 +1110,14 @@ def retry_failed_full_analysis_items(
     )
     if not failed:
         raise AnalysisBackfillError("full-analysis backfill has no failed items")
+    scope = _scope(job)
+    cohort = _frozen_cohort(scope)
+    if cohort is not None:
+        for item in failed:
+            article = session.get(ArticleRecord, item.article_id) if item.article_id else None
+            if (article is None or item.last_error in {"cohort_input_changed", "cohort_scope_changed", "cohort_version_changed"}
+                    or _cohort_item_error(session, job, scope, cohort, item, article)):
+                raise AnalysisBackfillError("cohort_changed: frozen target cannot be retried; estimate a new cohort")
     for item in failed:
         item.status = "pending"
         item.last_error = None
@@ -897,6 +1172,13 @@ def serialize_full_analysis_backfill(
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }
+    cohort = _frozen_cohort(scope)
+    if cohort is not None:
+        result.update({"cohort_hash": cohort["cohort_hash"], "article_ids": cohort["requested_ids"],
+                       "target_ids": cohort["target_ids"], "publish_after": cohort["publish_after"],
+                       "publish_before": cohort["publish_before"],
+                       "dispositions": {aid: row["disposition"] for aid, row in cohort["items"].items()},
+                       "execution_observations": scope.get("cohort_execution_observations", {})})
     if include_failures:
         result["failed_items"] = [
             {

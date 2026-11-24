@@ -1,3 +1,4 @@
+import CurrentInterestMatches from '../CurrentInterestMatches';
 import { useLayoutEffect, useRef, useState } from 'react';
 import {
   CheckCheck,
@@ -70,6 +71,7 @@ export default function MobileArticlePage({
   ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   showToast,
   onBack,
+  onOpenInterest = null,
   onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回,也不播收回动效)
 }) {
   const {
@@ -307,6 +309,7 @@ export default function MobileArticlePage({
               />
             </div>
           )}
+          <CurrentInterestMatches article={activeArticle} guest={rs.isGuest} mobile capabilities={rs.interestCapabilities} onOpenInterest={onOpenInterest} />
           {tags.length > 0 && (
             <div className="reader-pane-foot"><div className="reader-pane-tags">
               {tags.map((tag, index) => (

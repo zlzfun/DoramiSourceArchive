@@ -178,6 +178,45 @@ def test_usage_authority_does_not_accept_forged_prices():
     )
 
 
+def test_asr_natural_day_is_independent_of_entitlement_and_policy_expires():
+    from config import PodcastConfig
+
+    cutoff = NOW + dt.timedelta(minutes=20)
+    short = configuration(asr_entitlement_ends_at=cutoff.isoformat())
+    long = replace(short, asr_entitlement_ends_at=(NOW + dt.timedelta(days=3)).isoformat())
+    plan = usage_plan(short, audio_duration_ms=60_000, now=NOW)
+    assert plan == usage_plan(long, audio_duration_ms=60_000, now=NOW)
+    assert plan.quota_period == NOW.date().isoformat()
+    assert plan.window_start_at == NOW - dt.timedelta(hours=8)
+    assert plan.window_end_at == NOW + dt.timedelta(hours=16)
+    policy = PodcastStagePolicy(PodcastConfig(), bailian_speech=short)
+    assert policy.provider_usage_plan_matches("aliyun-bailian", "asr", plan, now=NOW)
+    assert not policy.provider_usage_plan_matches(
+        "aliyun-bailian", "asr", plan, now=cutoff
+    )
+    with pytest.raises(ValueError, match="authorization expired"):
+        usage_plan(short, audio_duration_ms=60_000, now=cutoff)
+
+
+def test_asr_wire_deadline_blocks_post_even_inside_natural_quota_day():
+    cutoff = NOW + dt.timedelta(minutes=20)
+    cfg = configuration(asr_entitlement_ends_at=cutoff.isoformat())
+    plan = usage_plan(cfg, audio_duration_ms=60_000, now=NOW)
+    assert cutoff < plan.window_end_at
+    requests = []
+    client = BailianSpeechClient(
+        cfg,
+        clock=lambda: cutoff,
+        transport=httpx.MockTransport(lambda req: requests.append(req) or httpx.Response(200)),
+    )
+    try:
+        with pytest.raises(BailianSpeechError, match="spending_authorization_expired"):
+            client.submit_asr("https://example.test/audio.mp3")
+    finally:
+        client.close()
+    assert requests == []
+
+
 @pytest.mark.parametrize(
     "status,expected",
     [

@@ -40,13 +40,18 @@ asr_daily_audio_seconds_limit = 1800
 asr_entitlement_ends_at = <带时区的未来截止时间>
 tts_monthly_budget_minor = 100
 tts_per_run_budget_minor = 100
+tts_daily_budget_minor = 100
+tts_entitlement_ends_at = <带时区的未来截止时间>
 tts_cache_max_bytes = 1073741824
 ```
 
-这些限制是初次样本的保守额度：ASR 每日 30 分钟，TTS 每月及单次最多 1 元。
+这些限制是初次样本的保守额度：ASR 每日 30 分钟，TTS 每月、每日及单次最多 1 元。
 正式启用前按实际需求设置；`asr_entitlement_ends_at` 是本地付费授权截止时间，
 不是免费资源包到期时间。未填额度、截止时间或凭据时，ASR 不提交新任务。
-TTS 预算为零时不允许调用。选择器 `enabled` 需重启生效；默认关闭，保留原 ISI 行为。
+ASR 配额按新加坡自然日累计，授权截止在规划和实际 POST 前独立检查；同日历史授权截短窗口仅在总量核算中只读兼容，已花费与未决预占继续累计，不改写账本或放宽原请求幂等匹配。
+TTS 月度或单次预算为零时不允许调用。新增日预算默认 `0` 表示不启用额外日限制，
+新提交截止默认空表示沿用旧部署行为；有界实验必须显式设置两者。
+选择器 `enabled` 需重启生效；默认关闭，保留原 ISI 行为。
 已提交 ISI 任务应在切换前处理完，不会被百炼适配器接管。
 
 密钥写入宿主权限为 `600` 的 `.env`，由 Compose 转发 `DORAMI_BAILIAN_API_KEY`。
@@ -75,6 +80,29 @@ ASR 还需要现有 `[podcast]` 的 `processing_enabled`、`allowed_stages`、�
 
 ## 计费与恢复
 
+### 每日限额与有界付费运行（issue #298）
+
+`tts_daily_budget_minor` 按 **Asia/Shanghai 自然日、人民币分** 限制新提交；例如 `2000`
+为每日 ¥20，仍同时受月度和单次预算约束。`tts_entitlement_ends_at` 使用带时区 ISO 时间，
+到期后停止新预占和每段新 POST；在途已付费响应的下载及已有音频重放照常，不以重新合成恢复。
+有界运行应在开始时固定截止时间，不能只靠进程清理或外部定时器停费。
+
+账本预占和每段 `reserved → authorized` 都在数据库写事务内校验。实际授权时刷新
+`budget_day` 和 `budget_period`，覆盖预占后跨午夜/月末、进程重启以及多个 session 并发。
+当日费用加所有未决 `reserved/authorized/generated` 的保守占用不得超过限额；结果未知保持
+预占且不重提。该限制只覆盖**共享同一数据库的 account_scope**；不同数据库不构成账号全局限额，
+实验的所有付费进程必须使用同一账本。最终供应商账单与本地保守计量分别对账。
+
+新迁移 `b8d2f4a6c901` 不改历史费用或请求身份。旧记录没有真实授权时间，不能把 `created_at`
+当成提交日，因此 `budget_day` 留空；启用日限制时，这些未确定日期的非拒绝费用保守计入每一天。
+旧库金额较大可能因此阻止新提交。只有取得供应商/回执授权日期证据后才能逐条对账填入，
+不得清空账本、换 scope 或改回执路径规避限额。旧应用不知道这些新限制，回滚到旧代码前应关闭
+本次实验付费入口；数据库迁移本身不向旧代码提供日限额保障。
+
+日限额和截止字段沿用 `runtime_kv > 环境变量 > INI > 默认值`；对应环境变量为
+`DORAMI_BAILIAN_TTS_DAILY_BUDGET_MINOR` 与 `DORAMI_BAILIAN_TTS_ENTITLEMENT_ENDS_AT`。
+不要只改 INI 而忽略已有 runtime 覆盖。默认值兼容旧配置，不代表未设置限额的部署已受到每日保护。
+
 2026-09-15 核验的新加坡价格快照：Fun-ASR 每秒 ¥0.00026（每小时 ¥0.936）；
 Qwen3-TTS Flash 每万字符 ¥0.733924。这两个模型的新加坡部署无免费额度。
 [官方模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)。
@@ -83,6 +111,7 @@ Qwen3-TTS Flash 每万字符 ¥0.733924。这两个模型的新加坡部署无�
 - ASR 复用 `podcast_budget_reservations` / `podcast_cost_ledger`，输入时长向上取整到秒预占，
   终态按返回用量核对冻结价格。百炼只对判定为语音内容的部分计费，故文件时长与计费时长
   分别记录；`minimum_usage_units=0` 在提交前冻结，旧 ISI 记录默认仍以完整输入为下限。额度或付费授权过期后可排空已提交任务，不能新增付费请求。
+  Wire client 在实际新提交前再次检查授权截止，排队、URL 准备或进程重启不能沿用过期准入。
 - 精品导读 TTS 走当前同步 `PremiumGuideTtsProvider`，使用独立的 `bailian_tts_calls` 账本，
   **与 `[podcast]` 预算分别累计**。总成本评估应包含两者及原有 LLM 成本。
 - TTS 按 UTF-8 字节数保守预占字符费用，收到响应后用 `usage.characters` 结算。
@@ -112,6 +141,13 @@ ASR 使用 RSS 发布者音频直链，提交前复核源权限与媒体快照�
 升级后继续处理原 TaskId，不重新提交音频。
 
 ## 独立样本验证
+
+有界观察同时设置 `[bailian_speech] asr_entitlement_ends_at`、`tts_entitlement_ends_at`
+及 `[llm] paid_authorized_until` 为带时区的固定 ISO 截止时间。LLM 配置也可用
+`DORAMI_LLM_PAID_AUTHORIZED_UNTIL` 提供；截止不受运行期凭据 KV 覆盖，辅助/视觉模型继承，
+每次 HTTP 尝试（含退避重试与协议降级）重新核验。留空保持既有部署行为；本次 #298
+观察必须显式配置，不能依赖聊天心跳或结束清理来停费。截止只阻止新提交，不影响已有
+ASR 任务轮询或已生成 TTS 的下载与对账。
 
 只在获准的小额预算和专用目录内运行；不要指向正式内容库。脚本会调用真实付费接口。
 环境文件应把 `tts_receipt_root` 指向该目录中的 `receipts`，并与样本数据库一并保留。

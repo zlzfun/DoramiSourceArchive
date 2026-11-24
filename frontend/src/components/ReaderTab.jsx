@@ -1,3 +1,5 @@
+import CurrentInterestMatches from './CurrentInterestMatches';
+import { canFilterCustomInterests } from '../utils/readerInterestQuery';
 import PodcastGuideFilter from './PodcastGuideFilter';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -261,6 +263,7 @@ export const ArticleRow = memo(function ArticleRow({
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
+  interestCapabilities = null, onOpenInterest = null, guest = false,
   interestHit = '', unsubscribed = false, onSubscribeSource = null,
   // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
   nowPlaying = '', nowPlayingAi = false,
@@ -403,7 +406,7 @@ export const ArticleRow = memo(function ArticleRow({
               {unsubscribed && <span className="sr-only">，未订阅</span>}
               {kindTag}
               {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
-              {interestHit && <span className="reader-entry-hit">{interestHit}</span>}
+              {!guest && !Object.hasOwn(article, 'interest_matches') && interestHit && <span className="reader-entry-hit">{interestHit}</span>}
               <span
                 className="reader-entry-time"
                 title={card ? formatPublishDateTime(article.publish_date || article.fetched_date) : formatReaderDate(article.publish_date || article.fetched_date, { withYear: true })}
@@ -426,6 +429,7 @@ export const ArticleRow = memo(function ArticleRow({
           </>
         )}
       </button>
+      <CurrentInterestMatches article={article} guest={guest} mobile={Boolean(card)} capabilities={interestCapabilities} onOpenInterest={onOpenInterest} />
     </>
   );
 });
@@ -483,6 +487,7 @@ export default function ReaderTab({
     socialView, podcastView, railActive, listTitle, listSubtitle,
     goView, goSource, goTag,
     kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
+    activeCustomInterestId, customInterests, interestCapabilities, customInterestUnavailable, canMarkAllRead, interestListUnavailable, pageFailed, retryInterestList,
     scope, setAxis, toggleFavoriteScope, activeTagId, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,
@@ -544,6 +549,10 @@ export default function ReaderTab({
     setRankingRestore(null); // 点入口是新开,不落回旧位
     setRankingsOpen(true);
   }, [closeDiscover, goView, leaveBriefTrail, setBriefOpen, setRankingRestore, setRankingsOpen, socialView, supersedePendingOpen]);
+  const openMatchedInterest = (ref, article = null) => {
+    if (!rs.goInterest(ref, article)) return;
+    setBriefOpen(false); setRankingsOpen(false); leaveBriefTrail(); closeDiscover();
+  };
   const listPlan = useMemo(
     () => buildListPlan(articles, grouping),
     [articles, grouping],
@@ -833,7 +842,7 @@ export default function ReaderTab({
   const backToAll = (axis) => { setRankingsOpen(false); leaveBriefTrail(); setAxis(axis); };
   const AllIcon = socialView ? AtSign : podcastView ? Podcast : FileText;
   // 列表栏头的范围名:回到全集时与来源栏首行同名
-  const scopeTitle = activeSourceId || activeTagId ? listTitle : (scope.axis === 'interest' && !socialView ? '全部兴趣' : '全部订阅');
+  const scopeTitle = activeSourceId || activeTagId || activeCustomInterestId ? listTitle : (scope.axis === 'interest' && !socialView ? '全部兴趣' : '全部订阅');
 
   /* ── 源栏 · 我的订阅 ──
      内容提成一个常量:文章 / 播客容器里它是左栏;社交是整幅页面,同一份账号列表挂到页边(issue #279 第二批)。 */
@@ -888,7 +897,7 @@ export default function ReaderTab({
                     tabIndex={0}
                     onClick={() => backToAll(showSourceRows ? 'subscribed' : 'interest')}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); backToAll(showSourceRows ? 'subscribed' : 'interest'); } }}
-                    className={`reader-source-row reader-source-all ${!activeSourceId && !activeTagId ? 'reader-source-row-active' : ''}`}
+                    className={`reader-source-row reader-source-all ${!activeSourceId && !activeTagId && !activeCustomInterestId ? 'reader-source-row-active' : ''}`}
                   >
                     <span className="reader-src-allico" aria-hidden="true"><AllIcon /></span>
                     <p className="reader-source-name min-w-0 flex-1">{showSourceRows ? '全部订阅' : '全部兴趣'}</p>
@@ -898,6 +907,7 @@ export default function ReaderTab({
 
               {/* 兴趣轴:其下列关注的标签(与源行同一形制);点一行 = 收窄到该标签 */}
               {!showSourceRows && (
+                <>
                 <TagRows
                   groups={interestGroups}
                   activeTagId={activeTagId}
@@ -905,6 +915,16 @@ export default function ReaderTab({
                   hasInterests={hasInterests}
                   onOpenInterests={openInterests}
                 />
+                {customInterests.length > 0 && <div className="reader-source-group">
+                  <div className="micro-label">自定义兴趣</div>
+                  {customInterests.map((interest) => <button key={interest.id} type="button"
+                    className={`reader-source-row ${activeCustomInterestId === String(interest.id) ? 'reader-source-row-active' : ''}`}
+                    disabled={interest.status !== 'active' || !canFilterCustomInterests(interestCapabilities)}
+                    onClick={() => openMatchedInterest({ kind: 'custom', id: String(interest.id) })}>
+                    <span>{interest.name}</span>{interest.status !== 'active' && <span className="tiny-meta">已暂停</span>}
+                  </button>)}
+                </div>}
+                </>
               )}
 
               {/* 订阅轴:来源按编辑分层分组(样页):官方·一手信息 / 媒体·观察 / 个人·洞见 / 榜单·动态。
@@ -1171,6 +1191,8 @@ export default function ReaderTab({
              点卡片 = openArticleById 跳站内原文(切到所在容器并选中,早报页退场) ── */}
       {briefOpen && (
         <PersonalBriefPage
+          interestCapabilities={interestCapabilities}
+          onOpenInterest={openMatchedInterest}
           showToast={showToast}
           interestVersion={interestVersion}
           sourceMap={sourceMap}
@@ -1249,6 +1271,9 @@ export default function ReaderTab({
           onShapeChange={setDiscoverShape}
           interestsPanel={personalDigestEnabled ? (
             <InterestPage
+              interestCapabilities={interestCapabilities}
+              onReadCustom={openMatchedInterest}
+              guest={rs.isGuest}
               embedded
               onboarding={onboardingRequired}
               showToast={showToast}
@@ -1390,7 +1415,7 @@ export default function ReaderTab({
                 <button
                   type="button"
                   onClick={handleMarkAllRead}
-                  disabled={markingRead}
+                  disabled={markingRead || !canMarkAllRead}
                   aria-label={markAllLabel}
                   title={markAllLabel}
                   className="reader-unread-icon"
@@ -1486,8 +1511,14 @@ export default function ReaderTab({
               {podcastView ? `载入 ${freshCount} 期新播客` : `载入 ${freshCount} 篇新文章`}
             </button>
           )}
+          {pageFailed && articles.length > 0 && <button type="button" className="reader-fresh-pill reader-interest-retry" onClick={retryInterestList}>重新加载</button>}
           {articlesLoading ? (
             <ArticleCardsSkeleton />
+          ) : interestListUnavailable || (pageFailed && articles.length === 0) ? (
+            <div className="reader-empty">
+              <span>兴趣暂不可用</span>
+              <button type="button" className="action-button action-button-quiet reader-interest-retry" onClick={retryInterestList}>重新加载</button>
+            </div>
           ) : scope.axis === 'subscribed' && !favOnly && hasNoSubscriptions && !activeSourceId ? (
             <div className="reader-empty reader-empty-tall">
               <Compass className="h-7 w-7 text-slate-300" />
@@ -1517,6 +1548,10 @@ export default function ReaderTab({
                   ? (podcastView ? '没有匹配的播客' : '没有匹配的文章')
                   : favOnly
                     ? '当前范围还没有收藏，阅读时点右上角星标即可收藏'
+                    : customInterestUnavailable
+                      ? '这个兴趣暂不可用'
+                    : activeCustomInterestId
+                      ? '还没有命中这个兴趣的内容'
                     : activeTagId
                       ? '还没有命中这个兴趣的文章'
                     : scope.axis === 'interest'
@@ -1532,11 +1567,12 @@ export default function ReaderTab({
             </div>
           ) : (
             /* key 按视图范围重挂载,切源/切容器时列表整体淡入(A1) */
-            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`} className="reader-list-enter">
+            <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${activeCustomInterestId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`} className="reader-list-enter">
               {listPlan.map((entry) => {
                 const { article } = entry;
                 return (
                   <ArticleRow
+                    interestCapabilities={interestCapabilities} onOpenInterest={openMatchedInterest} guest={rs.isGuest}
                     key={article.id}
                     article={article}
                     active={activeArticle?.id === article.id}
@@ -1751,6 +1787,7 @@ export default function ReaderTab({
                   podcast={podcastView}
                 />
               ) : paneTagsEl && <div className="reader-pane-tags-solo">{paneTagsEl}</div>}
+              <CurrentInterestMatches article={activeArticle} guest={rs.isGuest} capabilities={interestCapabilities} onOpenInterest={openMatchedInterest} />
               {!podcastView && (
                 <PaperContentNote article={activeArticle} />
               )}

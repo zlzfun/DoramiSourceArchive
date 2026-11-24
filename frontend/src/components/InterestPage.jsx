@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Loader2, Search, Tags, X } from 'lucide-reac
 import { fetchInterestCatalog, fetchInterests, saveInterests } from '../api';
 import { enqueueSave, flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { scrollBehavior } from '../motion';
+import CustomInterestPanel from './CustomInterestPanel';
 
 /* ── 我的兴趣(issue #23 第二项,弹窗改页面;样页 docs/design/dorami-interest-quiet.html)──
    定位(issue #27 分析):兴趣与合集是阅读偏好的两根正交轴——合集=看谁(源的成员关系,全站生效),
@@ -52,11 +53,6 @@ function sameSelection(a, b) {
   return ka.every((k) => k in b);
 }
 
-function matches(tag, needle) {
-  if (!needle) return true;
-  return [tag.name_zh, tag.name_en, tag.code, tag.description]
-    .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
-}
 
 function TagCard({ tag, selected = false, onToggle, compact = false }) {
   const cls = `${compact ? 'interest-mrow' : 'interest-card'} ${selected ? 'is-follow' : ''}`;
@@ -95,6 +91,7 @@ function TagCard({ tag, selected = false, onToggle, compact = false }) {
 
 export default function InterestPage({
   mobile = false,
+  guest = false,
   onboarding = false,
   // embedded(issue #27 三稿):作为发现页第三段「兴趣」的正文——不画报头与左槽台账,
   // 「我的兴趣」(口径:关注/兴趣统一叫兴趣,2026-09-10)改成目录之上的一行 chip;首登引导 = 顶部一条横幅(不锁页)
@@ -106,6 +103,8 @@ export default function InterestPage({
   // 手机订阅 Tab 的兴趣段(issue #230 批 3a;样页「订阅 · 兴趣」):传了就把「我的兴趣」画成常开的分组卡——
   // 每行点了读它的条目流(onReadTag(tag)),行尾 × 移出;组首一行「全部兴趣内容」(onReadAll(n))读全站兴趣命中。
   // 不传(发现页的兴趣段)沿用折叠台账
+  interestCapabilities = null,
+  onReadCustom = null,
   onReadTag = null,
   onReadAll = null,
 }) {
@@ -113,6 +112,12 @@ export default function InterestPage({
   const [draft, setDraft] = useState({});
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
   const [query, setQuery] = useState('');
+  const [searchCatalog, setSearchCatalog] = useState(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const effectiveQuery = externalQuery != null ? externalQuery : query;
+  const needle = effectiveQuery.trim();
+  const queryRef = useRef(needle);
+  useEffect(() => { queryRef.current = needle; }, [needle]);
   const [expanded, setExpanded] = useState({});
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -141,11 +146,16 @@ export default function InterestPage({
       fetchInterestCatalog({ signal: controller.signal }),
       fetchInterests({ signal: controller.signal }),
     ])).then(([catalogData, current]) => {
-      setCatalog(catalogData);
+      // Preserve active selected tags independently of the currently loaded page.
+      const chosen = (current.items || []).map(({ tag }) => tag)
+        .filter((tag) => (tag.status == null || tag.status === 'active') && tag.user_selectable !== false);
+      const knownItems = new Map((catalogData.items || []).map((tag) => [keyOf(tag), tag]));
+      chosen.forEach((tag) => knownItems.set(keyOf(tag), tag));
+      setCatalog({ ...catalogData, items: [...knownItems.values()] });
       // 只收目录里存在的标签(codex 检视 P2):被管理员下架/取消可选的旧选择目录不再返回,
       // 却仍在 /interests 里;带着它整套替换会被后端整次 400,读者什么都改不了。
       // 目录对已选标签「落榜仍保留」,故不在目录里的只可能是失效项,静默剔除。
-      const known = new Set((catalogData?.items || []).map((tag) => keyOf(tag)));
+      const known = new Set(chosen.map((tag) => keyOf(tag)));
       const next = {};
       (current.items || []).forEach(({ tag }) => {
         if (!known.has(keyOf(tag))) return;
@@ -159,6 +169,47 @@ export default function InterestPage({
     return () => controller.abort();
   }, [reloadKey]);
 
+  useEffect(() => {
+    if (!needle) { setSearchCatalog(null); setSearchBusy(false); return undefined; }
+    const controller = new AbortController();
+    setSearchBusy(true);
+    setSearchCatalog(null);
+    const timer = window.setTimeout(() => {
+      fetchInterestCatalog({ q: needle, signal: controller.signal }).then((result) => {
+        if (queryRef.current !== needle) return;
+        setSearchCatalog(result);
+        setCatalog((previous) => {
+          if (!previous) return previous;
+          const merged = new Map(previous.items.map((tag) => [keyOf(tag), tag]));
+          result.items.forEach((tag) => merged.set(keyOf(tag), tag));
+          return { ...previous, items: [...merged.values()] };
+        });
+      }).catch((err) => { if (err.name !== 'AbortError') showToastRef.current?.(err.message, 'error'); })
+        .finally(() => { if (queryRef.current === needle) setSearchBusy(false); });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [needle]);
+
+  const loadMoreSearch = async () => {
+    if (!searchCatalog?.next_cursor || searchBusy) return;
+    setSearchBusy(true);
+    const wanted = needle;
+    try {
+      const result = await fetchInterestCatalog({ q: wanted, cursor: searchCatalog.next_cursor });
+      if (queryRef.current !== wanted) return;
+      setSearchCatalog((previous) => {
+        const items = [...previous.items, ...result.items];
+        return { ...result, items, facets: Object.fromEntries(KINDS.map((kind) => [kind, items.filter((tag) => tag.kind === kind)])) };
+      });
+      setCatalog((previous) => {
+        const merged = new Map(previous.items.map((tag) => [keyOf(tag), tag]));
+        result.items.forEach((tag) => merged.set(keyOf(tag), tag));
+        return { ...previous, items: [...merged.values()] };
+      });
+    } catch (err) { showToastRef.current?.(err.message, 'error'); }
+    finally { if (queryRef.current === wanted) setSearchBusy(false); }
+  };
+
   useEffect(() => { draftRef.current = draft; }, [draft]);
   useEffect(() => { onSavedRef.current = onSaved; showToastRef.current = showToast; }, [onSaved, showToast]);
 
@@ -171,8 +222,6 @@ export default function InterestPage({
     return { follow };
   }, [catalog, draft]);
 
-  const effectiveQuery = externalQuery != null ? externalQuery : query;
-  const needle = effectiveQuery.trim().toLocaleLowerCase();
   const itemsOf = (selection) => Object.keys(selection).map((id) => ({ tag_id: Number(id) }));
   const performSave = async (seq, selection, { complete = false, toast = null }) => {
     const latest = () => seq === seqRef.current;
@@ -277,10 +326,13 @@ export default function InterestPage({
     setActiveKind((prev) => (prev === current ? prev : current));
   };
 
-  const facets = catalog?.facets || {};
+  const facets = (needle ? searchCatalog?.facets : catalog?.facets) || {};
+  const customNode = <CustomInterestPanel guest={guest} interestCapabilities={interestCapabilities} onReadCustom={onReadCustom} onSaved={onSaved} showToast={showToast} />;
+  const searchMoreNode = needle && (searchBusy ? <div className="brief-state" role="status">搜索中…</div>
+    : searchCatalog?.next_cursor && <button type="button" className="interest-more" onClick={loadMoreSearch}>加载更多</button>);
   const sectionOf = (kind) => {
     const all = facets[kind] || [];
-    const filtered = needle ? all.filter((tag) => matches(tag, needle)) : all;
+    const filtered = all;
     const capped = onboarding && !needle && !expanded[kind] && filtered.length > ONBOARDING_PREVIEW;
     return { all, rows: capped ? filtered.slice(0, ONBOARDING_PREVIEW) : filtered, capped, filtered };
   };
@@ -403,9 +455,11 @@ export default function InterestPage({
             {externalQuery != null && saveStateNode}
           </div>
         )}
+        {customNode}
         {stateNode}
         {catalogSections}
-        {catalog && needle && !anyMatchEmbed && (
+        {searchMoreNode}
+        {catalog && needle && !searchBusy && !anyMatchEmbed && (
           <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
         )}
       </div>
@@ -448,7 +502,7 @@ export default function InterestPage({
               </div>
             );
           })}
-          {catalog && searching && visibleKinds.length === 0 && (
+          {catalog && searching && !searchBusy && visibleKinds.length === 0 && (
             <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>
@@ -494,7 +548,9 @@ export default function InterestPage({
               {searchNode}
             </section>
           )}
+          {customNode}
           {catalogNode}
+          {searchMoreNode}
         </div>
       );
     }
@@ -527,7 +583,9 @@ export default function InterestPage({
             </div>
           )}
         </div>
+        {customNode}
         {catalogNode}
+        {searchMoreNode}
       </div>
     );
   }
@@ -565,7 +623,9 @@ export default function InterestPage({
             </div>
             <div className="interest-mast-actions">{searchNode}{onboardingBtn}</div>
           </header>
+          {customNode}
           {stateNode}
+          {searchMoreNode}
           {catalog && KINDS.map((kind) => {
             const sec = sectionOf(kind);
             if (needle && sec.filtered.length === 0) return null;
@@ -589,7 +649,7 @@ export default function InterestPage({
               </section>
             );
           })}
-          {catalog && needle && !anyMatch && (
+          {catalog && needle && !searchBusy && !anyMatch && (
             <div className="brief-state">没有匹配「{effectiveQuery.trim()}」的标签</div>
           )}
         </div>

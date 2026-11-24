@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
+from fetchers.impl.publication_window import PublicationWindow, CoverageReport, parameter_schema, point_proof
 from fetchers.impl.article_extractor import (
     DETAIL_HARD_CAP,
     _inline_markdown,
@@ -1327,6 +1328,10 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     noise_risk = "medium_noise"
     fetch_reliability = "stable_public"
 
+    @classmethod
+    def get_parameter_schema(cls):
+        return super().get_parameter_schema() + parameter_schema()
+
     def _matches_article_url(self, url: str) -> bool:
         if not super()._matches_article_url(url):
             return False
@@ -1460,7 +1465,182 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
             return {**detail, "url": str(response.url)}
         return await super()._detail_for_url(client, url, max_chars)
 
+    def _window_listing_day(self, raw, reference_now):
+        zone = ZoneInfo("Asia/Shanghai")
+        if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw):
+            try:
+                start = datetime.fromisoformat(raw).replace(tzinfo=zone)
+            except ValueError:
+                return None
+        else:
+            value = self._parse_listing_datetime(raw, reference_now)
+            if not value:
+                return None
+            local = datetime.fromisoformat(value).astimezone(zone)
+            start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+    @staticmethod
+    def _window_detail_stamp(soup):
+        # Never take dates from related cards or footer. The source's primary
+        # article header is authoritative and uses Beijing time.
+        head = soup.select_one(".article_info")
+        date = head.select_one(".date") if head else None
+        time = head.select_one(".time") if head else None
+        if not date or not time:
+            return None
+        raw = date.get_text(strip=True) + " " + time.get_text(strip=True)
+        try:
+            stamp = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        except ValueError:
+            return None
+        return raw, stamp.astimezone(timezone.utc)
+
+    async def _run_publication_window(self, client, window):
+        report = CoverageReport(self.source_id, window)
+        self.coverage_report = report
+        entries, seen = [], set()
+        reference_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        for page in range(1, window.max_pages + 1):
+            url = self.listing_url if page == 1 else f"https://www.qbitai.com?cat=21&page={page}"
+            report.pages = page
+            response = await self._safe_get(client, url)
+            if response is None:
+                report.partial("listing_request_failed")
+                break
+            soup = BeautifulSoup(response.text, "html.parser")
+            rows = self._list_items(soup)
+            if not rows:
+                # Empty/malformed HTML is not evidence of archive exhaustion.
+                report.partial("listing_empty_or_malformed")
+                break
+            older_page, new_count = True, 0
+            for row in rows:
+                link = row.select_one(".text_box h4 a[href]")
+                if not link:
+                    report.partial("listing_item_invalid")
+                    older_page = False
+                    continue
+                article_url = self._normalize_article_url(urljoin(str(response.url), str(link["href"])))
+                if (urlparse(article_url).hostname or "").lower() not in {"www.qbitai.com", "qbitai.com"}:
+                    report.partial("listing_item_host_invalid")
+                    continue
+                if not self._matches_article_url(article_url):
+                    continue
+                if article_url in seen:
+                    report.partial("listing_duplicate_item")
+                    continue
+                seen.add(article_url)
+                new_count += 1
+                node = row.select_one(".info .time")
+                raw = self._clean_text(node.get_text(" ", strip=True)) if node else ""
+                day = self._window_listing_day(raw, reference_now)
+                older_page = (older_page and bool(re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw))
+                              and day is not None and day[1] <= window.after)
+                summary = row.select_one(".text_box > p")
+                author_node = row.select_one(".info .author")
+                tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in row.select(".tags_s a")]
+                image = row.select_one(".picture img")
+                media_url = str(image.get("data-original") or image.get("src") or "") if image else ""
+                entries.append({"url": article_url, "title": self._clean_text(link.get_text(" ", strip=True)),
+                                "summary": self._clean_text(summary.get_text(" ", strip=True))[:500] if summary else "",
+                                "author": self._clean_text(author_node.get_text(" ", strip=True)) if author_node else "",
+                                "tags": [tag for tag in tags if tag], "media_url": media_url,
+                                "raw_date": raw, "day": day, "page": page, "ordinal": len(entries) + 1})
+            if not new_count:
+                report.partial("repeated_page")
+                break
+            if older_page:
+                report.discovery_complete = True
+                break
+        if not report.discovery_complete:
+            report.partial("page_limit_or_incomplete")
+        existing = await self._lookup_existing_content_flags(self._content_id(e["url"]) for e in entries)
+        selected = []
+        for entry in entries:
+            url, day, raw = entry["url"], entry["day"], entry["raw_date"]
+            aid = self._content_id(url)
+            proof = {"raw_date": raw, "date_precision": "unknown", "date_timezone": "Asia/Shanghai"}
+            detail = {"title": "", "text": "", "method": "", "url": ""}
+            entry["detail_fetched"] = False
+            publish_date = ""
+            if day is not None:
+                start, end = day
+                proof = {"raw_date": raw, "date_precision": "day", "date_timezone": "Asia/Shanghai",
+                         "date_interval_start": start.isoformat(), "date_interval_end_exclusive": end.isoformat()}
+                status = ("outside_window" if end <= window.after or start > window.before
+                          else "in_window" if window.contains_day(start, end) else "date_unknown")
+                # Preserve original day text, never manufacture an exact midnight.
+                publish_date = start.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+            else:
+                status = "date_unknown"
+            if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", raw):
+                # Relative labels depend on page/cache time. An estimated day
+                # can guide discovery, but cannot certify publication membership.
+                status = "date_unknown"
+                proof = {"raw_date": raw, "date_precision": "unknown", "date_timezone": "Asia/Shanghai"}
+                publish_date = ""
+            # All boundary/unknown dates need a primary detail timestamp even for
+            # an existing ID. Existing rows are inventory-only and never yielded.
+            if status == "date_unknown" or (status == "in_window" and aid not in existing):
+                entry["detail_fetched"] = True
+                # Fixed mode deliberately uses one official HTTP response for
+                # both primary date and body; no browser fallback can substitute
+                # another representation for the publication proof.
+                response = await self._safe_get(client, url)
+                if response is not None:
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    exact = self._window_detail_stamp(soup)
+                    if exact:
+                        proof = point_proof(exact[0], exact[1], "second", "Asia/Shanghai")
+                        publish_date = exact[1].isoformat()
+                        status = "in_window" if window.contains(exact[1]) else "outside_window"
+                    if aid not in existing:
+                        detail = {**self._extract_qbitai_detail(response.text, self.default_detail_max_chars, str(response.url)),
+                                  "url": str(response.url)}
+                elif status == "in_window":
+                    report.partial("detail_unavailable")
+            if status == "date_unknown":
+                report.partial("date_unknown")
+            report.observe(aid, url, proof, status, page=entry["page"], ordinal=entry["ordinal"])
+            if status == "in_window" and aid not in existing:
+                if proof["date_precision"] == "day":
+                    # Membership is proved, but the legacy single-point field
+                    # cannot express an interval (naive dates also break mixed
+                    # comparisons). Preserve inventory, never invent midnight.
+                    reason = "date_precision_requires_archive_support"
+                    report.partial(reason)
+                    report.items[-1]["quarantine_reason"] = reason
+                else:
+                    selected.append((entry, aid, publish_date, proof, detail))
+        report.mark_archive(existing)
+        if len(selected) > window.limit:
+            report.partial("limit_reached")
+        coverage = report.summary()
+        for entry, aid, publish_date, proof, detail in selected[:window.limit]:
+            body = self._clean_qbitai_detail_text(detail.get("text", ""), entry["summary"])
+            yield WebPageArticleContent(
+                id=aid, title=entry["title"] or "未命名量子位条目", source_url=entry["url"], publish_date=publish_date,
+                content=body or entry["summary"], has_content=bool(body or entry["summary"]),
+                site_name=self.site_name, source_section=self.source_section, summary=entry["summary"], tags=list(entry["tags"]),
+                raw_data={"listing_url": self.listing_url, "url": entry["url"], "listing_source": "qbitai_main_article_list",
+                          "title": entry["title"] or "未命名量子位条目", "summary": entry["summary"],
+                          "author": entry["author"], "tags": list(entry["tags"]), "media_url": entry["media_url"],
+                          "listing_publish_date": entry["raw_date"], "detail_fetched": entry["detail_fetched"],
+                          "detail_title": detail.get("title", ""), "detail_source_url": detail.get("url", ""),
+                          "detail_text_length": len(body), "detail_extraction_method": detail.get("method", ""),
+                          "body_status": "body_extracted_unreviewed" if body else "summary_only",
+                          "publication_date_proof": proof, "publication_window": dict(coverage)},
+            )
+        report.finish(self.logger)
+
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        self.coverage_report = None
+        window = PublicationWindow.from_params(kwargs, self.default_limit)
+        if window is not None:
+            async for item in self._run_publication_window(client, window):
+                yield item
+            return
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)

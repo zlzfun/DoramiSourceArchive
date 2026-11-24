@@ -385,6 +385,8 @@ def test_candidate_evidence_is_idempotent_and_aggregates_7_and_30_days(storage):
         assert candidate.mean_confidence == pytest.approx(0.95)
         evidence = session.exec(select(CmsTagCandidateEvidenceRecord)).all()
         assert len(evidence) == 10
+        assert not candidate_meets_auto_activation_threshold(candidate, AutoActivationThresholds())
+        candidate.nearest_similarity = 0.2
         assert candidate_meets_auto_activation_threshold(candidate, AutoActivationThresholds())
 
 
@@ -464,7 +466,7 @@ def test_legacy_id_custom_rss_candidate_requires_manual_governance(storage):
         assert candidate.status == "candidate"
 
 
-def test_auto_activation_requires_combined_thresholds_and_keeps_interest_flag_off(storage):
+def test_thresholds_never_authorize_automatic_new_concepts(storage):
     with Session(storage.engine) as session:
         for idx in range(10):
             source_id = f"source-{idx % 3}"
@@ -500,12 +502,10 @@ def test_auto_activation_requires_combined_thresholds_and_keeps_interest_flag_of
             thresholds=AutoActivationThresholds(),
             now=NOW,
         )
-        assert tag is not None
-        assert tag.status == "active"
-        assert tag.activation_mode == "automatic"
-        assert tag.user_selectable is False
-        event = session.exec(select(CmsTagEventRecord)).one()
-        assert event.action == "activate" and event.actor_type == "system"
+        assert tag is None
+        assert session.exec(select(CmsTagRecord)).all() == []
+        assert candidate.status == "candidate"
+        assert session.exec(select(CmsTagEventRecord)).all() == []
 
 
 def test_single_source_frequency_cannot_auto_activate(storage):
@@ -658,7 +658,7 @@ def test_candidate_delete_is_audited_and_resolved_history_is_protected(storage):
             )
 
 
-def test_runtime_auto_activation_cycle_processes_topics_but_not_entities(storage):
+def test_runtime_cycle_maintains_topics_and_entities_without_promoting(storage):
     with Session(storage.engine) as session:
         for kind, label in (("topic", "Reasoning Runtime"), ("entity", "Stable Corp")):
             for idx in range(10):
@@ -685,8 +685,8 @@ def test_runtime_auto_activation_cycle_processes_topics_but_not_entities(storage
         version = create_taxonomy_version(session, change_summary="reviewed taxonomy", now=NOW)
         activate_taxonomy_version(session, version.version, actor_id="admin", now=NOW)
         activated = run_auto_activation_cycle(session, now=NOW)
-        assert [tag.name_en for tag in activated] == ["Reasoning Runtime"]
-        assert activated[0].code == "topic.reasoning-runtime"
+        assert activated == []
+        assert session.exec(select(CmsTagRecord)).all() == []
         entity = session.exec(
             select(CmsTagCandidateRecord).where(CmsTagCandidateRecord.proposed_kind == "entity")
         ).one()
@@ -1105,7 +1105,7 @@ def test_retag_worker_never_claims_or_processes_full_analysis_job(storage):
             )
 
 
-def test_closed_set_retag_reuses_resolved_evidence_without_rescoring(storage):
+def test_closed_set_retag_does_not_turn_identity_confidence_into_relevance(storage):
     with Session(storage.engine) as session:
         row = article("retag-evidence")
         session.add(row)
@@ -1166,15 +1166,13 @@ def test_closed_set_retag_reuses_resolved_evidence_without_rescoring(storage):
 
         finished = session.get(TagRetagJobRecord, job.id)
         analysis = session.get(ArticleAnalysisRecord, row.id)
-        assignment = session.exec(
+        assignments = session.exec(
             select(ArticleTagAssignmentRecord).where(
                 ArticleTagAssignmentRecord.article_id == row.id
             )
-        ).one()
+        ).all()
         assert finished.status == "succeeded"
-        assert assignment.tag_id == tag.id
-        assert assignment.relevance == pytest.approx(0.93)
-        assert assignment.taxonomy_version == version.version
+        assert assignments == []
         assert analysis.taxonomy_version == version.version
         assert analysis.tagging_status == "succeeded"
         assert analysis.quality_score == 8.4
@@ -1307,7 +1305,7 @@ def test_synced_taxonomy_resolves_unique_local_candidates_and_queues_idempotent_
             authority_revision="taxonomy-rev-2",
             now=NOW,
         )
-        assert result["resolved_candidate_count"] == 3
+        assert result["resolved_candidate_count"] == 2
         assert result["article_count"] == 2
         assert result["job_id"] is not None
         job = session.get(TagRetagJobRecord, result["job_id"])
@@ -1317,7 +1315,7 @@ def test_synced_taxonomy_resolves_unique_local_candidates_and_queues_idempotent_
         assert session.get(CmsTagCandidateRecord, alias_candidate.id).resolution_tag_id == alias_tag.id
         assert session.get(CmsTagCandidateRecord, exact_candidate.id).status == "merged"
         assert session.get(CmsTagCandidateRecord, alias_candidate.id).status == "merged"
-        assert session.get(CmsTagCandidateRecord, no_analysis_candidate.id).status == "merged"
+        assert session.get(CmsTagCandidateRecord, no_analysis_candidate.id).status == "rejected"
         assert session.get(CmsTagCandidateRecord, ambiguous_candidate.id).status == "candidate"
 
         replay = reconcile_synced_taxonomy_candidates(
@@ -1343,7 +1341,4 @@ def test_synced_taxonomy_resolves_unique_local_candidates_and_queues_idempotent_
             now=NOW,
         )
         assignments = session.exec(select(ArticleTagAssignmentRecord)).all()
-        assert {(row.article_id, row.tag_id) for row in assignments} == {
-            (local_exact.id, exact_tag.id),
-            (local_alias.id, alias_tag.id),
-        }
+        assert assignments == []  # Identity resolution is not relevance evaluation.
