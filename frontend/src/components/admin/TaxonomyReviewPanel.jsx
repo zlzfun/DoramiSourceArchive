@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
-import { decideReviewProposal, fetchCmsTags, fetchReviewProposal, fetchReviewProposals, groupReviewProposals } from '../../api';
+import { aiReviewProposal, decideReviewProposal, fetchCmsTags, fetchReviewProposal, fetchReviewProposals, groupReviewProposals } from '../../api';
 import Modal from '../Modal';
 import { formatStamp } from './adminUtils';
 
@@ -25,6 +25,17 @@ export default function TaxonomyReviewPanel({ showToast, proposalId = null, refr
   const [tagQuery, setTagQuery] = useState('');
   const [tags, setTags] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(null);
+  const runAiReview = async (item) => {
+    setAiBusy(item.id); setError('');
+    try {
+      const result = await aiReviewProposal(item.id, { expected_revision: item.revision,
+        expected_taxonomy_revision: item.current_taxonomy_revision });
+      showToast?.(result.status === 'approved' ? 'AI 已批准为目录草稿' : 'AI 审核完成，提案仍待人工处理');
+      await load();
+    } catch (e) { setError(e.message); }
+    finally { setAiBusy(null); }
+  };
   const generation = useRef(0);
   const load = useCallback(async (nextCursor = 0) => {
     const gen = ++generation.current;
@@ -115,7 +126,16 @@ export default function TaxonomyReviewPanel({ showToast, proposalId = null, refr
             {item.retag_status !== 'not_queued' && <span>补标：{item.retag_status}</span>}
           </div>
           {item.decision_reason && <p className="text-sm">{item.decided_by}：{item.decision_reason}</p>}
+          {item.ai_review && <p className="text-sm">
+            AI 审核{item.ai_review.confidence != null ? ` · 置信度 ${(item.ai_review.confidence * 100).toFixed(1)}%` : ''}：
+            {item.ai_review.reason || '审核进行中；中断后需人工核实'}
+          </p>}
           {canDecide && <div className="flex flex-wrap gap-2">
+            {item.status === 'pending' && !item.ai_review && <button type="button"
+              title={item.ai_review_enabled ? '超过 80% 批准为目录草稿' : '需开启 AI 审核开关'}
+              className="action-button min-h-11" disabled={aiBusy != null || !item.ai_review_enabled} onClick={() => runAiReview(item)}>
+              {aiBusy === item.id ? 'AI 审核中…' : 'AI 自动审核（>80% 批准）'}
+            </button>}
             <button type="button" className="action-button min-h-11" onClick={() => edit(item, 'approve')}>批准为目录草稿</button>
             <button type="button" className="action-button min-h-11 action-button-quiet" onClick={() => edit(item, 'merge')}>归并已有标签</button>
             <button type="button" className="action-button min-h-11 action-button-quiet" onClick={() => edit(item, 'defer')}>暂缓 7 天</button>

@@ -4,7 +4,7 @@
 > 适用于包含 issue #298 / PR #333 的版本。编写时尚未合入、发布或部署；本手册是上线操作说明，不表示目标节点已开启。
 
 本次自动治理负责候选维护、已有名称／别名的精确归并、相关性补标和审核提案维护。
-新概念、新同义别名与实体身份仍需管理员审核；审核通过的新标签先成为 draft，发布是独立操作。
+新概念可人工审核，或由管理员逐条发起 AI 审核：置信度严格 >80%、明确建议 new 且无未解决风险时批准为 draft。新同义别名、含糊实体身份与其它关系仍交人工处理；发布是独立操作。
 个人自定义兴趣不必等待公共标签发布，也不由这些公共治理开关控制。
 
 **当前部署不接入飞书，也不通知管理员去审核。** 飞书提醒仅保留为默认关闭的灰度能力，不是自动治理的上线前提；站内提案可以独立保留。
@@ -27,10 +27,11 @@
 | 主 INI `[taxonomy]` | `exact_merge_enabled=true` | 允许精确归并能力；仍需下面的数据库总开关和已发布目录 |
 | 管理台「运维管理 → 分析与标签」 | **精确归并**，存储键 `taxonomy_auto_activation_enabled=true` | 允许实际自动归并唯一已有正式名称／别名，不再表示自动发布新概念 |
 | 主 INI `[taxonomy]` | `review_enabled=true`（站内提案可选） | 每 5 分钟生成／更新站内审核提案；模型可用时附语义建议，否则保留未完成语义复核的证据提案；不等于打开通知 |
+| 主 INI `[taxonomy]` | `review_ai_enabled=true`（可选灰度） | 允许管理员逐条发起 AI 审核；>80% 的无风险新概念建议批准为草稿，不启动定时或自动发布 |
 | 主 INI `[taxonomy]` | `feishu_config_path` **留空** | 当前不接入通知文件，不注册飞书发送任务 |
 | 私密 INI `[feishu_notifications]` | `enabled=false`（通知灰度总闸） | 已有私密配置也保持关闭；以后灰度才启用，不需要为本次部署创建文件或填写凭据 |
 
-以上三个主 INI 布尔值和管理台精确归并开关默认关闭。实际自动归并要求 `governance_enabled`、`exact_merge_enabled`、数据库精确归并三个条件同时满足，并且目录已发布、本机有治理权。`review_enabled` 不影响精确归并是否放行。
+以上四个主 INI 布尔值和管理台精确归并开关默认关闭。实际自动归并要求 `governance_enabled`、`exact_merge_enabled`、数据库精确归并三个条件同时满足，并且目录已发布、本机有治理权。`review_enabled` 不影响精确归并是否放行。
 
 下面两项是**持续产生新候选证据**的条件，不是维护已有积压的前提：
 
@@ -50,6 +51,8 @@ catalog = config/taxonomy-v1-approved-catalog.json
 governance_enabled = true
 exact_merge_enabled = true
 review_enabled = true
+# 需要管理员逐条 AI 审核时才开启，默认关闭。
+review_ai_enabled = false
 # 当前不接入飞书；通知灰度默认关闭，保持留空。
 feishu_config_path =
 ```
@@ -121,3 +124,12 @@ feishu_config_path =
 - 保留已归并结果、提案、审计和计费记录；关闭开关不撤销历史治理。不删除 unknown 或改身份重付。需要软件回滚时按部署手册切回已验证 tag／备份，不用 Alembic downgrade 伪造业务撤销。
 
 本手册不重新启用已取消的 automation 298、旧 LaunchAgent 或长时收费验证；它们不是正式服务自动治理的组成部分。
+
+
+## 管理员发起 AI 审核（默认关闭）
+
+主 INI `[taxonomy] review_ai_enabled = true`，受控重启后在“新概念审核”的待审核卡片点击“AI 自动审核”。辅助模型必须已配置；本地权威或 manual 节点可执行，replica／远端治理镜像拒绝。此开关仅允许手动逐条发起，不注册定时任务，不依赖 review_enabled，也不启用飞书。
+
+每条发起持久后台任务，调用辅助模型一次（关闭自动重试），最多提供 3 篇当前允许外发公开文章的标题及 1200 字符正文摘录，以及候选名称和当前目录。置信度为模型自报，并非实测准确率；80% 本身不通过，>80% 仍须是无风险的新概念建议。无效／未知／歧义／同名冲突或输入变更均不自动批准。已处理证据不重复收费，进程中断后可人工处理，不能自动重发。
+
+审批结果、置信度、模型／提示词版本和发起者保存在提案修订记录。通过只创建目录草稿，正式标签数量须发布后才增加；不会自动发布其它草稿。API：POST `/api/admin/taxonomy/review-proposals/{id}/ai-review`，传 expected_revision 与 expected_taxonomy_revision，返回 job_id，经 `/api/jobs/{id}` 查看结果。关掉 review_ai_enabled 会阻止后续审核与在途结果应用，不取消已发送的模型请求。

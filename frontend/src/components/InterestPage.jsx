@@ -103,8 +103,6 @@ export default function InterestPage({
   // 手机订阅 Tab 的兴趣段(issue #230 批 3a;样页「订阅 · 兴趣」):传了就把「我的兴趣」画成常开的分组卡——
   // 每行点了读它的条目流(onReadTag(tag)),行尾 × 移出;组首一行「全部兴趣内容」(onReadAll(n))读全站兴趣命中。
   // 不传(发现页的兴趣段)沿用折叠台账
-  interestCapabilities = null,
-  onReadCustom = null,
   onReadTag = null,
   onReadAll = null,
 }) {
@@ -327,7 +325,12 @@ export default function InterestPage({
   };
 
   const facets = (needle ? searchCatalog?.facets : catalog?.facets) || {};
-  const customNode = <CustomInterestPanel guest={guest} interestCapabilities={interestCapabilities} onReadCustom={onReadCustom} onSaved={onSaved} showToast={showToast} />;
+  const catalogCount = (kind) => {
+    const visible = (facets[kind] || []).length;
+    const total = !needle && catalog?.facet_stats?.[kind]?.eligible_count;
+    return total > visible ? `${visible} / ${total}` : visible;
+  };
+  const customNode = <CustomInterestPanel guest={guest} onSaved={onSaved} showToast={showToast} />;
   const searchMoreNode = needle && (searchBusy ? <div className="brief-state" role="status">搜索中…</div>
     : searchCatalog?.next_cursor && <button type="button" className="interest-more" onClick={loadMoreSearch}>加载更多</button>);
   const sectionOf = (kind) => {
@@ -415,7 +418,7 @@ export default function InterestPage({
       <section key={kind} className="interest-sec" aria-label={KIND_META[kind].label} ref={(el) => { sectionRefs.current[kind] = el; }}>
         <div className="brief-sec-head">
           <span className="brief-sec-title">{KIND_META[kind].label}</span>
-          <span className="brief-sec-count">{needle ? `${sec.filtered.length} / ${sec.all.length}` : sec.all.length}</span>
+          <span className="brief-sec-count">{needle ? sec.filtered.length : catalogCount(kind)}</span>
           <span className="brief-sec-rule" />
         </div>
         <div className="interest-grid">
@@ -479,7 +482,7 @@ export default function InterestPage({
           <div className="interest-mseg" role="tablist" aria-label="兴趣分面">
             {KINDS.map((kind) => (
               <button key={kind} type="button" role="tab" aria-selected={activeKind === kind} className={activeKind === kind ? 'is-on' : ''} onClick={() => setActiveKind(kind)}>
-                {KIND_META[kind].label}<small>{(facets[kind] || []).length}</small>
+                {KIND_META[kind].label}<small>{catalogCount(kind)}</small>
               </button>
             ))}
           </div>
@@ -601,7 +604,7 @@ export default function InterestPage({
           {KINDS.map((kind) => (
             <button key={kind} type="button" className={`interest-jump ${activeKind === kind ? 'is-on' : ''}`} aria-pressed={activeKind === kind} onClick={() => jumpTo(kind)}>
               <span className="interest-jump-name">{KIND_META[kind].label}</span>
-              <span className="interest-jump-n">{(facets[kind] || []).length || ''}</span>
+              <span className="interest-jump-n">{catalogCount(kind) || ''}</span>
             </button>
           ))}
           {catalog && (
@@ -633,7 +636,7 @@ export default function InterestPage({
               <section key={kind} className="interest-sec" aria-label={KIND_META[kind].label} ref={(el) => { sectionRefs.current[kind] = el; }}>
                 <div className="brief-sec-head">
                   <span className="brief-sec-title">{KIND_META[kind].label}</span>
-                  <span className="brief-sec-count">{needle ? `${sec.filtered.length} / ${sec.all.length}` : sec.all.length}</span>
+                  <span className="brief-sec-count">{needle ? sec.filtered.length : catalogCount(kind)}</span>
                   <span className="brief-sec-rule" />
                 </div>
                 <div className="interest-grid">

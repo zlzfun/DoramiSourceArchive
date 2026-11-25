@@ -1473,6 +1473,12 @@ export function fetchReviewProposals(filters = {}) {
 export function fetchReviewProposal(id) {
   return request(`/admin/taxonomy/review-proposals/${enc(id)}`, { errorMsg: '获取提案失败' });
 }
+export async function aiReviewProposal(id, body) {
+  const result = await request(`/admin/taxonomy/review-proposals/${enc(id)}/ai-review`, {
+    method: 'POST', body, errorMsg: '发起 AI 审核失败',
+  });
+  return pollJob(result.job_id, { defaultError: 'AI 审核未完成' });
+}
 export function decideReviewProposal(id, body) {
   return request(`/admin/taxonomy/review-proposals/${enc(id)}/decide`, { method: 'POST', body, errorMsg: '处理提案失败' });
 }

@@ -1,3 +1,4 @@
+import CustomInterestFilter from './CustomInterestFilter';
 import CurrentInterestMatches from './CurrentInterestMatches';
 import { canFilterCustomInterests } from '../utils/readerInterestQuery';
 import PodcastGuideFilter from './PodcastGuideFilter';
@@ -1556,6 +1557,12 @@ export default function ReaderTab({
             {searchOpen ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
           </button>
         </div>
+
+        {!podcastView && customInterests.length > 0 && <div className="px-4 pb-2 flex">
+          <CustomInterestFilter items={customInterests} capabilities={interestCapabilities}
+            value={activeCustomInterestId || ''} onChange={(id) => id
+              ? openMatchedInterest({ kind: 'custom', id }) : backToAll('subscribed')} />
+        </div>}
 
         {/* 来源栏收起时,范围名下拉出同一份来源列表;点一行(来源 / 标签 / 发现更多来源)即收起 */}
         {srcFolded && srcPop && (

@@ -185,6 +185,13 @@ def refresh_review_proposals(session: Session, *, limit=100, now=None, adviser: 
                 count['unchanged']+=1;continue
             fingerprint=_evidence_hash(evidence)
             prior_evidence=json.loads(p.evidence_json) if p else {}
+            # A routine proposal refresh must not erase a sent AI approval claim
+            # and make the same evidence chargeable again. Interrupted claims
+            # remain visible for manual handling; the live worker owns completion.
+            if prior_evidence.get('ai_review', {}).get('state') == 'running':
+                count['unchanged']+=1;continue
+            if prior_evidence.get('ai_review') and prior_evidence.get('items') == evidence['items']:
+                evidence['ai_review']=prior_evidence['ai_review']
             evidence_same=p and p.evidence_hash==fingerprint
             adviser_due=bool(adviser and (prior_evidence.get('adviser_version')!=adviser_version or p.taxonomy_revision!=taxonomy.current_taxonomy_sync_revision(session) or [(x['article_id'],x.get('version_fingerprint')) for x in prior_evidence.get('items',[])]!=[(x['article_id'],x.get('version_fingerprint')) for x in evidence['items']]))
             deferred_wait=p and p.status=='deferred' and p.next_review_at>current.isoformat()
@@ -261,6 +268,8 @@ def refresh_review_proposals(session: Session, *, limit=100, now=None, adviser: 
 
 def proposal_payload(session, p, *, now=None):
     current=_now(now);result=p.model_dump()
+    result['ai_review']=json.loads(p.evidence_json).get('ai_review')
+    result['ai_review_enabled']=settings.taxonomy.review_ai_enabled
     result['members']=[{'id':c.id,'label':c.label,'kind':c.proposed_kind,'status':c.status} for cid in _members(p)
                        if (c:=session.get(CmsTagCandidateRecord,cid)) is not None]
     result['risks']=json.loads(p.risks_json)

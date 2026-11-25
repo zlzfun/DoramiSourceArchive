@@ -133,6 +133,7 @@ class TaxonomyDeploymentConfig:
     governance_enabled: bool = False
     exact_merge_enabled: bool = False
     review_enabled: bool = False
+    review_ai_enabled: bool = False
     feishu_config_path: str = ""
 
 
@@ -1158,6 +1159,7 @@ def load_config() -> AppConfig:
             governance_enabled=parser.getboolean("taxonomy", "governance_enabled", fallback=False),
             exact_merge_enabled=parser.getboolean("taxonomy", "exact_merge_enabled", fallback=False),
             review_enabled=parser.getboolean("taxonomy", "review_enabled", fallback=False),
+            review_ai_enabled=parser.getboolean("taxonomy", "review_ai_enabled", fallback=False),
             feishu_config_path=parser.get("taxonomy", "feishu_config_path", fallback="").strip(),
         ),
         network=NetworkConfig(

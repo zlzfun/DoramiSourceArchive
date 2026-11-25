@@ -1,5 +1,6 @@
 """Authenticated review inbox; GET never applies governance actions."""
 from __future__ import annotations
+import asyncio
 from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field
 from sqlmodel import Session,select
@@ -35,6 +36,32 @@ def list_review_proposals(status:str=Query('pending',pattern='^(all|pending|defe
 class ProposalSelection(BaseModel):
     id:int=Field(ge=1)
     revision:int=Field(ge=1)
+
+
+class AiReviewBody(BaseModel):
+    expected_revision:int=Field(ge=1)
+    expected_taxonomy_revision:int=Field(ge=0)
+
+
+@router.post('/review-proposals/{proposal_id}/ai-review', dependencies=[Depends(_require_local_taxonomy_authority)])
+async def start_ai_review(proposal_id:int, body:AiReviewBody,
+        session:Session=Depends(deps.get_session), auth:dict=Depends(deps.require_admin)):
+    from services import jobs, taxonomy_ai_review
+    from services.interest_governance_llm import make_taxonomy_adviser
+    if not service.settings.taxonomy.review_ai_enabled:
+        raise HTTPException(409, 'AI 审核灰度开关未开启')
+    engine=session.get_bind()
+    adviser=make_taxonomy_adviser(engine, limit=1, auto_review=True)
+    if adviser is None:
+        raise HTTPException(409, '请先配置审核使用的辅助模型')
+    actor=str(auth.get('sub') or auth.get('username') or 'admin')
+    async def work(job):
+        return await asyncio.to_thread(taxonomy_ai_review.run_ai_review, engine, proposal_id,
+            **body.model_dump(), actor_id=actor, adviser=adviser)
+    session.rollback()
+    job=jobs.launch(engine, 'taxonomy_ai_review', work, created_by=actor,
+        payload={'proposal_id':proposal_id, **body.model_dump()})
+    return {'job_id':job.id}
 
 
 class GroupBody(BaseModel):

@@ -276,7 +276,7 @@ def make_interest_verifier(engine):
     return verify
 
 
-def make_taxonomy_adviser(engine, *, limit=8):
+def make_taxonomy_adviser(engine, *, limit=8, auto_review=False):
     """Advises on supplied public, external-AI-eligible evidence; never applies."""
     if _config(engine) is None:
         return None
@@ -299,14 +299,23 @@ def make_taxonomy_adviser(engine, *, limit=8):
             "relation:equivalent|broader|narrower|related|new|unknown,target_tag_id:现有ID或null,"
             "reason:中文依据,risks:[冲突或缺失证据]}。不得编造目标ID或证据。"
         )
+        if auto_review:
+            prompt += (
+                "本次用于新概念审批：还须返回 confidence（0到1的数字，表示证据足以支持新标签定义的置信度）。"
+                "只有独立、稳定、可复用且现有目录不能覆盖的新概念才能 relation=new；"
+                "须审查所有候选名称，定义应准确涵盖它们。理由须具体说明证据如何支持定义。"
+                "身份、范围、证据、重名等未解决疑点必须写入 risks，不得为了通过审核而隐藏风险或抬高置信度。"
+            )
         raw = asyncio.run(chat_completion(
             messages=[ChatMessage("system", prompt), ChatMessage("user", json.dumps(payload, ensure_ascii=False))],
             config=config, temperature=0, max_tokens=1200, response_json=True,
-            max_retries=1, require_complete=True,
+            max_retries=0 if auto_review else 1, require_complete=True,
             usage_meta=UsageMeta("taxonomy_review_advice", username="system"),
         ))
         result = parse_json_object(raw)
-        result["adviser_version"] = "taxonomy-adviser-v1"
+        result["adviser_version"] = "taxonomy-auto-review-v1" if auto_review else "taxonomy-adviser-v1"
+        if auto_review:
+            result["model"] = config.model
         result["adviser_status"] = "ok"
         return result
 

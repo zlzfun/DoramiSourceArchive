@@ -1,3 +1,4 @@
+import CustomInterestFilter from '../CustomInterestFilter';
 import { canFilterCustomInterests } from '../../utils/readerInterestQuery';
 import PodcastGuideFilter from '../PodcastGuideFilter';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -492,9 +493,11 @@ export default function MobileReader({
 
   // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」(页头一像素不动)。
   //    批 2 过渡形态里这一行还列来源 / 收藏 / 兴趣筛选胶囊;批 3a 起这些收窄都在订阅 Tab 的推入页,内容 Tab 只剩订阅聚合 ──
-  const scopeRow = unreadOnly ? (
+  const scopeRow = unreadOnly || (mode === 'article' && rs.customInterests?.length) ? (
     <div className="m-scope" role="group" aria-label="当前筛选">
-      <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>
+      {unreadOnly && <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>}
+      {mode === 'article' && <CustomInterestFilter items={rs.customInterests} capabilities={interestCapabilities}
+        onChange={(id) => { if (id) openMatchedInterest({ kind: 'custom', id }); }} />}
     </div>
   ) : null;
 

@@ -50,28 +50,8 @@ function harness(props = {}, item = saved) {
 const semantic = (title) => ({ status: 'semantic_verification_required', items: [], scanned: 12,
   lexical_candidates: title ? [{ article_id: title, title, outcome: 'unknown' }] : [] });
 
-test('custom article navigation requires every capability, an active interest and a callback', () => {
-  const capabilities = { interest_match_projection: 1, custom_interest_filter: true, match_contract: 1 };
-  const reads = [];
-  const onReadCustom = (ref) => reads.push(ref);
-  const enabled = harness({ interestCapabilities: capabilities, onReadCustom }).button('查看文章');
-  assert.equal(enabled.props.disabled, false);
-  enabled.props.onClick();
-  assert.deepEqual(reads, [{ kind: 'custom', id: '3' }]);
-  for (const key of Object.keys(capabilities)) {
-    const partial = { ...capabilities };
-    delete partial[key];
-    assert.equal(harness({ interestCapabilities: partial, onReadCustom }).button('查看文章').props.disabled, true, key);
-  }
-  for (const h of [
-    harness(),
-    harness({ interestCapabilities: null, onReadCustom }),
-    harness({ interestCapabilities: capabilities }),
-    harness({ interestCapabilities: capabilities, onReadCustom }, { ...saved, status: 'paused' }),
-  ]) assert.equal(h.button('查看文章').props.disabled, true);
-  // Disabled DOM buttons are never dispatched; legacy editor previews below
-  // deliberately keep the component's default missing-capability props.
-  assert.deepEqual(reads, [{ kind: 'custom', id: '3' }]);
+test('discover custom interests keep editing without article navigation buttons', () => {
+  assert.equal(harness().button('查看文章'), undefined);
 });
 
 test('semantic preview shows candidates awaiting verification, including an empty candidate list', async () => {

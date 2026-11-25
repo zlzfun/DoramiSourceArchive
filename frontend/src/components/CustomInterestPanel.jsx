@@ -1,4 +1,3 @@
-import { canFilterCustomInterests } from '../utils/readerInterestQuery';
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { deleteCustomInterest, fetchInterests, previewCustomInterest, saveCustomInterest } from '../api';
@@ -7,7 +6,7 @@ import { requestLogin } from '../utils/loginPrompt';
 import { customInterestBody, customInterestForm } from '../utils/customInterestForm';
 import './customInterests.css';
 
-export default function CustomInterestPanel({ guest = false, onSaved, showToast, interestCapabilities = null, onReadCustom = null }) {
+export default function CustomInterestPanel({ guest = false, onSaved, showToast }) {
   const [items, setItems] = useState([]);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(customInterestForm);
@@ -98,10 +97,6 @@ export default function CustomInterestPanel({ guest = false, onSaved, showToast,
             <button type="button" className="interest-chip" onClick={() => edit(item)}>
               <span className="interest-chip-name">{item.name}</span>{item.status === 'paused' && <span>已暂停</span>}
             </button>
-            <button type="button" className="interest-btn"
-              disabled={item.status !== 'active' || !canFilterCustomInterests(interestCapabilities) || !onReadCustom}
-              aria-label={`查看「${item.name}」的文章`}
-              onClick={() => onReadCustom?.({ kind: 'custom', id: String(item.id) })}>查看文章</button>
           </div>
         ))}
       </div>
