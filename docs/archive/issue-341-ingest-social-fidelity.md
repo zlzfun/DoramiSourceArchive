@@ -1,6 +1,6 @@
 # 收录推送:推文结构的保真与补全(issue #341)
 
-> **归档于 2026-11-25(issue #341,开发版 3.70.5-alpha,纯后端)**:现状以 `docs/contracts/ingest_push.md`、`src/services/social_ingest.py`、`src/services/social_merge.py` 与 `tests/test_ingest_social_fidelity.py` 为准,文中路径与状态为当时记录。
+> **归档于 2026-11-25(issue #341,PR #342,开发版 3.70.5-alpha,纯后端;Codex 两轮检视)**:现状以 `docs/contracts/ingest_push.md`、`src/services/social_ingest.py`、`src/services/social_merge.py` 与 `tests/test_ingest_social_fidelity.py` 为准,文中路径与状态为当时记录。
 > 状态:已落地待发布(2026-11-25 开工并当日收口;不改前端、不加迁移、不动同步流)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §8)。分支 `feat/issue-341-ingest-social-fidelity`。
 > 关联:[issue #341](https://github.com/zlzfun/DoramiSourceArchive/issues/341);前情是统一收录入口的 [issue #262](../plans/issue-262-agent-ingest-sources.md)(PR #271)。
