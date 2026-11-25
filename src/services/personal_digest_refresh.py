@@ -716,11 +716,20 @@ def apply_preference_intents(
     *,
     now: dt.datetime | None = None,
     clock: Callable[[], dt.datetime] | None = None,
-) -> dict[str, int]:
-    """把静置够久的兴趣 / 订阅意向落成新版。"""
+    wait: bool = True,
+) -> dict[str, int] | None:
+    """把静置够久的兴趣 / 订阅意向落成新版。
 
-    with _PREFERENCE_PASS_LOCK:
+    ``wait=False``(到点任务用):另一轮正在跑时不排队,返回 ``None``——到点任务每个账号一个,
+    一轮里可能要等标题翻译;都堵在这把锁上会把共用的线程池占满(检视 R2)。巡检用默认的等。
+    """
+
+    if not _PREFERENCE_PASS_LOCK.acquire(blocking=wait):
+        return None
+    try:
         return _apply_preference_intents(engine, now=now, clock=clock)
+    finally:
+        _PREFERENCE_PASS_LOCK.release()
 
 
 def _apply_preference_intents(

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import base64
 import hashlib
 import hmac
+import threading
 import time
 import httpx
 from contextlib import asynccontextmanager
@@ -3273,34 +3274,58 @@ def execute_personal_digest_pending_job():
 
 
 PREFERENCE_REFRESH_JOB_PREFIX = "personal_digest_preference:"
+PREFERENCE_REFRESH_RETRY_JOB_ID = "personal_digest_preference_retry"
+# 到点时另一轮偏好换版正在跑:隔这么久补跑一次(只留一个补跑任务,不让每个账号的到点任务各占一个线程排队)。
+PREFERENCE_REFRESH_BUSY_RETRY_SECONDS = 2
+_preference_schedule_lock = threading.Lock()
 
 
 def execute_preference_refresh_job() -> None:
     """读者改完兴趣 / 订阅、静置期满时跑一次偏好换版(issue #343),不等 30 秒巡检的下一拍。"""
 
     try:
-        personal_digest_refresh_service.apply_preference_intents(db_sink.engine)
+        outcome = personal_digest_refresh_service.apply_preference_intents(db_sink.engine, wait=False)
     except Exception as exc:  # noqa: BLE001 - 30 秒巡检是兜底
         _dorami_logger.warning("个人早报偏好到点换版失败: %s", exc)
+        return
+    if outcome is None and scheduler.running:
+        # 正在跑的那一轮是按它开始时的时刻判静置的,刚到点的这一条它不会带上:稍后补跑一次。
+        scheduler.add_job(
+            execute_preference_refresh_job,
+            "date",
+            run_date=datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(seconds=PREFERENCE_REFRESH_BUSY_RETRY_SECONDS),
+            id=PREFERENCE_REFRESH_RETRY_JOB_ID,
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
 
 def schedule_preference_refresh(username: str, due_at: datetime.datetime) -> None:
     """按「意向时刻 + 静置期」定一个一次性任务。每个账号一个 id:连着改几次只留最后一次(静置重新起算)。
 
+    到点时刻只往后挪、不往前挪:两个请求交错时,先记意向的可能后登记,不能把任务改回较早的时刻
+    (那样到点时静置还不够,白跑一趟,只能等巡检——检视 R2)。读已有任务与登记在同一把进程内的锁里。
     调度器没起(拆分部署里不跑调度的进程、测试里没进 lifespan)时什么都不做——30 秒巡检会接手。
     从请求线程里调用:AsyncIOScheduler 的 add_job 会把唤醒投回事件循环,跨线程安全。
     """
 
     if not username or not scheduler.running:
         return
-    scheduler.add_job(
-        execute_preference_refresh_job,
-        "date",
-        run_date=due_at,
-        id=f"{PREFERENCE_REFRESH_JOB_PREFIX}{username}",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+    job_id = f"{PREFERENCE_REFRESH_JOB_PREFIX}{username}"
+    with _preference_schedule_lock:
+        existing = scheduler.get_job(job_id)
+        planned = getattr(getattr(existing, "trigger", None), "run_date", None)
+        if planned is not None and planned >= due_at:
+            return
+        scheduler.add_job(
+            execute_preference_refresh_job,
+            "date",
+            run_date=due_at,
+            id=job_id,
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
 
 async def execute_daily_brief_job():

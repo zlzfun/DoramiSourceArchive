@@ -1479,12 +1479,31 @@ def test_intent_on_an_edition_still_generating_is_not_announced(storage, no_back
         no_background_preference_refresh(None)
 
 
+class _GateLock:
+    """包在偏好那一步的互斥锁外面:有人在锁被占着时来要锁,就报个信——用例据此知道「第二个已经到门口了」。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.contended = threading.Event()
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if self._lock.locked():
+            self.contended.set()
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+
 def test_due_job_and_patrol_never_run_the_preference_pass_at_once(storage, monkeypatch):
-    """到点任务与 30 秒巡检可能同时来:偏好那一步串行跑,后到的等前一个跑完再按最新状况判。"""
+    """到点任务与 30 秒巡检可能同时来:偏好那一步串行跑。巡检等前一个跑完再按最新状况判;
+    到点任务不排队(``wait=False`` 立刻拿到 ``None``),免得每个账号的任务各占一个线程堵在锁上。"""
 
     edited = NOW + dt.timedelta(minutes=5)
     _alice_with_interest_intent(storage, edited=edited)
     real = refresh._apply_one_preference_intent  # noqa: SLF001
+    gate = _GateLock()
+    monkeypatch.setattr(refresh, "_PREFERENCE_PASS_LOCK", gate)
     state = {"inside": 0, "peak": 0}
     first_inside = threading.Event()
     release = threading.Event()
@@ -1506,17 +1525,24 @@ def test_due_job_and_patrol_never_run_the_preference_pass_at_once(storage, monke
         threading.Thread(target=lambda: results.append(refresh.apply_preference_intents(storage.engine, now=tick)))
         for _ in range(2)
     ]
-    workers[0].start()
-    assert first_inside.wait(10)
-    workers[1].start()
-    time.sleep(0.2)                    # 第二个若没被挡住,这时已经进到同一步里了
-    assert state["peak"] == 1
-    release.set()
-    for worker in workers:
-        worker.join(15)
-        assert not worker.is_alive()
+    try:
+        workers[0].start()
+        assert first_inside.wait(10)
+        # 前一轮还在里面:到点任务那种不等的调用立刻返回,什么都没做
+        assert refresh.apply_preference_intents(storage.engine, now=tick, wait=False) is None
+        gate.contended.clear()
+        workers[1].start()
+        assert gate.contended.wait(10)     # 第二个到了锁前,被挡在外面
+        assert state["peak"] == 1 and state["inside"] == 1
+    finally:
+        release.set()
+        for worker in workers:
+            if worker.is_alive() or worker.ident is not None:
+                worker.join(15)
+    assert not any(worker.is_alive() for worker in workers)
     assert state["peak"] == 1
     # 一个落成,另一个进来时意向已清:只出一版
     assert sorted(results, key=len) == [{}, {"published": 1}]
     assert _editions(storage) == [(1, "superseded", "scheduled"), (2, "ready", "interest_changed")]
-
+    # 没人占着的时候,不等的调用照常跑
+    assert refresh.apply_preference_intents(storage.engine, now=tick, wait=False) == {}

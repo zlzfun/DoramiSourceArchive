@@ -1460,7 +1460,14 @@ def test_preference_refresh_is_scheduled_once_per_account_and_runs_the_pass(
         scheduled = [job.id for job in app_module.scheduler.get_jobs() if job.id.startswith(app_module.PREFERENCE_REFRESH_JOB_PREFIX)]
         assert sorted(scheduled) == [job_id("alice"), job_id("bob")]
 
-        # 真实路径:改兴趣 → 记意向 → 登记到点任务,时刻 = 意向时刻 + 静置期
+        # 到点时刻只往后挪:交错的两个请求里,先记意向的后登记,不能把任务改回较早的时刻
+        app_module.schedule_preference_refresh("bob", far - dt.timedelta(seconds=30))
+        assert app_module.scheduler.get_job(job_id("bob")).trigger.run_date == far
+
+        # 真实路径:改兴趣 → 记意向 → 登记到点任务,时刻 = 意向时刻 + 静置期。
+        # 静置期先放到一小时:任务在用例期间不会自己跑掉(否则慢机器上它可能先于下面的断言执行、消失)
+        monkeypatch.setattr(digest_refresh, "PREFERENCE_QUIET_SECONDS", 3600)
+        app_module.scheduler.remove_job(job_id("alice"))
         _login(client, "alice")
         edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert client.put(
@@ -1478,9 +1485,27 @@ def test_preference_refresh_is_scheduled_once_per_account_and_runs_the_pass(
         assert job.func is app_module.execute_preference_refresh_job
         app_module.scheduler.remove_job(job_id("alice"))   # 不让它在用例里自己跑
 
-        # 到点任务跑的就是偏好那一步:静置期打成 0 后跑一次,换成按新兴趣编的一版
+        # 到点时另一轮正在跑:不排队,只定一个稍后的补跑任务(再来几个到点任务也还是这一个)
         monkeypatch.setattr(digest_refresh, "PREFERENCE_QUIET_SECONDS", 0)
+        retry_id = app_module.PREFERENCE_REFRESH_RETRY_JOB_ID
+        assert digest_refresh._PREFERENCE_PASS_LOCK.acquire(blocking=False)  # noqa: SLF001
+        try:
+            before = dt.datetime.now(dt.timezone.utc)
+            app_module.execute_preference_refresh_job()
+            app_module.execute_preference_refresh_job()
+            retry = app_module.scheduler.get_job(retry_id)
+            assert retry is not None and retry.func is app_module.execute_preference_refresh_job
+            gap = (retry.trigger.run_date - before).total_seconds()
+            assert 0 < gap <= app_module.PREFERENCE_REFRESH_BUSY_RETRY_SECONDS + 5
+            assert [job.id for job in app_module.scheduler.get_jobs()].count(retry_id) == 1
+            assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == edition["id"]  # 这一趟什么都没做
+        finally:
+            digest_refresh._PREFERENCE_PASS_LOCK.release()  # noqa: SLF001
+        app_module.scheduler.remove_job(retry_id)   # 不让它在用例里自己跑
+
+        # 没人占着:到点任务跑的就是偏好那一步,换成按新兴趣编的一版,不再留补跑任务
         app_module.execute_preference_refresh_job()
+        assert app_module.scheduler.get_job(retry_id) is None
         followed = client.get("/api/reader/briefs/today").json()["edition"]
         assert followed["id"] != edition["id"]
         assert followed["generation_reason"] == "interest_changed"
