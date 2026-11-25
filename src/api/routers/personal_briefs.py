@@ -26,6 +26,7 @@ from models.db import (
 )
 from services import accounts as accounts_service
 from services import personal_digest as digest_service
+from services import personal_digest_refresh as digest_refresh
 from services import personal_digest_titles as digest_titles
 from services.article_analysis import source_allows_analysis
 from services.article_time import in_time_window
@@ -117,9 +118,10 @@ def serialize_edition(
 ) -> dict[str, Any]:
     """Project one edition.
 
-    ``include_freshness`` adds ``interest_stale``/``scope_stale``(v3.51.1,issue #33 §5:
-    兴趣/订阅变更不再自动重编,今日版面是否落后于当前偏好由这两位说明);只对今日
-    端点开启——历史版本天然落后,列表端点也不必为每行多查两次。
+    ``include_freshness`` adds ``interest_stale``/``scope_stale``(今日版面是否落后于当前
+    偏好)与 ``refresh_pending``(issue #343:系统接下来还会不会给今天换版——``soon`` /
+    ``content`` / ``None``,页面据此决定要不要再来取);只对今日端点开启——历史版本天然
+    落后,列表端点也不必为每行多查。
     """
     items = []
     if include_items:
@@ -161,7 +163,14 @@ def serialize_edition(
             else None
         ),
         "items": items,
-        **(digest_service.edition_freshness(session, edition) if include_freshness else {}),
+        **(
+            {
+                **digest_service.edition_freshness(session, edition),
+                "refresh_pending": digest_refresh.refresh_pending(session, edition),
+            }
+            if include_freshness
+            else {}
+        ),
     }
 
 
@@ -412,6 +421,25 @@ def process_pending_edition(
     return result.edition
 
 
+def note_preference_change(
+    engine: Engine,
+    username: str,
+    reason: DigestGenerationReason | str,
+) -> PersonalDigestEditionRecord | None:
+    """读者改了兴趣 / 订阅之后调用(issue #343):只记意向,由巡检静置合并后换版。"""
+
+    if not username:
+        return None
+    with Session(engine) as session:
+        if not personal_digest_enabled(session):
+            return None
+        return digest_service.request_preference_rebuild(
+            session,
+            accounts_service.account_username_for(username),
+            reason=reason,
+        )
+
+
 def trigger_today_revision(
     engine: Engine,
     username: str,
@@ -487,7 +515,12 @@ def process_pending_editions(engine: Engine, *, recovery: bool = True) -> int:
                     ]),
                 )
             ).all())
+            today = dt.datetime.now(digest_service.SHANGHAI).date().isoformat()
             for carrier in intents:
+                if digest_refresh.is_preference_intent(carrier, today):
+                    # 今天终态版本上的兴趣 / 订阅意向:静置合并后一次性换版,不建在途版本
+                    # (personal_digest_refresh.apply_preference_intents,issue #343)。
+                    continue
                 digest_service.materialize_desired_personal_digest_revision(session, carrier)
     return completed
 
@@ -523,53 +556,15 @@ def _ensure(
     }
 
 
-# 游客版当天生成失败后,首开触发系统重编的最短间隔(游客没有「重新编排」,失败版不能挂一整天)。
-GUEST_FAILED_RETRY = dt.timedelta(minutes=10)
-
-
-def _retry_failed_guest_edition(engine: Engine) -> None:
-    """游客版失败后的系统重试:**新 pending 版本本身就是认领**(issue #213 检视 F6)。
-
-    在一个干净的新 Session 里先 `BEGIN IMMEDIATE` 拿写锁再读,锁内重新确认「当天最新版是失败版且已过
-    冷却期」,成立才经 `start_personal_digest_edition(MANUAL_REBUILD)` 建出新的 pending revision,与复核同一次
-    提交。并发或晚到的首开在写锁后重读,看到的最新版已是新 revision(或冷却期内的新失败版),直接跳过;
-    建版前任何异常整个事务回滚、什么都不留,下一次首开还能再试。生成本身(可能调模型)不在锁内:
-    由随后的普通 `_ensure(FIRST_OPEN)` 复用这个 pending 版本完成。
-    """
-    now = dt.datetime.now(digest_service.SHANGHAI)
-    try:
-        with Session(engine) as session:
-            if session.connection().dialect.name == "sqlite":
-                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-            if not personal_digest_enabled(session):
-                return
-            edition = _latest_edition(session, accounts_service.GUEST_USERNAME, now.date().isoformat())
-            if edition is None or edition.status != PersonalDigestStatus.FAILED.value:
-                return
-            failed_at = _parse_time(edition.updated_at)
-            if failed_at is not None and now - failed_at < GUEST_FAILED_RETRY:
-                return
-            digest_service.start_personal_digest_edition(
-                session,
-                accounts_service.GUEST_USERNAME,
-                now=now,
-                generation_reason=DigestGenerationReason.MANUAL_REBUILD,
-            )
-    except Exception:  # noqa: BLE001 - 认领失败照旧返回失败版,下次首开再试
-        _logger.warning("游客早报失败重编未成功", exc_info=True)
-
-
 @router.post("/today/ensure")
 def ensure_today(
     auth: dict[str, Any] = Depends(deps.require_reader),
     session: Session = Depends(deps.get_session),
 ):
-    username = _username(auth)
-    if username == accounts_service.GUEST_USERNAME:
-        _retry_failed_guest_edition(session.get_bind())
+    # 失败后的重试(含游客版)由巡检统一处理(personal_digest_refresh.retry_failed_editions)。
     return _ensure(
         session,
-        username,
+        _username(auth),
         reason=DigestGenerationReason.FIRST_OPEN,
         first_open=True,
     )

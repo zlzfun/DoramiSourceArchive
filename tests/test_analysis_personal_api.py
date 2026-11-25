@@ -1007,13 +1007,30 @@ def test_archive_write_stays_successful_when_analysis_enqueue_fails(monkeypatch,
         assert session.get(ArticleRecord, "archive-new") is not None
 
 
-def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypatch, tmp_path):
-    """v3.51.1(issue #33 §5):兴趣/订阅变更只记录,不再自动重编当日早报。
+def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch, tmp_path):
+    """issue #343:兴趣 / 订阅变更在今日版本上记一条意向,巡检静置合并后自动换版,读者不需要操作。
 
-    今日端点以 interest_stale / scope_stale 说明版面落后于当前偏好;读者手动
-    「重新编排」后两位归零。原样重存兴趣不得改写 updated_at(否则会被误标落后)。
+    此前(v3.51.1)是只标 interest_stale / scope_stale、等读者点「立即重编」。原样重存兴趣
+    不得改写 updated_at,也不记意向;被换下的版本不进往期,但带着版本号仍能读到。
     """
+    import time
+
     from models.db import PersonalDigestEditionRecord, UserInterestTagRecord
+    from services import personal_digest_refresh as digest_refresh
+
+    shanghai = dt.timezone(dt.timedelta(hours=8))
+
+    def _intent(engine, edition_id):
+        with Session(engine) as session:
+            row = session.get(PersonalDigestEditionRecord, edition_id)
+            return row.desired_generation_reason, row.desired_requested_at
+
+    def _settle(engine):
+        # 巡检按「距最后一次改动」静置;这里直接把时钟拨到静置之后
+        tick = dt.datetime.now(shanghai) + dt.timedelta(
+            seconds=digest_refresh.PREFERENCE_QUIET_SECONDS + 1
+        )
+        return digest_refresh.apply_preference_intents(engine, now=tick)
 
     app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -1024,20 +1041,22 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         assert edition["status"] in {"ready", "degraded"}
         assert edition["interest_stale"] is False
         assert edition["scope_stale"] is False
+        assert edition["refresh_pending"] is None  # 内容齐备时编的,也没有待办
 
-        # 关注一个标签:今日版本原样不动,只标兴趣落后
+        # 关注一个标签:今日版本先原样不动,只记下意向;页面据 refresh_pending 知道稍后有新版
         saved = client.put(
             "/api/reader/interests",
             json={"items": [{"tag_id": tag_id, "stance": "follow"}]},
         )
         assert saved.status_code == 200, saved.text
-        today = client.get("/api/reader/briefs/today").json()
-        assert today["edition"]["id"] == edition["id"]
-        assert today["edition"]["revision"] == edition["revision"]
-        assert today["edition"]["generation_reason"] == "first_open"
-        assert today["edition"]["rebuild_queued"] is False
-        assert today["edition"]["interest_stale"] is True
-        assert today["edition"]["scope_stale"] is False
+        today = client.get("/api/reader/briefs/today").json()["edition"]
+        assert today["id"] == edition["id"]
+        assert today["revision"] == edition["revision"]
+        assert today["interest_stale"] is True
+        assert today["rebuild_queued"] is True
+        assert today["refresh_pending"] == "soon"
+        reason, first_marker = _intent(sink.engine, edition["id"])
+        assert reason == "interest_changed"
 
         # 原样重存:行不改写,兴趣版本不变
         with Session(sink.engine) as session:
@@ -1049,34 +1068,40 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         with Session(sink.engine) as session:
             assert session.get(UserInterestTagRecord, ("alice", tag_id)).updated_at == before
 
-        # 订阅一个新来源:同样不重编,只标范围落后
+        # 订阅一个新来源:同样只记意向(中间件在响应之后记,稍等它落库),时刻往后推
         assert client.post("/api/reader/sources/source-b/subscribe").status_code == 200
+        deadline = time.monotonic() + 5
+        while _intent(sink.engine, edition["id"])[0] != "subscription_changed":
+            assert time.monotonic() < deadline, "订阅变更没有记到今日版本上"
+            time.sleep(0.05)
+        assert _intent(sink.engine, edition["id"])[1] >= first_marker
         today = client.get("/api/reader/briefs/today").json()["edition"]
         assert today["id"] == edition["id"]
-        assert today["scope_stale"] is True
-        assert today["interest_stale"] is True
-        # 历史/列表端点不带这两位(历史版本天然落后,不必逐行多查)
+        assert today["scope_stale"] is True and today["interest_stale"] is True
+        # 历史 / 列表端点不带这几位(历史版本不会再动,不必逐行多查)
         by_date = client.get(f"/api/reader/briefs/{edition['report_date']}").json()
-        assert "interest_stale" not in by_date and "scope_stale" not in by_date
+        assert "interest_stale" not in by_date and "refresh_pending" not in by_date
 
-        # 手动重编才开新版,新版按当前兴趣与订阅编排,两位归零
-        rebuilt = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
-        assert rebuilt["revision"] == edition["revision"] + 1
-        assert rebuilt["generation_reason"] == "manual_rebuild"
-        assert rebuilt["interest_stale"] is False
-        assert rebuilt["scope_stale"] is False
-        assert sorted(rebuilt["expected_source_ids"]) == ["source-a", "source-b"]
-        with Session(sink.engine) as session:
-            revisions = session.exec(
-                select(PersonalDigestEditionRecord).where(
-                    PersonalDigestEditionRecord.owner_username == "alice"
-                )
-            ).all()
-        assert sorted(row.generation_reason for row in revisions) == ["first_open", "manual_rebuild"]
+        # 静置过后巡检换版:两次改动合成一版,按当前兴趣与订阅编排
+        assert _settle(sink.engine) == {"published": 1}
+        followed = client.get("/api/reader/briefs/today").json()["edition"]
+        assert followed["id"] != edition["id"]
+        assert followed["revision"] == edition["revision"] + 1
+        assert followed["generation_reason"] == "subscription_changed"
+        assert followed["interest_stale"] is False and followed["scope_stale"] is False
+        assert followed["rebuild_queued"] is False
+        assert sorted(followed["expected_source_ids"]) == ["source-a", "source-b"]
+        # 被换下的那一版不进往期,带着版本号仍能读到
+        listed = client.get("/api/reader/briefs").json()["items"]
+        assert [row["revision"] for row in listed] == [followed["revision"]]
+        old = client.get(
+            f"/api/reader/briefs/{edition['report_date']}", params={"revision": edition["revision"]}
+        )
+        assert old.status_code == 200 and old.json()["status"] == "superseded"
+        assert _settle(sink.engine) == {}
 
-        # 退订到一个来源都不剩:普通打开仍复用今日版本(不可变快照 + scope_stale),
-        # 只有显式重编才清成 empty_subscriptions(codex 检视 P2)
-        assert client.delete("/api/reader/sources/source-b/subscribe").status_code == 200
+        # 退订到一个来源都不剩(兴趣还在):出「只有兴趣半」的一版
+        # (两篇都命中 topic-agents 且 ≥ 订阅外门槛 6.0,全部标 subscribed=False),不是空报
         with Session(sink.engine) as session:
             for row in session.exec(
                 select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == "alice")
@@ -1084,14 +1109,11 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
                 row.is_active = False
                 session.add(row)
             session.commit()
-        reopened = client.post("/api/reader/briefs/today/ensure").json()
-        assert reopened["status"] == rebuilt["status"]
-        assert reopened["edition"]["id"] == rebuilt["id"]
-        assert reopened["edition"]["scope_stale"] is True
-        assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == rebuilt["id"]
-        # v3.54「订阅 ∪ 兴趣」:订阅清空但兴趣还在 → 显式重编出「只有兴趣半」的一版
-        # (两篇都命中 topic-agents 且 ≥ 订阅外门槛 6.0,全部标 subscribed=False),不再是空报
-        interest_only = client.post("/api/reader/briefs/today/rebuild").json()
+        app_module.personal_briefs_router.note_preference_change(
+            sink.engine, "alice", "subscription_changed"
+        )
+        assert _settle(sink.engine) == {"published": 1}
+        interest_only = client.get("/api/reader/briefs/today").json()
         assert interest_only["status"] in {"ready", "degraded"}
         edition_io = interest_only["edition"]
         assert edition_io["expected_source_ids"] == []
@@ -1100,14 +1122,48 @@ def test_interest_and_subscription_edits_only_flag_today_edition_stale(monkeypat
         assert {item["selection_lane"] for item in edition_io["items"]} == {"interest"}
         assert all(item["snapshot"]["subscribed"] is False for item in edition_io["items"])
         assert edition_io["scope_stale"] is False
-        # 兴趣也清空 → 才是 empty_subscriptions
+
+        # 兴趣也清空 → 当日版本清成空订阅状态
         cleared = client.put(
             "/api/reader/interests", json={"items": [], "complete_onboarding": True}
         )
         assert cleared.status_code == 200, cleared.text
-        emptied = client.post("/api/reader/briefs/today/rebuild").json()
-        assert emptied["status"] == "empty_subscriptions" and emptied["edition"] is None
+        assert _settle(sink.engine) == {"empty": 1}
         assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+        with Session(sink.engine) as session:
+            reasons = [
+                row.generation_reason
+                for row in session.exec(
+                    select(PersonalDigestEditionRecord)
+                    .where(PersonalDigestEditionRecord.owner_username == "alice")
+                    .order_by(PersonalDigestEditionRecord.revision)
+                ).all()
+            ]
+        assert reasons == ["first_open", "subscription_changed", "subscription_changed"]
+
+
+def test_reader_subscription_write_paths_are_recognised():
+    """中间件据此在今日早报上记订阅意向;宁宽勿漏,但「全部已读」「预览」这类不改范围的不算。"""
+    import api.app as app_module
+
+    changed = app_module._reader_subscription_write  # noqa: SLF001
+    assert changed("POST", "/api/reader/sources/rss_a/subscribe")
+    assert changed("DELETE", "/api/reader/sources/rss_a/subscribe")
+    assert changed("POST", "/api/reader/sources/subscribe-batch")
+    assert changed("POST", "/api/reader/sources/import")
+    assert changed("POST", "/api/reader/collections/3/subscribe")
+    assert changed("DELETE", "/api/reader/collections/3/subscribe")
+    assert changed("POST", "/api/reader/custom-sources")
+    assert changed("DELETE", "/api/reader/custom-sources/user_rss_x")
+    assert changed("POST", "/api/subscriptions")
+    assert changed("PUT", "/api/subscriptions/7")
+    assert changed("DELETE", "/api/subscriptions/7")
+    assert not changed("GET", "/api/reader/sources/rss_a/subscribe")
+    assert not changed("POST", "/api/reader/sources/rss_a/mark-all-read")
+    assert not changed("POST", "/api/reader/custom-sources/preview")
+    assert not changed("PUT", "/api/reader/custom-sources/user_rss_x/ai-analysis")
+    assert not changed("POST", "/api/subscriptions/7/rotate-token")
+    assert not changed("POST", "/api/reader/briefs/today/ensure")
 
 
 def test_personal_brief_items_carry_chinese_titles_after_generation(monkeypatch, tmp_path):

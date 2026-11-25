@@ -142,10 +142,18 @@ PODCAST_CONTENT_TYPE = "podcast_episode"
 # 读者面写入(兴趣/订阅变更只记录,下次编排生效),保留是为历史版本与服务契约兼容;
 # subscription_changed 仍用于管理员下架来源的全员重编。daily_brief_ready 自 issue #74 起退役
 # (公共日报不再进个人早报的范围,落盘也就没有「追加一版」可做),枚举值只为历史行保留。
+# issue #343 起再加两个系统原因:content_arrived(新内容落地后的补编)与 recovery(生成失败后的重试)。
 REBUILD_REASON_VALUES = frozenset({
     DigestGenerationReason.INTEREST_CHANGED.value,
     DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
     DigestGenerationReason.MANUAL_REBUILD.value,
+    DigestGenerationReason.CONTENT_ARRIVED.value,
+    DigestGenerationReason.RECOVERY.value,
+})
+# 读者自己改了兴趣 / 订阅:意向记在今日版本上,静置后由巡检落成新版(issue #343)。
+PREFERENCE_REASON_VALUES = frozenset({
+    DigestGenerationReason.INTEREST_CHANGED.value,
+    DigestGenerationReason.SUBSCRIPTION_CHANGED.value,
 })
 
 
@@ -1984,6 +1992,103 @@ def start_personal_digest_edition(
     return PersonalDigestGenerationResult(status="pending", edition=edition)
 
 
+def _supersede_predecessors(
+    session: Session,
+    username: str,
+    report_date: str,
+    revision: int,
+    stamp: str,
+) -> None:
+    """同日更早的终态版本让位给刚发布的这一版(issue #343:当天只有一版可见)。
+
+    被换下的版本要么是内容没到齐时编的,要么是按读者已改掉的偏好编的,要么是失败的;
+    行与条目快照都不动,只是不再列出——按日期 + 版本号仍能精确读到。在途的更早版本
+    (pending / generating)不在这里处理,它们各有自己的围栏。
+    """
+
+    session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.owner_username == username,
+            PersonalDigestEditionRecord.report_date == report_date,
+            PersonalDigestEditionRecord.revision < revision,
+            PersonalDigestEditionRecord.status.in_((
+                PersonalDigestStatus.READY.value,
+                PersonalDigestStatus.DEGRADED.value,
+                PersonalDigestStatus.FAILED.value,
+            )),
+        )
+        .values(
+            status=PersonalDigestStatus.SUPERSEDED.value,
+            generation_token=None,
+            generation_lease_expires_at=None,
+            updated_at=stamp,
+        )
+    )
+
+
+def request_preference_rebuild(
+    session: Session,
+    username: str,
+    *,
+    reason: DigestGenerationReason | str,
+    now: dt.datetime | None = None,
+) -> PersonalDigestEditionRecord | None:
+    """读者改了兴趣 / 订阅:在今日版本上记一条待落成的意向(issue #343)。
+
+    不当场重编——连点几个标签、连订几个源,每次写入只把意向时刻往后推,停手后由巡检
+    静置合并成一版(``personal_digest_refresh``)。今天还没有版本就什么都不记,首版本来
+    就按最新的偏好编;在途版本沿用既有合并(pending 就地刷新范围,generating 记意向);
+    当前偏好与这一版冻结的并无不同(原样重存、改了又改回)时不记。
+    """
+
+    current = _as_shanghai(now)
+    reason_value = DigestGenerationReason(str(getattr(reason, "value", reason))).value
+    if reason_value not in PREFERENCE_REASON_VALUES:
+        raise ValueError("只接受兴趣 / 订阅变更")
+    report_date = current.date().isoformat()
+    edition = _latest_edition(session, username, report_date)
+    if edition is None or edition.id is None:
+        return None
+    if edition.status in {
+        PersonalDigestStatus.PENDING.value,
+        PersonalDigestStatus.GENERATING.value,
+    }:
+        return start_personal_digest_edition(
+            session,
+            username,
+            report_date=report_date,
+            now=current,
+            generation_reason=reason_value,
+        ).edition
+    freshness = edition_freshness(session, edition)
+    if not (freshness["interest_stale"] or freshness["scope_stale"]):
+        return edition
+    marker = current.isoformat()
+    session.exec(
+        update(PersonalDigestEditionRecord)
+        .where(
+            PersonalDigestEditionRecord.id == edition.id,
+            PersonalDigestEditionRecord.status.in_((
+                PersonalDigestStatus.READY.value,
+                PersonalDigestStatus.DEGRADED.value,
+                PersonalDigestStatus.FAILED.value,
+            )),
+            or_(
+                PersonalDigestEditionRecord.desired_requested_at.is_(None),
+                PersonalDigestEditionRecord.desired_requested_at <= marker,
+            ),
+        )
+        .values(
+            desired_generation_reason=reason_value,
+            desired_requested_at=marker,
+        )
+    )
+    session.commit()
+    session.expire_all()
+    return session.get(PersonalDigestEditionRecord, edition.id)
+
+
 def materialize_desired_personal_digest_revision(
     session: Session,
     edition: PersonalDigestEditionRecord,
@@ -2155,6 +2260,7 @@ def generate_personal_digest(
     policy: DigestSelectionPolicy | None = None,
     execution_clock: Callable[[], dt.datetime] | None = None,
     localize_before_publish: bool = False,
+    dry_run: bool = False,
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
@@ -2168,6 +2274,8 @@ def generate_personal_digest(
     ``edition_freshness`` flags until the reader rebuilds or the next scheduled run.
     """
 
+    if dry_run and pending_edition_id is not None:
+        raise ValueError("试算不接受待生成版本")
     # 订阅外门槛 / 每源硬上限走管理面 KV(v3.54);显式传入 policy 的调用方(测试)不受影响
     policy = policy or selection_policy(session)
     current = _as_shanghai(now)
@@ -2603,8 +2711,13 @@ def generate_personal_digest(
             created_at=generated_at,
             **final_values,
         )
-        session.add(edition)
-        session.flush()
+        if dry_run:
+            # 试算(issue #343):只算不写。条目照常构建并排好位置后原样返回,
+            # 不占版本号、不落任何行;占位 id 永不入库。
+            edition.id = 0
+        else:
+            session.add(edition)
+            session.flush()
     assert edition.id is not None
 
     # A generating edition is deliberately recoverable after a process restart.
@@ -2903,6 +3016,13 @@ def generate_personal_digest(
     # session——三段构建之间的查询会触发 autoflush,先按临时 position 写入再改写会在
     # (edition_id, position) 唯一键上互撞;集中添加让 INSERT 只带最终 position。
     _assign_positions(item_records)
+    if dry_run:
+        session.rollback()
+        return PersonalDigestGenerationResult(
+            status="degraded" if degraded else "ready",
+            edition=None,
+            items=tuple(item_records),
+        )
     edition_id = edition.id
     if fenced_publish:
         assert edition_id is not None and generation_token is not None
@@ -3025,6 +3145,10 @@ def generate_personal_digest(
         edition = session.get(PersonalDigestEditionRecord, edition_id)
         assert edition is not None
 
+    # 与本版的发布同一事务:读者与机器人接口看到的「今天这一版」原子地换过去。
+    _supersede_predecessors(
+        session, username, report_date, revision, str(final_values["updated_at"])
+    )
     session.add_all(item_records)
     try:
         session.commit()
@@ -3072,6 +3196,7 @@ __all__ = [
     "value_lane_policy",
     "PersonalDigestGenerationResult",
     "calculate_due_source_ids",
+    "request_preference_rebuild",
     "freeze_personal_digest_scope",
     "generate_personal_digest",
     "materialize_desired_personal_digest_revision",

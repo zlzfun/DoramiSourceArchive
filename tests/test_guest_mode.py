@@ -432,85 +432,33 @@ def _guest_revisions(engine):
         return [(r.revision, r.status, r.generation_reason) for r in rows]
 
 
-def test_guest_brief_retry_claims_once_under_write_lock(monkeypatch, tmp_path):
-    """检视 F6:失败版过冷却后只认领一次——新 pending 版本即认领,重复 / 晚到的首开在写锁后重读即跳过。"""
-    from api.routers import personal_briefs
+def test_guest_failed_brief_is_retried_by_the_shared_refresh_pass(monkeypatch, tmp_path):
+    """issue #343:游客版失败后的系统重试并入通用规则——巡检按递增间隔重试(原因 recovery),
+    不再有「首开时触发、10 分钟冷却」这条游客单列的路;游客没有任何重编入口,靠的就是它。"""
+    from services import personal_digest_refresh as digest_refresh
 
     engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1)
-    personal_briefs._retry_failed_guest_edition(engine)
-    personal_briefs._retry_failed_guest_edition(engine)  # 第二个首开:最新版已是 pending,不再重编
-    assert _guest_revisions(engine) == [(1, "failed", "scheduled"), (2, "pending", "manual_rebuild")]
+    _add_guest_edition(engine, revision=1)  # 11 分钟前失败,已过首次重试间隔
+    started: list[int] = []
+
+    def keep_pending(_engine, edition_id):
+        started.append(edition_id)
+
+    assert digest_refresh.retry_failed_editions(engine, run=keep_pending) == 1
+    # 新的在途版本即认领:下一轮巡检看到的当前版本已不是失败版,不再重复发起
+    assert digest_refresh.retry_failed_editions(engine, run=keep_pending) == 0
+    assert len(started) == 1
+    assert _guest_revisions(engine) == [(1, "failed", "scheduled"), (2, "pending", "recovery")]
 
 
-def test_guest_brief_retry_skips_stale_request_after_newer_failure(monkeypatch, tmp_path):
-    """E1 认领后又出了新的失败版 E2(冷却期内):针对 E1 的晚到请求在锁内重读到 E2,不回写、不重编。"""
-    from api.routers import personal_briefs
-    from models.db import PersonalDigestEditionRecord
-    from services import personal_digest as digest_service
-
-    engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1)
-    personal_briefs._retry_failed_guest_edition(engine)
-    with Session(engine) as session:
-        second = session.exec(select(PersonalDigestEditionRecord).where(PersonalDigestEditionRecord.revision == 2)).one()
-        second.status = "failed"
-        second.updated_at = datetime.datetime.now(digest_service.SHANGHAI).isoformat()
-        session.add(second)
-        session.commit()
-    personal_briefs._retry_failed_guest_edition(engine)
-    assert [r[:2] for r in _guest_revisions(engine)] == [(1, "failed"), (2, "failed")]
-
-
-def test_guest_brief_retry_rolls_back_when_creation_fails(monkeypatch, tmp_path):
-    """认领与建版同一事务:建版前抛错 → 什么都不留,下一次首开仍能认领。"""
-    from api.routers import personal_briefs
-    from services import personal_digest as digest_service
+def test_guest_failed_brief_waits_out_the_retry_delay(monkeypatch, tmp_path):
+    """刚失败的游客版先不动:首次重试要等够间隔。"""
+    from services import personal_digest_refresh as digest_refresh
 
     engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1)
-    original = digest_service.start_personal_digest_edition
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("建版前失败")
-
-    monkeypatch.setattr(digest_service, "start_personal_digest_edition", boom)
-    personal_briefs._retry_failed_guest_edition(engine)
-    assert _guest_revisions(engine) == [(1, "failed", "scheduled")]
-    monkeypatch.setattr(digest_service, "start_personal_digest_edition", original)
-    personal_briefs._retry_failed_guest_edition(engine)
-    assert [r[:2] for r in _guest_revisions(engine)] == [(1, "failed"), (2, "pending")]
-
-
-def test_guest_brief_retry_reads_only_after_taking_write_lock(monkeypatch, tmp_path):
-    """确定性交错:另一请求持有写锁时,重试必须卡在拿锁处、还没读;对方把失败版推进冷却期并提交后,
-    重试在锁内重读到新状态即跳过——证明「复核」与「建版」在同一写事务里(无锁先读的旧写法会重编)。"""
-    import threading
-    import time
-
-    from api.routers import personal_briefs
-    from services import personal_digest as digest_service
-
-    engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1)
-    holder = engine.raw_connection()
-    try:
-        holder.isolation_level = None  # 显式 BEGIN / COMMIT
-        cursor = holder.cursor()
-        cursor.execute("BEGIN IMMEDIATE")
-        worker = threading.Thread(target=personal_briefs._retry_failed_guest_edition, args=(engine,))
-        worker.start()
-        time.sleep(0.5)
-        assert worker.is_alive()  # 卡在 BEGIN IMMEDIATE
-        cursor.execute(
-            "UPDATE personal_digest_editions SET updated_at = ? WHERE revision = 1",
-            (datetime.datetime.now(digest_service.SHANGHAI).isoformat(),),
-        )
-        cursor.execute("COMMIT")
-    finally:
-        holder.close()
-    worker.join(timeout=30)
-    assert not worker.is_alive()
+    _add_guest_edition(engine, revision=1, minutes_ago=1)
+    assert digest_refresh.FAILURE_RETRY_DELAYS[0] > 60
+    assert digest_refresh.retry_failed_editions(engine, run=lambda *_: None) == 0
     assert _guest_revisions(engine) == [(1, "failed", "scheduled")]
 
 
