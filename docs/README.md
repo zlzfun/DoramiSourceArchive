@@ -59,7 +59,7 @@
 - [contracts/reader_subscription.md](./contracts/reader_subscription.md) — 读者订阅体系:一键订阅、dsub_/dfeed_ 令牌签发与轮换、`/api/public/*` 拉取端点。
 - [contracts/admin_reader_briefs.md](./contracts/admin_reader_briefs.md) — W3 工号映射的 admin Cookie 日报查询/首版 ensure 契约、状态与 curl 示例。
 - [contracts/archive_sync.md](./contracts/archive_sync.md) — collector → reader 的六流同步协议与合并规则(身份 / 血缘 / 校验和 / 墓碑;源目录按接收端能力投影 `source-catalog-v1`)。
-- [contracts/ingest_push.md](./contracts/ingest_push.md) — 收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人):收录令牌、出处描述与身份解析、条目 id 公式、跨源去重、逐条回执、临时源在各环节的行为。
+- [contracts/ingest_push.md](./contracts/ingest_push.md) — 收录推送接口 `POST /api/public/ingest/v1/items`(调用方可以是 Agent、自动化流程或人):收录令牌、出处描述与身份解析、社交帖的结构(配图 / 引用帖 / 原帖,结构化字段或 X API 原始 JSON)、条目 id 公式、跨源去重、同一条社交帖再次到达时的补全、逐条回执与 `warnings`、临时源在各环节的行为。
 - [contracts/podcast_provider_ports.md](./contracts/podcast_provider_ports.md) — Podcast ASR / TTS provider-neutral ports、adapter 责任边界、新增供应商验收清单。
 
 ## frontend/ —— 前端纪律(◉ 现行)

@@ -32,7 +32,15 @@
       "content": "推文正文",
       "url": "https://x.com/new_lab/status/1900000000000000001",
       "publish_date": "2026-11-06T08:00:00Z",
+      "lang": "en",
       "author": {"handle": "new_lab", "user_id": "9001", "name": "New Lab", "avatar_url": "https://…"},
+      "media_urls": ["https://pbs.twimg.com/media/….jpg"],
+      "quoted": {
+        "url": "https://x.com/other/status/1899999999999999999",
+        "content": "被引用帖的全文",
+        "author": {"handle": "other", "name": "Other", "avatar_url": "https://…"},
+        "media_urls": ["https://pbs.twimg.com/media/….jpg"]
+      },
       "note": "收录理由(可选)"
     },
     {
@@ -65,7 +73,58 @@
 - 服务端决定、调用方不能写的字段:条目 id、`content_type`(按 `kind`)、来路(`ingest_channel=push`、
   `ingest_actor`=令牌 actor)。`extensions` 按 `kind` 走键白名单(文章:`author` / `site_name` /
   `summary` / `tags` / `language` / `image_url`;社交:`lang` / `tags` / `media_urls`;播客:`author` /
-  `tags` / `image_url` / `episode` / `season`),其余键丢弃。
+  `tags` / `image_url` / `episode` / `season`),其余键不入库。
+- **没有被采用的内容写在该条回执的 `warnings` 里**(issue #341;见「回执」):不认识的字段、这一类条目不用的
+  字段、白名单之外的扩展键、不是 http(s) 的链接。条目照常处理,不会因此被拒收。
+
+## 社交帖的结构:配图、引用帖、被转推的原帖
+
+读者面的推文卡片按这几个字段画;缺了就只剩一段文字,转推还会显示成转推者本人说了一句「RT @…」。
+两种给法任选其一,入库的形状与平台自己抓取的同一条一致。
+
+**结构化字段**(社交帖顶层):
+
+| 字段 | 含义 |
+|---|---|
+| `media_urls` | 这条帖子自己的配图(http(s) 链接,至多 20 张;视频给封面图)。放在 `extensions.media_urls` 也认 |
+| `quoted` | 被引用的帖子 |
+| `reposted` | 被转推的原帖。顶层 `author` 始终是时间线账号(转推者),原作者写在 `reposted.author` |
+| `lang` | 帖子语言(决定卡片要不要给「译为中文」) |
+
+`quoted` / `reposted` 用与外层帖子同名的字段描述:`post_id`、`url`、`content`、`lang`、
+`author`(`handle` / `name` / `avatar_url`)、`media_urls`。给了 `x.com/<账号>/status/<id>` 形式的 `url`
+就不必再给 `post_id` 与 `author.handle`;外层帖子同理,只给帖子链接也能收。纯转推可以不给 `content`,
+服务端按平台惯例补成「RT @原作者: 原文」。
+
+```json
+{
+  "kind": "social_post",
+  "url": "https://x.com/new_lab/status/1900000000000000002",
+  "author": {"name": "New Lab", "avatar_url": "https://…"},
+  "reposted": {
+    "url": "https://x.com/other/status/1899999999999999999",
+    "content": "原帖全文",
+    "author": {"name": "Other", "avatar_url": "https://…"},
+    "media_urls": ["https://pbs.twimg.com/media/….jpg"]
+  }
+}
+```
+
+**X API 原始 JSON**(手里就是 X API v2 的返回时用这个):`raw` 给一条帖子的 `data` 与它的 `includes`
+(`users` / `tweets` / `media`;整页的 `includes` 原样给也行),服务端用时间线抓取器的同一个归一化函数处理。
+
+```json
+{"kind": "social_post", "raw": {"data": {"id": "1900…", "author_id": "9001", "text": "…", "…": "…"},
+                               "includes": {"users": [], "tweets": [], "media": []}}}
+```
+
+- 帖子 id、作者、正文、发布时间、语言、配图、引用帖与原帖都取自 `raw`;同时给的 `content` / `lang` /
+  `media_urls` / `quoted` / `reposted` 以 `raw` 为准(回执有提示)。`includes.users` 里没有作者时用顶层 `author`。
+- 要拿到引用帖 / 原帖与配图,请求 X API 时带 `expansions=author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id`
+  与对应的 `tweet.fields` / `user.fields` / `media.fields`。
+- `raw` 只用来归一化,**不落库**(`raw_data` 留空);互动数字(`public_metrics`)不收。
+
+不收的:互动数字、回复关系(结构化字段没有 `in_reply_to` / `conversation` 的写法;`raw` 里带的照常记下)。
 
 ## 身份解析(认出已有源)
 
@@ -91,7 +150,8 @@
   播客 `{前缀}_{sha1(guid 或单集链接 url)[:16]}`(前缀 = 收养过的播客源的 `entry_id_namespace`,否则
   `source_id`;**feed 里有 guid 就带上**,两样都没有的单集拒收)。
 - 先抓后推:同一链接已在库里 → 见下一条,不新建。
-- 先推后抓:社交帖与带 guid 的播客单集 id 公式与抓取器一致,天然合流;文章的抓取器 id 公式常不同
+- 先推后抓:社交帖与带 guid 的播客单集 id 公式与抓取器一致,天然合流(社交帖合流后以抓取版为准,
+  见「同一条社交帖再次到达」);文章的抓取器 id 公式常不同
   (RSS 取 `entry.id`、列表页另算哈希),由存储层按链接合流——抓取入库新条目时,同一个源里已有同链接
   (原样 / 规范形 / 带尾斜杠;带锚点只认原样)的**收录条目**就按同一条处理(补正文 / 幂等跳过),不另建。
   多个条目共用页面链接的源不按链接合流:单页文档(changelog / release notes)、`docs_*` / `github_*`、
@@ -99,6 +159,22 @@
 - 文章与社交帖:同一链接已在**别的源**里 → 不新建,返回 `duplicate_url` 与已有条目 id,只记一条收录记录;
   同一个源里已有同链接的条目(id 公式不同)→ 返回 `duplicate`。播客单集常共用节目页链接,不按链接去重。
   这是**认出同一条**(同一链接 = 同一页面 = 同一条目,归它的出处),不是内容去重。
+
+## 同一条社交帖再次到达
+
+收录时不完整的推文(缺引用帖、原帖、配图、作者名与头像)可以补全(issue #341):
+
+| 已有的条目 | 再次到达的 | 结果 |
+|---|---|---|
+| 收录条目(推送 / 手工 / 旧导入) | 再次收录 | **只补不覆盖**:已有行为空、来者有值的才补;正文、标题、已有的配图与引用对象都不动。有补到 → `refreshed`,没有可补的 → `duplicate` |
+| 收录条目 | 抓取器抓到同一条 | **以抓取版为准**:正文、标题、发布时间、链接与社交字段整体换成平台原样;来路(`push` 等)与收录记录保留 |
+| 抓取入库的条目、已换成抓取版的条目 | 再次收录 | 不改,`duplicate` |
+
+- 引用帖 / 原帖按整个对象补:已有的对象不替换,也不与来者逐项拼合。
+- 补全不改到达时间(不会重新冒成新到的),修订号前进,内网随 Archive Sync 同步到;配图随即预取。
+  服务端写在扩展字段里的译文、摘要缓存原样保留(按原文指纹自行失效)。
+- 正文只在换成抓取版时才变,这时分析评分重算;只补结构不重算。
+- 存量的不完整推文:把完整载荷重推一遍即可。收录时把引用内容拼进了正文的,正文不会被改回去。
 
 ## 同源内容判重
 
@@ -130,8 +206,18 @@
 }
 ```
 
+逐条的 `warnings`(字符串数组,有才出现)列出这一条里没有被采用的内容,例如:
+
+```json
+{"index": 0, "kind": "social_post", "status": "created", "id": "x_new_lab_19…", "source_id": "x_new_lab",
+ "source_created": false,
+ "warnings": ["未识别的字段:likes、quoted.text(已忽略)",
+              "这些字段要放在条目顶层,不在 extensions 里:quoted",
+              "media_urls 里有 1 项不是 http(s) 链接,已忽略"]}
+```
+
 `status`:`created` / `duplicate`(同一条已存在)/ `duplicate_url`(同一链接在别的源)/
-`duplicate_content`(同一个源里已有同一内容)/ `refreshed`(已有条目被补正文或刷新元数据)/
+`duplicate_content`(同一个源里已有同一内容)/ `refreshed`(已有条目被补正文、刷新元数据或补全社交帖的结构)/
 `rejected`(`reason` 给原因,含「超出今日收录额度」)。
 
 ## 临时源在各环节的行为

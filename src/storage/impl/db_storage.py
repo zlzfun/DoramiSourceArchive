@@ -15,7 +15,7 @@ from models.db import (
     next_article_archive_revision,
 )
 from services.podcast_metadata import merge_podcast_publisher_metadata
-from services import item_url_identity, source_catalog, source_rows, sync_consumer_policy
+from services import item_url_identity, social_merge, source_catalog, source_rows, sync_consumer_policy
 from services.title_cache import extensions as title_extensions, preserve_title_receipt
 from services.collection_nodes import PODCAST_SOURCE_TYPES, is_public_podcast_source
 from services.podcast_stage_policy import PodcastStageDenied, require_stage as require_podcast_stage
@@ -33,11 +33,12 @@ def _is_placeholder_article_title(value: str) -> bool:
     return (value or "").strip().casefold() in _PLACEHOLDER_ARTICLE_TITLES
 
 
-# ``save_with_outcome`` results.  Only the first three count as "stored" for the
+# ``save_with_outcome`` results.  Only ``SAVE_STORED_OUTCOMES`` count as "stored" for the
 # fetch pipeline's saved_count / downstream queues (historic ``save() -> True``).
 SAVE_CREATED = "created"
 SAVE_CONTENT_FILLED = "content_filled"
 SAVE_METADATA_REPAIRED = "metadata_repaired"
+SAVE_STRUCTURE_FILLED = "structure_filled"
 SAVE_DUPLICATE = "duplicate"
 SAVE_REFRESHED = "refreshed"
 SAVE_ID_CONFLICT = "id_conflict"
@@ -45,7 +46,9 @@ SAVE_REJECTED_AUTHORITY = "rejected_authority"
 SAVE_REJECTED_PODCAST_SOURCE = "rejected_podcast_source"
 SAVE_REJECTED_PODCAST_STAGE = "rejected_podcast_stage"
 SAVE_REJECTED_RETIRED = "rejected_retired"
-SAVE_STORED_OUTCOMES = frozenset({SAVE_CREATED, SAVE_CONTENT_FILLED, SAVE_METADATA_REPAIRED})
+SAVE_STORED_OUTCOMES = frozenset({
+    SAVE_CREATED, SAVE_CONTENT_FILLED, SAVE_METADATA_REPAIRED, SAVE_STRUCTURE_FILLED,
+})
 SAVE_OUTCOMES = SAVE_STORED_OUTCOMES | {
     SAVE_DUPLICATE,
     SAVE_REFRESHED,
@@ -279,6 +282,72 @@ class DatabaseStorage(BaseStorage):
             return False
         return True
 
+    def _complete_social_post(
+        self, session: Session, existing: ArticleRecord, item: BaseContent
+    ) -> Optional[str]:
+        """同一条社交帖再次到达:把收录时不完整的条目补全(issue #341)。
+
+        推送的推文常缺引用帖、原帖或配图,而「同一条已有正文」一律按重复处理——重推补不上,抓取器随后
+        抓到的完整版也进不来,库里一直是不完整的那条。两条规则(``services/social_merge``):
+
+        - 收录条目再次被收录:只补缺的结构,已有的值与正文不动;
+        - 抓取器抓到同一条收录条目:整体换成抓取版(正文、标题、发布时间、链接与社交键)。
+
+        抓取入库的条目、已换成抓取版的条目不在此列。到达时间 ``fetched_date`` 不动——补全不该让
+        条目重新冒成新到的。返回 None = 没有可补的,调用方按原有路径继续。
+        """
+
+        def plan() -> Optional[tuple[Dict[str, Any], bool]]:
+            if (existing.ingest_channel or "") not in item_url_identity.INGEST_CHANNELS:
+                return None
+            try:
+                current = json.loads(existing.extensions_json or "{}")
+            except (TypeError, ValueError):
+                return None
+            if not isinstance(current, dict) or social_merge.has_platform_raw(current):
+                return None
+            incoming = serialize_to_metadata(item).get("extensions", {})
+            if getattr(item, "_ingest_channel", ""):
+                merged = social_merge.fill_missing(current, incoming)
+                return None if merged is None else (merged, False)
+            merged = preserve_title_receipt(
+                existing, social_merge.adopt_fetched(current, incoming), title=item.title or existing.title,
+            )
+            changed = (
+                merged != current
+                or bool(item.title and item.title != existing.title)
+                or bool(item.has_content and item.content and item.content != existing.content)
+                or bool(item.publish_date and item.publish_date != existing.publish_date)
+                or bool(item.source_url and item.source_url != existing.source_url)
+            )
+            return (merged, True) if changed else None
+
+        if plan() is None:
+            return None
+        # 取锁重读后按最新的行重新判定一次(与补正文 / 修元数据同一做法)。
+        if not self._lock_existing_for_rewrite(session, existing):
+            return SAVE_DUPLICATE
+        planned = plan()
+        if planned is None:
+            return SAVE_DUPLICATE
+        merged, adopt = planned
+        if adopt:
+            if item.title:
+                existing.title = item.title
+            if item.has_content and item.content:
+                existing.content = item.content
+                existing.has_content = True
+            if item.publish_date:
+                existing.publish_date = item.publish_date
+            if item.source_url:
+                existing.source_url = item.source_url
+        existing.extensions_json = json.dumps(merged, ensure_ascii=False)
+        self._claim_local_version(session, existing)
+        existing.archive_updated_at = next_article_archive_revision(existing.archive_updated_at)
+        session.add(existing)
+        session.commit()
+        return SAVE_STRUCTURE_FILLED
+
     async def save(self, item: BaseContent) -> bool:
         """Pipeline insertion signal: true only when a row was created or filled."""
         return (await self.save_with_outcome(item)) in SAVE_STORED_OUTCOMES
@@ -388,6 +457,13 @@ class DatabaseStorage(BaseStorage):
                     session.add(existing)
                     session.commit()
                     return SAVE_CONTENT_FILLED
+                if (
+                    existing.content_type == "social_post"
+                    and getattr(item, "content_type", "") == "social_post"
+                ):
+                    completed = self._complete_social_post(session, existing, item)
+                    if completed is not None:
+                        return completed
                 # 两条极窄的元数据自愈路径：① 旧标题明确是 CTA/占位文案；
                 # ② 抓取器显式声明官方元数据权威。普通源默认仍幂等跳过，
                 # 绝不因上游改标题而改写忠实归档；两路都不覆盖正文。

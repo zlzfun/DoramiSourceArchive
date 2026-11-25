@@ -14,7 +14,7 @@ import logging
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, ConfigDict, Field as PydanticField
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -22,7 +22,7 @@ from api import deps
 from api.tokens import read_bearer_or_query_token
 from models.db import ArticlePickRecord, ArticleRecord, IngestTokenRecord, SourceConfigRecord
 from services import admin_audit as admin_audit_service
-from services import ingest_batch, ingest_push
+from services import ingest_batch, ingest_push, social_ingest
 from services import source_catalog, source_visibility
 
 
@@ -37,7 +37,17 @@ def _app():
 # ==================== 推送 ====================
 
 
-class IngestSource(BaseModel):
+class _Open(BaseModel):
+    """推送载荷的模型:不认识的字段留在 ``model_extra`` 里,回执的 ``warnings`` 会点出来。
+
+    默认的做法是静默丢弃——调用方把配图、引用帖放错位置时拿到的仍是 ``created``,无从知道
+    (issue #341)。不改成拒收:已有调用方多带的字段不该让整批失败。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+class IngestSource(_Open):
     source_id: str = ""
     platform: str = ""
     handle: str = ""
@@ -49,14 +59,14 @@ class IngestSource(BaseModel):
     feed_url: str = ""
 
 
-class IngestAuthor(BaseModel):
+class IngestAuthor(_Open):
     name: str = ""
     handle: str = ""
     user_id: str = ""
     avatar_url: str = ""
 
 
-class IngestItem(BaseModel):
+class IngestItem(_Open):
     kind: Literal["article", "social_post", "podcast_episode"]
     source: IngestSource = PydanticField(default_factory=IngestSource)
     url: str = ""
@@ -70,6 +80,16 @@ class IngestItem(BaseModel):
     platform: str = "x"
     post_id: str = ""
     author: IngestAuthor = PydanticField(default_factory=IngestAuthor)
+    # 下面五个是 issue #341 补的。类型故意不收紧:它们此前不在模型里、被整个忽略,旧调用方带着
+    # 形状不对的值(字符串、null)也一直能推成功;收紧会让整批 422。形状由 social_ingest 逐条核对,
+    # 不对的写进该条回执的 warnings。
+    lang: Any = None
+    media_urls: Any = None
+    # 引用帖 / 被转推的原帖:用与外层帖子同样的字段描述(post_id / url / content / lang / author / media_urls)。
+    quoted: Any = None
+    reposted: Any = None
+    # X API v2 的帖子对象 {"data": …, "includes": …}:给了就由服务端按抓取器同一套规则归一化。
+    raw: Any = None
     # podcast_episode
     audio_url: str = ""
     audio_mime: str = ""
@@ -111,7 +131,49 @@ def _caller(request: Request, session: Session) -> tuple[ingest_batch.IngestCall
     raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
 
 
-def _after_created(ids: list[str]) -> None:
+_KIND_LABEL = {"article": "文章", "social_post": "社交帖", "podcast_episode": "播客单集"}
+
+
+def _strip_extras(model: BaseModel, path: str, unknown: list[str]) -> dict[str, Any]:
+    """模型 → 只含已声明字段的字典;不认识的字段名(带路径)记进 ``unknown``。"""
+    unknown.extend(f"{path}{name}" for name in (model.model_extra or {}))
+    out: dict[str, Any] = {}
+    for name in type(model).model_fields:
+        value = getattr(model, name)
+        out[name] = _strip_extras(value, f"{path}{name}.", unknown) if isinstance(value, BaseModel) else value
+    return out
+
+
+def _payload(item: IngestItem) -> tuple[dict[str, Any], list[str]]:
+    """一条载荷 →(交给批处理的字典,回执里的提示)。
+
+    提示两类:模型不认识的字段;认识、但这一类条目不用的字段(给文章带 ``media_urls`` 之类)。
+    """
+    unknown: list[str] = []
+    payload = _strip_extras(item, "", unknown)
+    if item.kind == "social_post":
+        unknown.extend(social_ingest.unknown_reference_fields(payload))
+    used = ingest_push.FIELDS_BY_KIND[item.kind]
+    unused = [
+        name for name in type(item).model_fields
+        if name in item.model_fields_set and name not in used and _has_value(getattr(item, name))
+    ]
+    warnings: list[str] = []
+    if unknown:
+        warnings.append(f"未识别的字段:{'、'.join(unknown)}(已忽略)")
+    if unused:
+        warnings.append(f"{_KIND_LABEL[item.kind]}不使用的字段:{'、'.join(unused)}(已忽略)")
+    return payload, warnings
+
+
+def _has_value(value: Any) -> bool:
+    if isinstance(value, BaseModel):
+        return bool(value.model_dump(exclude_defaults=True))
+    return value not in (None, "", [], {})
+
+
+def _after_stored(ids: list[str]) -> None:
+    """新建与被补全的条目:分析入队 + 配图预取。两者对已处理过的条目都是空操作。"""
     try:
         _app().queue_article_analysis_after_commit(ids)
         _app().schedule_media_prefetch(ids)
@@ -132,8 +194,13 @@ async def push_items(batch: IngestBatch, request: Request):
             session.add(token)
             session.commit()
 
+    payloads = [_payload(item) for item in batch.items]
     results = await ingest_batch.ingest(
-        db_sink, [item.model_dump() for item in batch.items], caller, on_created=_after_created
+        db_sink,
+        [payload for payload, _ in payloads],
+        caller,
+        on_stored=_after_stored,
+        warnings=[notes for _, notes in payloads],
     )
     body = ingest_push.audit_body(results, actor=caller.actor, channel=caller.channel)
     try:
