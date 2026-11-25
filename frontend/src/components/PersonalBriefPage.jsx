@@ -9,7 +9,7 @@ import {
 } from '../api';
 import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
-import { briefPollInterval, isBriefPreparing, isBriefSwap } from '../utils/briefRefresh';
+import { briefFace, briefPollInterval, isBriefPreparing, isBriefRefreshing, isBriefSwap } from '../utils/briefRefresh';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
 import BriefPodcastGuide from './BriefPodcastGuide';
@@ -29,7 +29,7 @@ import { scrollBehavior } from '../motion';
 import DisplayTitle from './DisplayTitle';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
-import { enterBrief } from '../utils/spatialMotion';
+import { enterBrief, leaveBrief, swapInBrief } from '../utils/spatialMotion';
 
 // ── 我的早报 ──
 // issue #184「夜航」版式(样页 docs/design/visual-refine-final/brief.html;用户拍板:保留左轨、取消日期中栏、
@@ -509,14 +509,46 @@ export default function PersonalBriefPage({
   const todayRef = useRef(null);
   const heldTodayRef = useRef(null);
   const readingRef = useRef(false);
-  const showToday = useCallback((data) => {
-    heldTodayRef.current = null;
+  const usesTodayRef = useRef(true);   // 眼前看的是不是今天这一版(看往期时版面不归这里换)
+  // 系统换上来的版面不硬切(不是读者点出来的,硬切像页面自己跳了一下):旧版面先淡出(swapRef 记着这一小段),
+  // 淡完 apply() 才把新的放上去,放上去的那次提交(swapTick)里新版面淡入并上移。淡出期间再来的同一类(kind)以最后一份为准
+  const swapRef = useRef(null);
+  const [swapTick, setSwapTick] = useState(0);
+  const softSwap = useCallback((kind, apply) => {
+    const pending = swapRef.current;
+    if (pending && !pending.landed) { pending.applies[kind] = apply; return; }
+    const leave = leaveBrief(sheetRef.current);
+    // 上一次刚放上去、那次提交还没到(pending.landed):它留下的淡出终帧一并交给这一次撤
+    const job = { applies: { [kind]: apply }, animations: [...(pending?.animations || []), ...leave.animations], landed: false, timer: 0 };
+    const land = () => {
+      job.landed = true;
+      Object.values(job.applies).forEach((fn) => fn());
+      setSwapTick((n) => n + 1);
+    };
+    swapRef.current = job;
+    if (leave.duration) job.timer = window.setTimeout(land, leave.duration);
+    else land();
+  }, []);
+  useEffect(() => () => {
+    window.clearTimeout(swapRef.current?.timer);
+    swapRef.current = null;
+  }, []);
+  const putToday = useCallback((data) => {
     todayRef.current = data;
     setToday(data);
     if (TERMINAL.has(data?.status)) loadHistory();
   }, [loadHistory]);
+  // soft:后台换上来的(轮询、切回页面、放下留着的那一版)——版面真的变了才演;首次载入与读者自己触发的直接放。
+  // 旧版面正在淡出时不管哪一种都排进去,免得淡完又被先前那一份盖回来
+  const showToday = useCallback((data, { soft = false } = {}) => {
+    heldTodayRef.current = null;
+    const leaving = swapRef.current && !swapRef.current.landed;
+    const changed = soft && usesTodayRef.current && briefFace(todayRef.current) !== briefFace(data);
+    if (leaving || changed) softSwap('today', () => putToday(data));
+    else putToday(data);
+  }, [putToday, softSwap]);
   const releaseHeldToday = useCallback(() => {
-    if (heldTodayRef.current) showToday(heldTodayRef.current);
+    if (heldTodayRef.current) showToday(heldTodayRef.current, { soft: true });
   }, [showToday]);
 
   // quiet:后台再取(轮询 / 切回页面)——失败不盖掉眼前的版面;force:不管读到哪都换(首次载入、读者自己触发的)
@@ -525,7 +557,7 @@ export default function PersonalBriefPage({
     try {
       const data = ensure ? await ensurePersonalBrief() : await fetchTodayPersonalBrief();
       if (!force && readingRef.current && isBriefSwap(todayRef.current, data)) heldTodayRef.current = data;
-      else showToday(data);
+      else showToday(data, { soft: quiet });
       return data;
     } catch (err) {
       if (!quiet) setError(err.message || '加载今日早报失败，请重试');
@@ -629,7 +661,6 @@ export default function PersonalBriefPage({
   }, [viewKey]);
 
   // 「正往下读今天这版」:只有这时取到的新版才先留着。看往期、停在页首都不算
-  const usesTodayRef = useRef(usesToday);
   useEffect(() => {
     usesTodayRef.current = usesToday;
     readingRef.current = usesToday && (sheetRef.current?.scrollTop || 0) > TOP_SLOP;
@@ -650,6 +681,15 @@ export default function PersonalBriefPage({
     const sheet = sheetRef.current;
     enterBrief(sheet, sheet?.closest('.reader-shell')?.querySelector('.reader-vrail') || null);
   }, [mobile, cardsReady]);
+  // 换版的后一半:新版面放上去的这次提交里,撤掉旧版面淡出留下的终帧,新版面淡入并上移。
+  // 排在「到场」之后——这次提交若正好是早报第一次有内容,三拍先占了,这里就不再叠一层
+  useLayoutEffect(() => {
+    const job = swapRef.current;
+    if (!job?.landed) return;
+    swapRef.current = null;
+    job.animations.forEach((animation) => animation.cancel());
+    swapInBrief(sheetRef.current);
+  }, [swapTick]);
   useLayoutEffect(() => {
     const r = restoreRef.current;
     if (!r || !cardsReady) return undefined;
@@ -836,7 +876,10 @@ export default function PersonalBriefPage({
     readingRef.current = usesTodayRef.current && top > TOP_SLOP;
     if (top > TOP_SLOP) return;
     releaseHeldToday();
-    if (replacedViewRef.current) setSel({ date: null, revision: null });
+    if (replacedViewRef.current) {
+      replacedViewRef.current = false;   // 滚动事件是连着来的:只换这一次
+      softSwap('view', () => setSel({ date: null, revision: null }));
+    }
   };
   // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
   // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
@@ -1040,6 +1083,8 @@ export default function PersonalBriefPage({
       multiRev && edition.revision ? `第 ${edition.revision} 版` : null,
     ].filter(Boolean).join(' · ')
     : '';
+  // 眼前这一版马上要被换掉(读者刚改了兴趣或订阅):编排时刻的位置改说「正在编排」,换上新版后回到新的时刻
+  const refreshing = usesToday && showEdition && isBriefRefreshing(today);
   const pastDays = days.filter((day) => day.key !== selDate).slice(0, PAST_CHIPS);
 
   const poster = (
@@ -1055,7 +1100,11 @@ export default function PersonalBriefPage({
             <span>{dateTextOf(selDate)} {weekdayOf(selDate)}{isToday ? ' · 今天' : ''}</span>
           </p>
           <div className="bp-top-r">
-            {topNote && <span className="bp-top-note">{topNote}</span>}
+            {(refreshing || topNote) && (
+              <span className={`bp-top-note ${refreshing ? 'is-live' : ''}`} role={refreshing ? 'status' : undefined}>
+                {refreshing ? <><Loader2 className="animate-spin" aria-hidden="true" />正在编排</> : topNote}
+              </span>
+            )}
             <button
               ref={histTriggerRef}
               type="button"
@@ -1160,10 +1209,13 @@ export default function PersonalBriefPage({
             className="m-pill m-hist"
             aria-haspopup="dialog"
             aria-expanded={histOpen}
-            aria-label={`往期早报，正在看 ${dayText}`}
+            aria-label={`往期早报，正在看 ${dayText}${refreshing ? '，正在编排' : ''}`}
             onClick={() => setHistOpen((open) => !open)}
           >
-            <span className="m-pill-in"><CalendarDays aria-hidden="true" />{dayText}</span>
+            <span className="m-pill-in">
+              {refreshing ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CalendarDays aria-hidden="true" />}
+              {refreshing ? '正在编排' : dayText}
+            </span>
           </button>
           {!isToday && (
             <button type="button" className="m-pill m-today" onClick={() => pickDay(todayKey)}>

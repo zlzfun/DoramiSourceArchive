@@ -14118,6 +14118,9 @@ input[type="radio"] {
 .bp-eyebrow i { flex: none; width: 28px; height: 1px; background: var(--dorami-border); }
 .bp-top-r { position: relative; display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--dorami-faint); }
 .bp-top-note { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 新的一版几十秒内就到(issue #343):编排时刻的位置改说「正在编排」,比常态的时刻醒目一档;窄栏下时刻收起,这一句留着 */
+.bp-top-note.is-live { display: inline-flex; align-items: center; gap: 6px; color: var(--dorami-ink); }
+.bp-top-note.is-live svg { flex: none; width: 13px; height: 13px; color: var(--dorami-accent); }
 .bp-lbtn {
   display: inline-flex;
   align-items: center;

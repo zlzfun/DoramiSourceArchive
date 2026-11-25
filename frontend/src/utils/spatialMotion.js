@@ -1,8 +1,8 @@
 // 空间转场里不走 View Transitions 的几件(issue #301 第四批,conventions §7「连续」):
-//   早报到场的三拍、订阅成功时徽标飞到导轨、标题滚动停靠的脚本退路。
+//   早报到场的三拍、早报换版、订阅成功时徽标飞到导轨、标题滚动停靠的脚本退路。
 // 榜单卡成页、浮层变来源栏、来源栏收起在 readerMotion.viewTransit / slideSources 那边。
 import { motionReduced } from '../motion.js';
-import { fadeIn, motionIntent, pointerMotion, springTo } from './readerMotion.js';
+import { MOTION, fadeIn, motionIntent, pointerMotion, springTo } from './readerMotion.js';
 import { motionSpring } from './spring.js';
 
 // ── 早报到场(入场清单之一):三拍,间隔递减;每拍上升 16px ──
@@ -11,6 +11,8 @@ import { motionSpring } from './spring.js';
 let arrival = true;
 let waiting = false;              // 正在等品牌抵达幕走完
 const CURTAIN_WAIT_MS = 6000;     // 幕布迟迟不走的兜底
+const ARRIVAL_LAST_BEAT_MS = 150; // 第三拍起步的时刻
+const arriving = new WeakSet();   // 三拍还在演的那张版面:这期间换版不再叠一层入场
 
 /** 这次载入不会再有「到场」了(落地不在早报,或早报出内容之前已经切走)。 */
 export function endArrival() {
@@ -39,11 +41,13 @@ export function enterBrief(sheet, rail) {
   arrival = false;
   const reduced = motionReduced();
   const settle = motionSpring('settle');
+  arriving.add(sheet);
+  setTimeout(() => arriving.delete(sheet), ARRIVAL_LAST_BEAT_MS + (reduced ? 160 : settle.duration));
   const pick = (selector) => sheet.querySelector(selector);
   const beats = [
     [0, [pick('.bp-top'), pick('.bp-kicker'), pick('.bp-title'), pick('.bp-orig'), pick('.bp-lower-main'), pick('.bp-cue')]],
     [90, [pick('.bp-verdict')]],
-    [150, [pick('.bp-toc'), ...[...sheet.querySelectorAll('.bp-act')].slice(0, 4)]],
+    [ARRIVAL_LAST_BEAT_MS, [pick('.bp-toc'), ...[...sheet.querySelectorAll('.bp-act')].slice(0, 4)]],
   ];
   for (const [delay, els] of beats) {
     for (const el of els) {
@@ -55,6 +59,40 @@ export function enterBrief(sheet, rail) {
   fadeIn(rail, reduced ? 160 : 240);
   const light = pick('.bp-light');
   if (light && !reduced) light.animate([{ opacity: 0 }, { opacity: getComputedStyle(light).opacity }], { duration: 600, easing: 'linear' });
+}
+
+// ── 早报换版(页内换内容,不是入场编排):旧版面淡出,新版面淡入并上移 12px ──
+// 今天这一版由系统自己换(issue #343:新内容落地、读者改了兴趣或订阅、失败后重试),不是哪一下点击的结果——
+// 硬切会让人以为页面跳了,所以先让旧版面淡出(150ms)再换;新版面按「页内换内容」的换法上来(move 弹簧,单独一步、不分拍)。
+// 页头那一行(日期、编排时刻、往期)不动,它是这一页的框。不看输入方式;减少动效时不演淡出,新版面只淡入。
+const SWAP_DIST = 12;
+const canAnimate = () => typeof Element !== 'undefined' && !!Element.prototype.animate;
+const swapTargets = (sheet) => [
+  ...sheet.querySelectorAll(':scope > .bp-poster > .bp-wrap > :not(.bp-top):not(.brief-onb):not(.bp-notice)'),
+  sheet.querySelector(':scope > .bp-wrap'),
+].filter(Boolean);
+
+/**
+ * 换版的前一半:旧版面淡出。返回 { animations, duration }——调用方等 duration 毫秒后换内容,
+ * 并在换上的那次提交里把 animations 撤掉(留在场的节点带着 forwards 的终帧)。不必演时 duration 为 0。
+ */
+export function leaveBrief(sheet) {
+  const still = { animations: [], duration: 0 };
+  if (!sheet || !canAnimate() || motionReduced()) return still;
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return still;
+  const animations = swapTargets(sheet).map((el) => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.fast, easing: 'linear', fill: 'forwards' }));
+  return animations.length ? { animations, duration: MOTION.fast } : still;
+}
+
+/** 换版的后一半:新版面换上的那次提交里调用。「到场」的三拍还在演(或在等幕布)时不叠第二层。 */
+export function swapInBrief(sheet) {
+  if (!sheet || !canAnimate() || waiting || arriving.has(sheet)) return;
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  const reduced = motionReduced();
+  for (const el of swapTargets(sheet)) {
+    if (reduced) fadeIn(el, 160);
+    else springTo(el, [{ opacity: 0, transform: `translateY(${SWAP_DIST}px)` }, { opacity: 1, transform: 'none' }], 'move');
+  }
 }
 
 // ── 订阅一个来源(入场清单之一):徽标沿弧线飞到导轨上对应形态的图标,落点弹一下;订阅钮自己也弹一下 ──
