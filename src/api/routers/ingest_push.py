@@ -280,24 +280,29 @@ def list_tokens(session: Session = Depends(deps.get_session)):
 @router.post("/api/admin/ingest/tokens")
 def create_token(params: TokenCreate, request: Request, session: Session = Depends(deps.get_session)):
     created_by = _app().current_username(request) or ""
-    # 先核对要绑定的源,再签发:不留下「签发成功、绑定失败」的半截令牌。
     source_ids = list(dict.fromkeys(sid.strip() for sid in params.source_ids if sid.strip()))
-    for source_id in source_ids:
-        reason = ingest_bindings.unbindable_reason(session, source_id)
-        if reason:
-            raise HTTPException(status_code=400, detail=f"{source_id}:{reason}")
+    # 签发与绑定同一事务:有一个源绑不了就整体回滚,不留下「拿不到明文、又没有绑定」的令牌(检视 R1 #6)。
     try:
         record, token = ingest_push.create_token(
             session,
             actor=params.actor,
             created_by=created_by,
             daily_limit=params.daily_limit,
+            commit=False,
         )
+        for source_id in source_ids:
+            try:
+                ingest_bindings.bind(session, record.id, source_id, created_by=created_by)
+            except ingest_bindings.BindingError as exc:
+                raise HTTPException(status_code=exc.status, detail=f"{source_id}:{exc}")
+    except HTTPException:
+        session.rollback()
+        raise
     except ValueError as exc:
+        session.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
-    for source_id in source_ids:
-        ingest_bindings.bind(session, record.id, source_id, created_by=created_by)
     session.commit()
+    session.refresh(record)
     # 明文只在签发这一次回显;库里只有 hash。
     return {**_token_payload(record, ingest_bindings.by_token(session)), "token": token}
 

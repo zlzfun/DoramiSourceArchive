@@ -145,7 +145,9 @@ def create_token(
     actor: str,
     created_by: str,
     daily_limit: int = DEFAULT_DAILY_LIMIT,
+    commit: bool = True,
 ) -> tuple[IngestTokenRecord, str]:
+    """签发令牌。``commit=False`` 时只 flush,由调用方与后续写入(推送绑定)一起提交。"""
     actor = re.sub(r"\s+", " ", str(actor or "").strip())[:60]
     if not actor:
         raise ValueError("actor 不能为空")
@@ -160,8 +162,11 @@ def create_token(
         created_at=_now(),
     )
     session.add(record)
-    session.commit()
-    session.refresh(record)
+    if commit:
+        session.commit()
+        session.refresh(record)
+    else:
+        session.flush()
     return record, token
 
 
@@ -539,7 +544,10 @@ def resolve_source(ctx: BatchContext, kind: str, source: dict[str, Any], *, item
     feed_url = str(source.get("feed_url") or "").strip()
     site = str(source.get("url") or source.get("site") or "").strip()
     if feed_url:
-        hit = ctx.web_index.feeds.get(canonical_feed(feed_url))
+        # 源行上的 feed 地址,或文章源按 feed 登记时留下的身份键(issue #344)。
+        hit = ctx.web_index.feeds.get(canonical_feed(feed_url)) or _existing_identity(
+            ctx.session, source_identity.identity_key("web", "feed", canonical_feed(feed_url))
+        )
         # 形态不同的源(例如往文章 RSS 的 feed 推播客单集)不算命中,继续往下解析。
         if hit and _shape_mismatch(ctx, hit, kind) is None:
             _check_target(ctx, hit, kind)
@@ -616,6 +624,15 @@ def source_is_open(ctx: BatchContext, source_id: str) -> bool:
     return source_id.startswith(OPEN_SOURCE_PREFIX) and not _source_identity_keys(ctx, source_id)
 
 
+def feed_identity_key(feed_url: str) -> str:
+    """文章源按 feed 登记时留下的身份键(``web:feed:<规范地址>``)。"""
+    return source_identity.identity_key("web", "feed", canonical_feed(feed_url))
+
+
+def _feed_identity(ctx: BatchContext, feed_url: str) -> Optional[str]:
+    return _existing_identity(ctx.session, feed_identity_key(feed_url))
+
+
 def _social_identity(source: dict[str, Any]) -> tuple[str, str, str]:
     platform = str(source.get("platform") or "x").strip().casefold() or "x"
     return platform, str(source.get("handle") or "").strip(), str(source.get("user_id") or "").strip()
@@ -666,13 +683,16 @@ def _match_bound(
                 continue  # 同 ``resolve_source``:按账号名命中的源登记过另一个稳定 id
             return hit
         derived = _derived_social_id(platform, handle)
-        # 同名 id 已存在但身份键没对上(旧导入行):沿用。
-        return derived if derived and accept(derived) and not source_is_open(ctx, derived) else None
+        # 同名 id 已存在但没有登记身份键(旧导入行):沿用。登记过身份键的源以上面的身份键为准——
+        # 账号名对得上、稳定 id 对不上时不能再从这里绕回去(检视 R1 #5)。
+        if not derived or not accept(derived) or source_is_open(ctx, derived):
+            return None
+        return None if _source_identity_keys(ctx, derived) else derived
 
     feed_url = str(source.get("feed_url") or "").strip()
     site = str(source.get("url") or source.get("site") or "").strip()
     if feed_url:
-        hit = ctx.web_index.feeds.get(canonical_feed(feed_url))
+        hit = ctx.web_index.feeds.get(canonical_feed(feed_url)) or _feed_identity(ctx, feed_url)
         if hit and accept(hit):
             return hit
     if kind == "podcast_episode":
@@ -719,12 +739,13 @@ def resolve_bound_source(
     who = dict(author or {})
     if kind == "social_post" and not (who.get("handle") or who.get("user_id")):
         who = dict(source)
+    # 作者对象没有平台字段:核对用帖子自己的平台(``social_source`` 整理进 ``source.platform``),
+    # 否则别的平台上的同名账号会被当成 X 账号放进来(检视 R1 #2)。
+    who["platform"] = source.get("platform") or "x"
     explicit = str(source.get("source_id") or "").strip()
     if explicit:
         if explicit not in allowed:
             raise IngestRejected(f"这个令牌没有绑定来源 {explicit}")
-        if not source_catalog.get(ctx.session, explicit).known:
-            raise IngestRejected("source_id 不存在")
         target = explicit
     else:
         target = _match_bound(ctx, kind, source, item_url, allowed) or ""
@@ -736,6 +757,9 @@ def resolve_bound_source(
             if len(fallback) != 1:
                 raise IngestRejected("认不出这一条的出处;请给 source.source_id(这个令牌绑定的来源之一)")
             target = fallback[0]
+    # 三条路的结果都要查目标还在:源被删掉后留下的绑定不能让存储层把它补建回来(检视 R1 #1)。
+    if not source_catalog.get(ctx.session, target).known:
+        raise IngestRejected(f"来源 {target} 不存在")
     _check_target(ctx, target, kind)
     _check_author(ctx, target, kind, who)
     return ResolvedSource(source_id=target)

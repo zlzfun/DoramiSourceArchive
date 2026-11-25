@@ -374,3 +374,190 @@ def test_only_registered_push_ids_count_as_open_sources(monkeypatch, tmp_path):
     assert [(r["status"], r.get("source_id")) for r in results] == [
         ("rejected", None), ("created", "x_legacy_account"),
     ]
+
+
+# ── 检视 R1 的修复 ──────────────────────────────────────────────────────────
+
+
+def test_deleting_a_source_drops_its_bindings_and_orphans_cannot_recreate_it(monkeypatch, tmp_path):
+    from models.db import IngestBindingRecord, SourceConfigRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        token_id = _token_id(client, token)
+        picks = _register(client, kind="social_post", name="合集", source_id_suffix="gone_soon", token_id=token_id)
+        # 还没有条目:删除是物理删除,绑定跟着走。
+        assert client.delete(f"/api/source-configs/{picks}").json()["disposition"] == "deleted"
+        with Session(sink.engine) as session:
+            assert session.exec(select(IngestBindingRecord)).all() == []
+            # 再造一条指向已删除源的绑定(别的删除路径漏清时的样子):推送被拒收,源不会被补建回来。
+            session.add(IngestBindingRecord(source_id=picks, token_id=token_id, created_at="2026-11-06T00:00:00"))
+            session.commit()
+        results = _push(client, token, [
+            {"kind": "article", "url": "https://elsewhere.example.org/p/1", "title": "t", "content": "x"},
+            _post("someone", 101),
+            _post("someone", 102, source={"source_id": picks}),
+        ]).json()["results"]
+        # 有条目的源删除时是退役:行还在,绑定保留,推送被「已下线」拒收。
+        kept = _register(client, kind="social_post", name="留着", source_id_suffix="kept_one", token_id=token_id)
+        assert _push(client, token, [_post("someone", 103, source={"source_id": kept})]).json()["results"][0]["status"] == "created"
+        assert client.delete(f"/api/source-configs/{kept}").json()["disposition"] == "retired"
+        retired = _push(client, token, [_post("someone", 104, source={"source_id": kept})]).json()["results"][0]
+    assert [r["status"] for r in results] == ["rejected"] * 3
+    assert all("不存在" in r["reason"] or "认不出" in r["reason"] for r in results), results
+    assert _row(sink.engine, SourceConfigRecord, picks) is None
+    assert retired["status"] == "rejected" and "下线" in retired["reason"]
+    with Session(sink.engine) as session:
+        assert {b.source_id for b in session.exec(select(IngestBindingRecord)).all()} == {picks, kept}
+
+
+def test_author_check_uses_the_posts_platform(monkeypatch, tmp_path):
+    """作者对象没有平台字段:核对用帖子自己的平台,别的平台上的同名账号进不了 X 账号源。"""
+    import json
+
+    from models.db import ArticleRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        # 单条收录留下一个非 X 平台的账号源。
+        made = _collect(client, [
+            {"kind": "social_post", "platform": "mastodon", "post_id": "1", "content": "toot",
+             "author": {"handle": "alice", "name": "Alice"}},
+        ]).json()["results"][0]
+        assert made["source_id"] == "mastodon_alice"
+        token = _issue_token(client)
+        _bind(client, token, "x_openai", "mastodon_alice")
+        results = _push(client, token, [
+            # 别的平台上的同名账号,指名进 X 账号源:拒收(不论平台写在条目上还是出处描述里)。
+            {"kind": "social_post", "platform": "mastodon", "post_id": "11", "content": "x",
+             "author": {"handle": "OpenAI"}, "source": {"source_id": "x_openai"}},
+            {"kind": "social_post", "platform": "mastodon", "post_id": "12", "content": "x",
+             "author": {"handle": "OpenAI"}, "source": {"source_id": "x_openai", "platform": "x"}},
+            # X 上的同名账号进不了 mastodon 账号源。
+            {"kind": "social_post", "post_id": "13", "content": "x",
+             "author": {"handle": "alice"}, "source": {"source_id": "mastodon_alice"}},
+            # 非 X 的账号源照收自己平台上的作者:指名与按作者认两种写法。
+            {"kind": "social_post", "platform": "mastodon", "post_id": "14", "content": "x",
+             "author": {"handle": "alice"}, "source": {"source_id": "mastodon_alice"}},
+            {"kind": "social_post", "platform": "mastodon", "post_id": "15", "content": "x",
+             "author": {"handle": "alice"}},
+        ]).json()["results"]
+    assert [(r["status"], r.get("source_id")) for r in results] == [
+        ("rejected", None), ("rejected", None), ("rejected", None),
+        ("created", "mastodon_alice"), ("created", "mastodon_alice"),
+    ]
+    assert all("作者不是来源" in r["reason"] for r in results[:3])
+    stored = json.loads(_row(sink.engine, ArticleRecord, "mastodon_alice_14").extensions_json)
+    assert stored["platform"] == "mastodon"
+
+
+def test_a_source_with_an_active_push_binding_counts_as_in_local_use(monkeypatch, tmp_path):
+    """上游删掉或退役一个本机有令牌在推的源,不能把本机的推送掐断(绑定只在本机、不随同步)。"""
+    from models.db import SourceConfigRecord
+    from services import archive_sync_v2
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with Session(sink.engine) as session:
+        now = "2026-11-06T00:00:00"
+        session.add(SourceConfigRecord(source_id="synced_site", name="s", source_type="rss", shape="article",
+                                       collection_authority_id="producer-a", created_at=now, updated_at=now))
+        session.commit()
+
+    def in_use():
+        with Session(sink.engine) as session:
+            row = session.get(SourceConfigRecord, "synced_site")
+            return archive_sync_v2.source_in_local_use(session, row, archive_sync_v2._PageOutcome())  # noqa: SLF001
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert in_use() is False
+        token = _issue_token(client)
+        token_id = _bind(client, token, "synced_site")
+        bound = in_use()
+        assert client.post(f"/api/admin/ingest/tokens/{token_id}/revoke").status_code == 200
+        revoked = in_use()  # 吊销的令牌不算在推
+        other = _issue_token(client, actor="second")
+        other_id = _bind(client, other, "synced_site")
+        rebound = in_use()
+        assert client.delete(f"/api/admin/ingest/tokens/{other_id}/bindings/synced_site").status_code == 200
+    assert (bound, revoked, rebound, in_use()) == (True, False, True, False)
+
+
+def test_an_article_source_registered_by_feed_is_recognised_by_that_feed(monkeypatch, tmp_path):
+    from models.db import SourceIdentityKeyRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    feed = "https://feeds.example.com/lab.xml"
+    with TestClient(app_module.app) as client:
+        _login(client)
+        lab = _register(client, kind="article", name="Lab Blog", feed_url=feed)
+        again = client.post("/api/admin/ingest/sources", json={"kind": "article", "name": "dup", "feed_url": feed})
+        token = _issue_token(client)
+        _bind(client, token, lab)
+        results = _push(client, token, [
+            # feed 与文章不在同一个主机上:靠 feed 认回登记的源。
+            {"kind": "article", "url": "https://lab.example.com/blog/test", "title": "t", "content": "x",
+             "source": {"feed_url": feed}},
+            {"kind": "article", "url": "https://lab.example.com/blog/other", "title": "t", "content": "x"},
+        ]).json()["results"]
+        # 单条收录按同一个 feed 也认回它,不另建临时源。
+        manual = _collect(client, [
+            {"kind": "article", "url": "https://lab.example.com/blog/manual", "title": "t", "content": "x",
+             "source": {"feed_url": feed}},
+        ]).json()["results"][0]
+    assert _row(sink.engine, SourceIdentityKeyRecord, f"web:feed:{feed}").source_id == lab
+    assert (again.status_code, again.json()["detail"]["source_id"]) == (409, lab)
+    assert [(r["status"], r.get("source_id")) for r in results] == [("created", lab), ("rejected", None)]
+    assert (manual["status"], manual["source_id"], manual["source_created"]) == ("created", lab, False)
+
+
+def test_a_reassigned_handle_falls_through_to_the_open_source(monkeypatch, tmp_path):
+    """账号名对得上、稳定 id 对不上(改名后旧账号名被他人接手):不落进原账号的源,进绑定的合集。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        token_id = _token_id(client, token)
+        alice = _register(client, kind="social_post", name="Alice", handle="alice", user_id="1", token_id=token_id)
+        picks = _register(client, kind="social_post", name="合集", source_id_suffix="picks", token_id=token_id)
+        author = {"handle": "alice", "user_id": "2", "name": "Another Alice"}
+        results = _push(client, token, [
+            {"kind": "social_post", "post_id": "201", "content": "x", "author": author},
+            {"kind": "social_post", "post_id": "202", "content": "x", "author": author, "source": {"source_id": alice}},
+            {"kind": "social_post", "post_id": "203", "content": "x", "author": {"handle": "alice", "user_id": "1"}},
+            {"kind": "social_post", "post_id": "204", "content": "x", "author": {"handle": "alice"}},
+        ]).json()["results"]
+    assert alice == "x_alice"
+    assert [(r["status"], r.get("source_id")) for r in results] == [
+        ("created", picks), ("rejected", None), ("created", alice), ("created", alice),
+    ]
+    assert "作者不是来源 x_alice 的账号" in results[1]["reason"]
+
+
+def test_issuing_with_sources_is_all_or_nothing(monkeypatch, tmp_path):
+    """签发与绑定同一事务:绑定中途失败不留下「拿不到明文、又没有绑定」的令牌。"""
+    from models.db import IngestBindingRecord, IngestTokenRecord
+    from services import ingest_bindings
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    real_bind = ingest_bindings.bind
+
+    def flaky(session, token_id, source_id, **kwargs):
+        if source_id == "x_sama":
+            raise ingest_bindings.BindingError("该来源已下线")  # 预校验之后来源被退役
+        return real_bind(session, token_id, source_id, **kwargs)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        monkeypatch.setattr(ingest_bindings, "bind", flaky)
+        failed = client.post("/api/admin/ingest/tokens", json={"actor": "half", "source_ids": ["x_openai", "x_sama"]})
+        monkeypatch.setattr(ingest_bindings, "bind", real_bind)
+        with Session(sink.engine) as session:
+            leftovers = (session.exec(select(IngestTokenRecord)).all(), session.exec(select(IngestBindingRecord)).all())
+        issued = client.post("/api/admin/ingest/tokens", json={"actor": "whole", "source_ids": ["x_openai", "x_sama"]})
+    assert failed.status_code == 400 and leftovers == ([], [])
+    assert issued.status_code == 200 and issued.json()["token"].startswith("ding_")
+    assert [b["source_id"] for b in issued.json()["bindings"]] == ["x_openai", "x_sama"]

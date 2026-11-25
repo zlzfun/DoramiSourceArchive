@@ -94,6 +94,9 @@ def _resolve_all(
                     resolved = ingest_push.resolve_source(ctx, kind, source, item_url=str(item.get("url") or ""))
                 else:
                     author = item.get("author") if isinstance(item.get("author"), dict) else {}
+                    if kind == "social_post":
+                        # 认出处与核对作者都用帖子自己的平台(入库的也是它),不用出处描述里另写的那个。
+                        source["platform"] = str(item.get("platform") or "x").strip().casefold() or "x"
                     resolved = ingest_push.resolve_bound_source(
                         ctx, kind, source,
                         allowed=caller.bound, author=author, item_url=str(item.get("url") or ""),

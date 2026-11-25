@@ -54,6 +54,8 @@ from models.db import (
     EventMemberRecord,
     EventRecord,
     EventRedirectRecord,
+    IngestBindingRecord,
+    IngestTokenRecord,
     MediaAssetRecord,
     PODCAST_TEXT_ARTIFACT_KINDS,
     PodcastArtifactRecord,
@@ -2168,7 +2170,7 @@ def revision_newer(candidate: Any, other: Any) -> bool:
 def source_in_local_use(
     session: Session, source: SourceConfigRecord, outcome: "_PageOutcome"
 ) -> bool:
-    """本机在用的源:本机跑过、被采集任务点名、或管理员在本机存过采集绑定。
+    """本机在用的源:本机跑过、被采集任务点名、管理员在本机存过采集绑定,或本机有收录令牌在往它推。
 
     这类源不接受上游的删除、退役与停用(方案检视 R1 #2 / R2 #2)。预设镜像行与播客目录自动
     安装的行自带的绑定不算管理员存的。
@@ -2178,6 +2180,19 @@ def source_in_local_use(
     if state is not None and not (state.authority_id or "").strip():
         return True
     if source.source_id in outcome.scheduled_source_ids(session):
+        return True
+    # 本机有未吊销的收录令牌在往它推(issue #344 推送绑定;绑定只在本机、不随同步):
+    # 上游删掉或退役这个源,不能把本机的推送也掐断。
+    if session.exec(
+        select(IngestBindingRecord.id)
+        .join(IngestTokenRecord, IngestTokenRecord.id == IngestBindingRecord.token_id)
+        .where(
+            IngestBindingRecord.source_id == source.source_id,
+            IngestTokenRecord.is_active == True,  # noqa: E712
+            IngestTokenRecord.revoked_at == None,  # noqa: E711
+        )
+        .limit(1)
+    ).first() is not None:
         return True
     return bool((source.fetcher_id or "").strip()) and not outcome.binding_is_auto_generated(source)
 

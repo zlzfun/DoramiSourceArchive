@@ -39,8 +39,8 @@ export function BindList({ rows, onUnbind, busyKey = '' }) {
   );
 }
 
-/** 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染。 */
-export function BindAdd({ label, groups, onBind, busy = false, selectClassName = 'form-input form-input-inline' }) {
+/** 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染;`onFocus` 给调用方在下拉获得焦点时重取候选。 */
+export function BindAdd({ label, groups, onBind, busy = false, onFocus, selectClassName = 'form-input form-input-inline' }) {
   const [value, setValue] = useState('');
   const hasOptions = groups.some((group) => group.options.length > 0);
   if (!hasOptions) return null;
@@ -51,7 +51,7 @@ export function BindAdd({ label, groups, onBind, busy = false, selectClassName =
   };
   return (
     <div className="bind-add">
-      <select className={selectClassName} aria-label={label} value={value} onChange={(e) => setValue(e.target.value)}>
+      <select className={selectClassName} aria-label={label} value={value} onFocus={onFocus} onChange={(e) => setValue(e.target.value)}>
         <option value="">{label}</option>
         {groups.map((group) => (
           group.label ? (

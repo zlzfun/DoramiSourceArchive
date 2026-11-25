@@ -223,7 +223,6 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       console.error(e); // 取不到令牌:「推送」区只是没有下拉,其余照常
     }
   }, []);
-  useEffect(() => { loadIngestTokens(); }, [loadIngestTokens]);
   const loadCatalog = useCallback(async () => {
     try {
       const list = await fetchFetchers({ includeRetired: true });
@@ -330,6 +329,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   const loadSourceHealth = useCallback(async () => {
     loadCatalog(); // 目录与健康一起刷新:挂载 / 轮询 / 手动刷新 / 抓取完成都会带出新建的收录源
+    loadIngestTokens(); // 令牌也一起:在运维页签发 / 吊销之后回到这里,「推送」区与登记抽屉的下拉要跟上
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
@@ -372,7 +372,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       });
       setTrendBySource({ days: stats.days, bySource });
     } catch { setTrendBySource(null); }
-  }, [loadCatalog]);
+  }, [loadCatalog, loadIngestTokens]);
 
   useEffect(() => {
     loadSourceHealth();
@@ -800,6 +800,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           label="令牌"
           groups={[{ options: candidates.map(token => ({ value: String(token.id), label: `${token.actor} · ${token.token_preview}` })) }]}
           onBind={value => bindToken(fetcher, Number(value))}
+          onFocus={loadIngestTokens}
           busy={bindBusy === 'add'}
           selectClassName="node-param-input inspector-param-select"
         />
@@ -809,6 +810,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   // 登记完:重取目录与令牌,切到新源所在的内容类型并选中它。
   const handleRegistered = useCallback(async (res) => {
     await Promise.all([loadCatalog(), loadIngestTokens()]);
+    // 新源默认归「媒体」、从没运行过:清掉角色与健康筛选,否则它被筛掉、选中会被改回旧的那一个。
+    setRoleFilter('all');
+    setHealthFilter('all');
     if (CONTENT_SHAPE_LABELS[res?.shape]) setShapeFilter(res.shape);
     if (res?.source_id) setSelectedNodeId(res.source_id);
   }, [loadCatalog, loadIngestTokens]);
@@ -1482,7 +1486,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           )}
           <button
             type="button"
-            onClick={() => setRegisterOpen(true)}
+            onClick={() => { loadIngestTokens(); setRegisterOpen(true); }}
             className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
           >
             <Plus /> 登记来源

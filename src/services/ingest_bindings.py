@@ -105,6 +105,16 @@ def unbind(session: Session, token_id: int, source_id: str) -> bool:
     return True
 
 
+def drop_for_source(session: Session, source_id: str) -> int:
+    """删掉某个源的全部绑定(源被物理删除时同事务调用)。调用方提交。"""
+    records = session.exec(
+        select(IngestBindingRecord).where(IngestBindingRecord.source_id == str(source_id or "").strip())
+    ).all()
+    for record in records:
+        session.delete(record)
+    return len(records)
+
+
 def touch(session: Session, token_id: int, source_ids: Iterable[str]) -> None:
     """记「最近一批」:这个令牌刚有条目被这些源接受。调用方提交。"""
     ids = sorted({str(sid) for sid in source_ids if sid})
@@ -242,6 +252,10 @@ def register_source(
     hint = dict(resolved.hint)
     podcast_feed = hint.pop("podcast_feed_url", "")
     hint.update({"name": name, "admission_status": admission})
+    if kind == "article" and feed_url:
+        # 文章源按 feed 登记:留下 feed 身份键,之后带同一个 feed_url 的条目(文章链接可以在别的主机上)
+        # 才认得回来(检视 R1 #4)。
+        hint["identity_keys"] = [*hint.get("identity_keys", []), ingest_push.feed_identity_key(feed_url)]
     if avatar:
         hint["avatar_url"] = avatar
     if homepage:

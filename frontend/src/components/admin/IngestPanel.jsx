@@ -47,7 +47,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   // 抽屉:开合与「是哪个令牌」分开记——关上时令牌 id 留着,滑出去的过程里内容不空。
   const [drawerId, setDrawerId] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [catalog, setCatalog] = useState(null); // 源目录(抽屉第一次打开时取)
+  const [catalog, setCatalog] = useState(null); // 源目录(每次打开抽屉时重取)
   const [bindBusy, setBindBusy] = useState(''); // 'add' | 绑定行的 key
 
   const load = useCallback(async () => {
@@ -96,9 +96,8 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const openDrawer = (token) => {
     setDrawerId(token.id);
     setDrawerOpen(true);
-    if (catalog === null) {
-      fetchFetchers().then((list) => setCatalog(Array.isArray(list) ? list : [])).catch(() => setCatalog([]));
-    }
+    // 每次打开都重取:在源管理里新登记的来源要出现在下拉里(取不到就沿用上一份)。
+    fetchFetchers().then((list) => { if (Array.isArray(list)) setCatalog(list); }).catch(() => {});
   };
   const replaceToken = (next) => setTokens((prev) => (prev || []).map((token) => (token.id === next.id ? next : token)));
   const handleBind = async (sourceId) => {

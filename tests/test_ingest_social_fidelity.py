@@ -19,7 +19,9 @@ from sqlmodel import Session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from tests.test_ingest_push import _collect, _login, _row, _setup  # noqa: E402
+from tests.test_ingest_push import (  # noqa: E402
+    _bind, _collect, _issue_token, _login, _push, _register, _row, _setup,
+)
 
 AVATAR = "https://pbs.twimg.com/profile_images/1/lab_normal.jpg"
 AVATAR_LARGE = "https://pbs.twimg.com/profile_images/1/lab_400x400.jpg"
@@ -129,6 +131,22 @@ def _set_extension(sink, article_id, key, value):
         row.extensions_json = json.dumps(extensions, ensure_ascii=False)
         session.add(row)
         session.commit()
+
+
+def _sender(client, channel, *, bind=(), register=None):
+    """按通道给出发送函数与入库后的(通道,收录者)。
+
+    ``manual`` 是管理员「单条收录」;``push`` 是收录令牌——先登记(可选)、绑定,再用令牌推
+    (issue #344:令牌只能推它绑定的源)。两条路走同一套载荷整理与存储,补全规则应当一样。
+    """
+    if channel == "manual":
+        return (lambda items: _collect(client, items)), ("manual", "admin")
+    sources = list(bind)
+    if register:
+        sources.append(_register(client, **register))
+    token = _issue_token(client)
+    _bind(client, token, *sources)
+    return (lambda items: _push(client, token, items)), ("push", "research-agent")
 
 
 def _structured(relation="quoted", **overrides):
@@ -341,7 +359,8 @@ def test_a_post_link_alone_names_the_author_and_the_post(monkeypatch, tmp_path):
     assert ext["quoted"]["author_handle"] == "Other"
 
 
-def test_pushing_again_fills_what_is_missing_and_overwrites_nothing(monkeypatch, tmp_path):
+@pytest.mark.parametrize("channel", ["manual", "push"])
+def test_pushing_again_fills_what_is_missing_and_overwrites_nothing(monkeypatch, tmp_path, channel):
     app_module, sink = _setup(monkeypatch, tmp_path)
     queued, prefetched = [], []
     monkeypatch.setattr(app_module, "queue_article_analysis_after_commit", lambda ids: queued.append(list(ids)))
@@ -351,12 +370,15 @@ def test_pushing_again_fills_what_is_missing_and_overwrites_nothing(monkeypatch,
     full = _structured("quoted", content="第二次推的正文", media_urls=[IMG_B])
     with TestClient(app_module.app) as client:
         _login(client)
-        assert _collect(client, [bare]).json()["results"][0]["status"] == "created"
+        send, provenance = _sender(client, channel, register={
+            "kind": "social_post", "name": "X · New Lab", "handle": "new_lab", "user_id": "9001", "listed": False,
+        })
+        assert send([bare]).json()["results"][0]["status"] == "created"
         # 服务端写的键(译文缓存)不属于社交结构,补全时原样保留。
         _set_extension(sink, "x_new_lab_2001", "translation_zh_social", {"text": "译文", "fp": "x", "v": 1})
         before, _ext = _stored(sink, "x_new_lab_2001")
-        second = _collect(client, [full]).json()["results"][0]
-        third = _collect(client, [full]).json()["results"][0]
+        second = send([full]).json()["results"][0]
+        third = send([full]).json()["results"][0]
     assert (second["status"], second["id"], second["source_created"]) == ("refreshed", "x_new_lab_2001", False)
     assert third["status"] == "duplicate"
 
@@ -370,9 +392,7 @@ def test_pushing_again_fills_what_is_missing_and_overwrites_nothing(monkeypatch,
     assert ext["translation_zh_social"] == {"text": "译文", "fp": "x", "v": 1}
     # 修订号前进(内网据此同步到),到达时间与来路不变。
     assert row.archive_updated_at > before.archive_updated_at
-    assert (row.fetched_date, row.ingest_channel, row.ingest_actor) == (
-        before.fetched_date, "manual", "admin",
-    )
+    assert (row.fetched_date, row.ingest_channel, row.ingest_actor) == (before.fetched_date, *provenance)
     # 新建与被补全的都触发分析入队与配图预取;第三次什么都没变,不触发。
     assert queued == [["x_new_lab_2001"], ["x_new_lab_2001"]] == prefetched
 
@@ -384,8 +404,9 @@ CACHES = {
 }
 
 
+@pytest.mark.parametrize("channel", ["manual", "push"])
 @pytest.mark.parametrize("pushed_text", ["Agent 自己整理的一句话", None])
-def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path, pushed_text):
+def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path, pushed_text, channel):
     """``pushed_text=None``:收录时的正文与平台原文相同(只有结构不全)。"""
     from storage.impl import db_storage
 
@@ -394,7 +415,8 @@ def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path, pu
     same_text = pushed_text is None
     with TestClient(app_module.app) as client:
         _login(client)
-        pushed = _collect(client, [
+        send, provenance = _sender(client, channel, bind=["x_openai"])
+        pushed = send([
             {"kind": "social_post", "post_id": "555", "content": pushed_text or payload["data"]["text"],
              "author": {"handle": "OpenAI"}, "extensions": {"tags": ["agent-tag"]},
              "quoted": {"content": "Agent 以为这是引用", "author": {"handle": "someone"}}},
@@ -419,13 +441,13 @@ def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path, pu
         assert {key: ext.get(key) for key in CACHES} == (CACHES if same_text else dict.fromkeys(CACHES))
         assert _reader_summary(sink, "x_openai_555") == (CACHES["summary_zh"] if same_text else None)
         assert row.archive_updated_at > before.archive_updated_at
-        assert (row.fetched_date, row.ingest_channel) == (before.fetched_date, "manual")
+        assert (row.fetched_date, row.ingest_channel) == (before.fetched_date, provenance[0])
 
         # 已是抓取版:再抓一次(互动数字变了)按重复处理,推送也不再改它。
         again = copy.deepcopy(payload)
         again["data"]["public_metrics"]["like_count"] = 99
         assert asyncio.run(sink.save_with_outcome(_fetched(sink, again, "x_openai"))) == db_storage.SAVE_DUPLICATE
-        repush = _collect(client, [
+        repush = send([
             {"kind": "social_post", "post_id": "555", "content": "x", "author": {"handle": "OpenAI"},
              "quoted": {"content": "再推一个引用"}},
         ]).json()["results"][0]
