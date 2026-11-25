@@ -1161,6 +1161,7 @@ export default function App() {
             <div className={`tab-panel${activeTab === 'fetch' && !readerView ? '' : ' is-off'}`}>
               <TabBoundary>
                 <FetchTab
+                  isActive={activeTab === 'fetch' && !readerView}
                   availableFetchers={availableFetchers}
                   showToast={showToast}
                   view={nav.views.fetch}

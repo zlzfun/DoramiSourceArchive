@@ -137,7 +137,7 @@ function acquisitionTitleOf(fetcher) {
   return parts.join(' · ') || '没有抓取器，也没有推送';
 }
 
-export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
+export default function FetchTab({ isActive = true, availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [customNodes, setCustomNodes] = useState([]); // 私有用户源由 source-health 补入公共源目录之外
@@ -223,6 +223,9 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       console.error(e); // 取不到令牌:「推送」区只是没有下拉,其余照常
     }
   }, []);
+  // 页签切回来时重取令牌:在运维页签发(哪怕是第一个)/ 吊销之后回到这里,「推送」区立刻跟上,
+  // 不必等下一轮轮询(检视 R2 #7)。组件一直挂着,靠 isActive 才知道自己又被看见了。
+  useEffect(() => { if (isActive) loadIngestTokens(); }, [isActive, loadIngestTokens]);
   const loadCatalog = useCallback(async () => {
     try {
       const list = await fetchFetchers({ includeRetired: true });
