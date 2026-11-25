@@ -1,6 +1,6 @@
 # issue #344 推送绑定 · 样页(2026-11)
 
-> 状态:进行中。2026-11-25 由 Claude Code(Fable 5.2)做的样页;同日用户:待定项按建议,源管理里抓取的源要突出抓取 / 抓取器、与推送的关系要看得出来——第二轮按此改了行上的获取方式与检视器的分区(`?v=2`),待看。方案见 [`docs/plans/issue-344-push-binding.md`](../../plans/issue-344-push-binding.md),issue [#344](https://github.com/zlzfun/DoramiSourceArchive/issues/344)。
+> 状态:耐久参考。2026-11-25 由 Claude Code(Fable 5.2)做的样页;同日用户:待定项按建议,源管理里抓取的源要突出抓取 / 抓取器、与推送的关系要看得出来——第二轮按此改了行上的获取方式与检视器的分区(`?v=2`),已按此落地。拍板依据,实现后不再更新;现行界面以代码为准。方案见 [`docs/plans/issue-344-push-binding.md`](../../plans/issue-344-push-binding.md),issue [#344](https://github.com/zlzfun/DoramiSourceArchive/issues/344)。
 
 要回答的是:管理员在哪里登记一个推送的来源、把它交给哪个令牌,以及怎么一眼看出哪个源有 Agent 在推。
 

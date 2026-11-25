@@ -83,7 +83,7 @@
 
 - ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
 
-- ☐ [plans/issue-344-push-binding.md](./plans/issue-344-push-binding.md) — 推送绑定(issue #344,方向已拍板、未实现):登记过的推送是源的一种获取方式(单独一张表、只在外网),未登记的推送拒收;定向源与不限出处的源、入口规则、登记与绑定、部署顺序、Agent 自助登记与五项待拍板。
+- ☐ [plans/issue-344-push-binding.md](./plans/issue-344-push-binding.md) — 推送绑定(issue #344,2026-11-25 拍板;第一个 PR 已实现,第二个 PR 是 Agent 自助登记):登记过的推送是源的一种获取方式(单独一张表、只在外网),未登记的推送拒收;定向源与合集源、入口规则、登记与绑定、界面、部署顺序与实施记录。
 
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。

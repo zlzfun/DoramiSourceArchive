@@ -32,7 +32,7 @@ async function handleApiError(response, defaultMsg) {
   try {
     const data = await response.json();
     if (data.message) msg = data.message;
-    else if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    else if (data.detail) msg = typeof data.detail === 'string' ? data.detail : (data.detail.message || JSON.stringify(data.detail));
     code = typeof data.code === 'string' ? data.code : '';
   } catch { /* use defaultMsg */ }
   const error = new Error(msg);
@@ -1225,6 +1225,23 @@ export function createIngestToken(payload) {
 
 export function revokeIngestToken(tokenId) {
   return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/revoke`, { method: 'POST', errorMsg: '吊销失败' });
+}
+
+// 推送绑定(issue #344):令牌只能往它绑定的源推。三个调用都返回更新后的令牌(带 bindings)或登记结果。
+export function bindIngestSource(tokenId, sourceId) {
+  return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/bindings`, {
+    method: 'POST', body: { source_id: sourceId }, errorMsg: '绑定失败',
+  });
+}
+
+export function unbindIngestSource(tokenId, sourceId) {
+  return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/bindings/${encodeURIComponent(sourceId)}`, {
+    method: 'DELETE', errorMsg: '解绑失败',
+  });
+}
+
+export function registerIngestSource(payload) {
+  return request('/admin/ingest/sources', { method: 'POST', body: payload, errorMsg: '登记失败' });
 }
 
 export function fetchIngestSources() {

@@ -173,6 +173,7 @@ export const SOURCE_CHANNEL_LABELS = {
   paper_ranking: '论文榜单',
   search_rss: '搜索 RSS',
   podcast_rss: 'Podcast RSS',
+  x_user_timeline: 'X 时间线',
   website: '网站',
   website_or_feed: '网站/Feed',
   docs_console: '开放平台',
