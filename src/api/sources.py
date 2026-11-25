@@ -1,17 +1,20 @@
 """跨 Router 复用的「内容源元数据」工具与常量。
 
 阶段1 拆分时，把原本散落在 app.py、被 admin/content/reader 多个域共用的源目录元数据
-助手集中到此。仅依赖注册中心、向量层的友好名映射与 ORM 模型，无 app 级可变全局
+助手集中到此。仅依赖源目录读服务、友好名映射与 ORM 模型，无 app 级可变全局
 依赖（不引用 db_sink 等），因此可被任意 Router 安全 import，且不与 api.app 形成环。
+
+issue #262 R1a 余项:这里不再直接读抓取器注册表;形态 / 类型 / 平台的判定与预设源元数据
+都经 ``services.source_catalog``(读注册表身份的唯一入口),本模块只留路由层沿用的函数名。
 """
 
 import json
 from typing import Any, Dict, List, Optional
 
-from fetchers.registry import fetcher_registry
 from models.db import ReaderSubscriptionRecord
 from services import content_classification
 from services import daily_brief as daily_brief_service
+from services import source_catalog
 from services.source_naming import friendly_source_name
 
 
@@ -63,10 +66,10 @@ def _source_category(content_type: Optional[str]) -> str:
 # (services/content_classification.py)表达,列表里用紧凑行。旧客户端仍可能传 shape=bulletin,
 # 入参经 normalize_shape 视同 article——绝不能当作未知值忽略,否则 mark-all-read?shape=bulletin
 # 会把全部订阅标读、列表会混进社交与播客。
-VALID_CONTENT_SHAPES = frozenset({"article", "social", "podcast"})
-LEGACY_SHAPE_ALIASES = {"bulletin": "article"}
-SOCIAL_CONTENT_TYPES = frozenset({"social_post"})
-PODCAST_CONTENT_TYPES = frozenset({"podcast_episode"})
+VALID_CONTENT_SHAPES = frozenset(source_catalog.SHAPES)
+LEGACY_SHAPE_ALIASES = source_catalog.LEGACY_SHAPE_ALIASES
+SOCIAL_CONTENT_TYPES = source_catalog.SOCIAL_CONTENT_TYPES
+PODCAST_CONTENT_TYPES = source_catalog.PODCAST_CONTENT_TYPES
 CONTENT_TYPES_BY_SHAPE = {
     "social": SOCIAL_CONTENT_TYPES,
     "podcast": PODCAST_CONTENT_TYPES,
@@ -75,13 +78,11 @@ CONTENT_TYPES_BY_SHAPE = {
 
 def normalize_shape(shape: Optional[str]) -> str:
     """入参形态归一:合法值原样返回,旧别名(bulletin)映射到 article,其余返回空串(= 不过滤)。"""
-    value = (shape or "").strip().lower()
-    value = LEGACY_SHAPE_ALIASES.get(value, value)
-    return value if value in VALID_CONTENT_SHAPES else ""
+    return source_catalog.normalize_shape(shape)
 
 
-X_SOURCE_TYPES = frozenset({"x", "twitter", "x_timeline"})
-PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
+X_SOURCE_TYPES = source_catalog.X_SOURCE_TYPES
+PODCAST_SOURCE_TYPES = source_catalog.PODCAST_SOURCE_TYPES
 
 
 def source_shape(
@@ -105,57 +106,22 @@ def configured_source_shape(source_type: str, fetcher_id: str = "") -> str:
 
     显式 fetcher_id 的类属性优先；未显式绑定时，X 配置源稳定归入 social。
     """
-    if fetcher_id:
-        fetcher_class = fetcher_registry.get_class(fetcher_id)
-        if fetcher_class is not None:
-            shape = normalize_shape(str(getattr(fetcher_class, "content_shape", "article")))
-            if shape:
-                return shape
-    if (source_type or "").strip().lower() in X_SOURCE_TYPES | {"social"}:
-        return "social"
-    if (source_type or "").strip().lower() in PODCAST_SOURCE_TYPES:
-        return "podcast"
-    return "article"
+    return source_catalog.binding_shape(source_type, fetcher_id)
 
 
 def row_shape(record: Any) -> str:
     """源行的形态:显式 ``shape`` 列(issue #262 R1c)> 绑定的抓取器类 > ``source_type``。"""
-    explicit = normalize_shape(str(getattr(record, "shape", "") or ""))
-    if explicit:
-        return explicit
-    return configured_source_shape(
-        str(getattr(record, "source_type", "") or ""),
-        str(getattr(record, "fetcher_id", "") or ""),
-    )
+    return source_catalog.row_shape(record)
 
 
 def configured_source_content_type(source_type: str, fetcher_id: str = "") -> str:
     """解析配置源的预期 content_type，供零产出的阅读器目录使用。"""
-    if fetcher_id:
-        fetcher_class = fetcher_registry.get_class(fetcher_id)
-        if fetcher_class is not None:
-            return str(getattr(fetcher_class, "content_type", "") or "")
-    source_type_value = (source_type or "").strip().lower()
-    if source_type_value in X_SOURCE_TYPES | {"social"}:
-        return "social_post"
-    if source_type_value in PODCAST_SOURCE_TYPES:
-        return "podcast_episode"
-    if source_type_value in {"rss", "atom"}:
-        return "rss_article"
-    if source_type_value in {"web", "webpage"}:
-        return "web_article"
-    return ""
+    return source_catalog.binding_content_type(source_type, fetcher_id)
 
 
 def configured_source_platform(source_type: str, fetcher_id: str = "") -> str:
     """SourceConfig 的平台标识：显式 fetcher 优先，X 类型兜底为 x。"""
-    if fetcher_id:
-        fetcher_class = fetcher_registry.get_class(fetcher_id)
-        if fetcher_class is not None:
-            return str(getattr(fetcher_class, "platform", "") or "").strip().lower()
-    if (source_type or "").strip().lower() in X_SOURCE_TYPES:
-        return "x"
-    return ""
+    return source_catalog.binding_platform(source_type, fetcher_id)
 
 
 def registry_source_ids_for_shape(shape: str) -> List[str]:
@@ -175,8 +141,8 @@ def social_registry_source_ids() -> List[str]:
 
 
 def _registry_source_meta() -> Dict[str, Dict[str, Any]]:
-    """source_id -> 抓取器注册元数据（名称/简介/图标），用于内容源目录展示。"""
-    return {meta["id"]: meta for meta in fetcher_registry.get_all_metadata()}
+    """source_id -> 预设源的注册元数据（名称/简介/图标），用于内容源目录展示。"""
+    return {meta["id"]: meta for meta in source_catalog.preset_metadata()}
 
 
 def _friendly_source_name(source_id: str, registry_meta: Dict[str, Dict[str, Any]]) -> str:

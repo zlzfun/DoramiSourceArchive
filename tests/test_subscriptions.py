@@ -731,14 +731,14 @@ def test_reader_sources_includes_zero_article_registered_source(monkeypatch, tmp
 def test_reader_sources_excludes_decommissioned_node_with_lingering_archive(monkeypatch, tmp_path):
     import api.app as app_module
     from models.db import ArticleRecord
-    from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
+    from services import source_catalog
 
     sink = _make_sink(tmp_path, "decommissioned.db")
     monkeypatch.setattr(app_module, "db_sink", sink)
     _set_auth_accounts(monkeypatch, app_module)
     _set_runtime_role(monkeypatch, app_module, "reader")
 
-    dead = next(iter(DECOMMISSIONED_FETCHER_IDS))  # 已删类、但历史归档仍在的下线节点
+    dead = sorted(source_catalog.tombstone_ids())[0]  # 已删类、但历史归档仍在的下线节点
 
     with Session(sink.engine) as session:
         # 下线节点遗留的归档文章。

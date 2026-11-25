@@ -572,3 +572,9 @@ TTS 合并主干“确定未发出的 reserved 释放占用”规则与新增的
 用户要求修复检视意见。GitHub Codex 在提交 2c71bf5e 上给出 1 条 P2（discussion_r4679779375）：严格兴趣追加分页遇到 interest_pagination_stale 后重载首页，把 append 改为 false，导致原 loadingMore 一直为 true，后续无限滚动被阻断。接受该意见，无分歧。实现方 Codex（GPT-6）将结果拼接／替换方式单独保存为 appendResult，原请求 append 保持不变供加载态收尾；保留请求序号、列表版本、过期响应围栏。
 
 增强现有真实 loader 测试，断言过期替换后两个加载态均清除、hasMore 仍可用，下一页使用新 token 且正确追加。修复前新增断言复现 true != false（5 项中 1 项失败）；修复后前端 517 项测试全部通过，ESLint、Vite 构建、文档守卫与差异空白检查均通过。该 GitHub Codex 意见不冒充不同模型独立检视通过，线程留待复核。
+
+### 9.17 同步最新主干并解决冲突（2026-11-25）
+
+用户报告 PR #333 冲突，合并 origin/main aadbbe26（含 #335–#338、3.70.5-alpha），未重写分支历史。两处文本冲突：版本年表保留双方记录；personal_digest 导入保留本分支 public_interest_qualifies／public_interest_predicate，移除主干已不用的 source_role，源角色与形态继续经 source_catalog 读取。自动合并部分保留主干 TTS 回执协程排队、源目录身份／合集／墓碑重构，与本分支的 TTS 预算、采集时间窗口、兴趣权限和 30% 额外推荐逻辑共存；未改已发布迁移，未变更业务数据库或启动调度。
+
+合并工作树验证：后端早报／兴趣相关度／源目录／订阅／抓取器／事件归并／TTS／精品导读／迁移 691 项全部通过；前端 517 项全部通过，lint、build、文档守卫、git diff --check 通过。只更新 PR 分支，不合入 main、不部署；独立检视门禁仍保留。

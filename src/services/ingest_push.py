@@ -283,16 +283,11 @@ def _web_index(session: Session) -> _WebIndex:
 
     for source_id in source_catalog.registry_source_ids():
         view = source_catalog.registry_view(source_id)
-        try:
-            from fetchers.registry import fetcher_registry
-
-            cls = fetcher_registry.get_class(source_id)
-        except Exception:  # noqa: BLE001
-            cls = None
-        feed = str(getattr(cls, "feed_url", "") or "") if cls is not None else ""
+        binding = source_catalog.preset_binding(source_id)
+        feed = binding.get("feed_url", "")
         if feed:
             index.feeds.setdefault(canonical_feed(feed), source_id)
-        for url in (view.base_url if view else "", getattr(cls, "listing_url", "") if cls else ""):
+        for url in (view.base_url if view else "", binding.get("listing_url", "")):
             if url:
                 add_prefix(str(url), source_id)
     for row in session.exec(select(SourceConfigRecord)).all():

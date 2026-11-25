@@ -77,11 +77,12 @@ def _login(client: TestClient, username: str = "user", password: str = "user") -
 def test_registry_collections_are_well_formed():
     """collection_id 唯一、成员非空无重复、成员必须是现役注册源(防注册表漂移腐烂)。"""
     from api.sources import _registry_source_meta
-    from services.source_collections import SOURCE_COLLECTIONS
+    from services.source_collections import list_collections
 
     registry_ids = set(_registry_source_meta().keys())
     seen_collection_ids = set()
-    for collection in SOURCE_COLLECTIONS:
+    assert list_collections()
+    for collection in list_collections():
         assert collection.collection_id and collection.collection_id not in seen_collection_ids
         seen_collection_ids.add(collection.collection_id)
         assert collection.name and collection.description and collection.provenance_note

@@ -87,12 +87,12 @@ def _source_content_types(session: Session, source_id: str) -> set[str]:
     看不出源本身是不是 GitHub release 一类;检视 R1 #2)。"""
     types: set[str] = set()
     try:
-        from fetchers.registry import fetcher_registry
+        from services import source_catalog
     except Exception:  # noqa: BLE001
         return types
     row = session.get(SourceConfigRecord, source_id)
     for fetcher_id in (source_id, (row.fetcher_id if row is not None else "") or ""):
-        cls = fetcher_registry.get_class(fetcher_id) if fetcher_id else None
+        cls = source_catalog.fetcher_class(fetcher_id) if fetcher_id else None
         value = str(getattr(cls, "content_type", "") or "") if cls is not None else ""
         if value:
             types.add(value)

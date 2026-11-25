@@ -20,3 +20,8 @@ APScheduler 默认 `misfire_grace_time` 只有 1 秒:事件循环被拖住几秒
 
 播客 worker 每拍结束后的精品导读候选巡检另有降频(`_podcast_premium_scan_due`,60 秒一次;本拍有进展时立即巡检),见 [`podcast.md`](podcast.md)。
 
+## 默认线程池是共享的(issue #334)
+
+`AsyncIOScheduler` 把同步任务交给事件循环的默认线程池,协程任务里的每一次 `asyncio.to_thread` 也用它。它的大小是 `min(32, cpu + 4)`——2 核机器只有 6 个线程。占满之后:同步任务排不进去(超过宽限记 `was missed`),协程任务卡在自己的 `to_thread` 上(下一轮因 `max_instances=1` 被跳过,日志 `maximum number of running instances reached`),而事件循环本身不受影响,健康检查照常。
+
+所以**数量不受限的调用,不能各自先进线程再阻塞等同一把长时间持有的锁**。先在协程层排队,轮到再进线程;做法见 `bailian_tts._in_turn` 与 [`podcast.md`](podcast.md)「精品导读语音:等回执锁在协程层排队」。

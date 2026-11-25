@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from fetchers.registry import admission_status_of, fetcher_registry
 from models.db import SourceConfigRecord
+from services import source_catalog
 
 
 PODCAST_SOURCE_TYPES = frozenset({"podcast", "podcast_rss"})
@@ -168,8 +169,6 @@ def _configured_limit(record: SourceConfigRecord, default: int = 20) -> int:
 def configured_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
     """Project a public SourceConfig into the registry node shape."""
 
-    from services import source_catalog
-
     source_type = (record.source_type or "").strip().lower()
     # 形态与内容类型按源视图推导(显式 shape 列 > 绑定的抓取器类 > source_type):X / 网页配置源不再
     # 一律落成「文章 / rss_article」(检视 R1 #4)。
@@ -219,7 +218,7 @@ def collection_node_catalog(
 ) -> list[Dict[str, Any]]:
     """Return registry nodes plus public configured nodes in one catalog."""
 
-    metadata = list(fetcher_registry.get_all_metadata())
+    metadata = list(source_catalog.preset_metadata())
     normalized_types = {str(value).strip().lower() for value in source_types}
     records = session.exec(
         select(SourceConfigRecord)
@@ -260,8 +259,6 @@ def unbound_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
     字段与 ``configured_source_metadata`` 对齐;前端按 ``bound=False`` 隐藏运行 / 试抓 / 编入任务,
     按 ``origin`` 决定可做的治理动作(收录源:列入 / 改名;其余只有读者面隐藏)。
     """
-    from services import source_catalog
-
     view = source_catalog.view_from_row(record)
     content_type = view.content_type or {
         "podcast": "podcast_episode", "social": "social_post",
@@ -313,7 +310,7 @@ def source_management_catalog(session: Session, *, include_retired: bool = False
     nodes = [
         {**item, "bound": True, "origin": "catalog",
          "listing": _listing_of(str(item.get("admission_status") or "")), "retired": False}
-        for item in fetcher_registry.get_all_metadata()
+        for item in source_catalog.preset_metadata()
     ]
     known = {item["id"]: item for item in nodes}
     rows = session.exec(

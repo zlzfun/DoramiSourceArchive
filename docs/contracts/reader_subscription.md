@@ -71,15 +71,15 @@ The catalog is the union of three sets: every **registered fetcher source**, eve
 `source_id` that already has **archived articles**, and every `source_id` the user has
 already **subscribed** to. Including registered sources with a zero article `count` means
 a brand-new source can be subscribed *before* it has produced anything, so the user
-receives its future output. **Decommissioned fetcher nodes** (listed in
-`DECOMMISSIONED_FETCHER_IDS` — classes removed from `impl/` during node audits but whose
+receives its future output. **Decommissioned fetcher nodes** (the `[[tombstone]]` entries in
+`src/sources/catalog/system.toml` — classes removed from `impl/` during node audits but whose
 historical archive lingers) are excluded from the archived-articles set, so a removed
 node does not silently reappear in the reader catalog after node management has been
 slimmed; the only exception is a user who is *already* subscribed to one, who still sees
 it so they can unsubscribe. Legitimate unregistered import sources (e.g. `social_post`)
 are *not* on that list and remain subscribable. Each entry carries a friendly `name` and `description`/`icon`
-(enriched from the fetcher registry, falling back to `SOURCE_FRIENDLY_NAMES` then the raw
-id), primary `content_type`, a grouping `category` (the Chinese name of the data structure, from the same
+(enriched from the fetcher registry, falling back to the built-in names of the system source
+and tombstones in the catalog's `system.toml`, then the raw id), primary `content_type`, a grouping `category` (the Chinese name of the data structure, from the same
 vocabulary as `content_type_label` — issue #178), article `count`, a `registered` flag,
 and a `subscribed` flag for the current user. The 阅读器 left sidebar renders these as the
 subscription manager: subscribed sources pinned at the top (star to unsubscribe) and the

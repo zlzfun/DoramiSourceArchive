@@ -2,126 +2,21 @@
 动态抓取器注册中心 (src/fetchers/registry.py)
 
 利用 Python 反射与包扫描机制，实现抓取器的零配置热插拔。
-只要在 impl 目录下继承了 BaseFetcher 并填写了必要的类属性，即会自动在此注册。
+只要在 impl 目录下继承了 BaseFetcher 并填写了 source_id，即会自动在此注册。
+
+预设源的身份(名称 / 图标 / 简介 / 形态 / 准入 / 策展维度)不写在类上,写在策展源目录文件
+src/sources/catalog/*.toml 里,类定义时回投到类属性(issue #262 R2,见 fetchers.base.apply_catalog_identity)。
+目录有结构错误、或者 impl 里的预设类在目录里没有条目,discover() 直接抛 CatalogError——
+这类错误不走下面「单个模块加载失败只告警」的隔离。
 """
 
 import importlib
 import pkgutil
 import inspect
 from typing import Type, Dict, List, Any, Optional
+
+from fetchers import catalog_files
 from fetchers.base import BaseFetcher
-
-
-ESSENTIAL_FETCHER_IDS = frozenset({
-    # OpenAI / ChatGPT / Codex
-    "rss_openai_news",
-    "docs_openai_codex_changelog",
-    # Anthropic / Claude
-    "web_anthropic_news",
-    "web_claude_blog",
-    "docs_claude_code_changelog",
-    # Google / Gemini / Gemma / DeepMind
-    "rss_google_gemini_models",
-    "rss_deepmind_blog",
-    "docs_gemma_release_notes",
-    # Mistral
-    "rss_mistral_news",
-    # Microsoft AI / Meta AI
-    "rss_microsoft_ai_models",
-    "web_meta_ai_blog",
-    # Apple
-    "rss_apple_mlr",
-    # NVIDIA
-    "rss_nvidia_genai",
-    # Hugging Face
-    "rss_hf_blog",
-    # xAI / Grok
-    "docs_xai_release_notes",
-    # Alibaba / Qwen
-    "web_qwen_blog",
-    "hf_qwen_models",
-    # DeepSeek
-    "docs_deepseek_api_changelog",
-    "github_deepseek_repositories",
-    "hf_deepseek_models",
-    # Zhipu / Z.ai / GLM
-    "docs_zai_new_released",
-    # ByteDance Seed
-    "web_bytedance_seed_research",
-    # Tier1 media / community / paper signal
-    "web_qbitai",
-    "web_aiera",
-    "web_ithome_ai",
-    "rss_the_decoder",
-    "rss_hn_ai",
-    "rss_reddit_localllama",
-    "rss_testingcatalog",
-    "web_huggingface_daily_papers",
-    "github_trending_daily",
-    "web_artificial_analysis",
-    "docs_arena_leaderboard_changelog",
-    # Personal commentary / newsletter
-    "rss_ruanyifeng",
-    "rss_simonwillison",
-    "rss_latent_space",
-    "rss_interconnects",
-    "rss_raschka",
-    "rss_oneusefulthing",
-    "rss_lilianweng",
-    "rss_import_ai",
-    # Hacker News Popular Blogs 2025：个人 AI / 开发者评论（观察期）
-    "rss_sean_goedecke",
-    "rss_giles_thomas",
-    "rss_max_woolf",
-    "rss_geohot",
-    "rss_geoffrey_litt",
-    "rss_martin_alderson",
-    "rss_anil_dash",
-    # Academic labs
-    "rss_bair_blog",
-    # Agent coding tools
-    "web_cursor_changelog",
-    "github_opencode_releases",
-    "github_openclaw_releases",
-    "github_hermes_agent_releases",
-    # Kimi / MiniMax research
-    "web_kimi_research",
-    "web_minimax_research",
-    # X 社交波（观察期，admission_status=incubating；默认目录可见但不进每日采集）
-    # 2026-07-21 压缩成本删两源：x_ai_at_meta（低频零覆盖但增量小）、
-    # x_openrouter（高频哨兵、成本大头）——见下方 DECOMMISSIONED。
-    "x_deepseek_ai",
-    "x_alibaba_qwen",
-    "x_moonshot_ai",
-    "x_karpathy",
-    "x_sama",
-    "x_openai",
-    "x_zai_org",
-})
-
-
-DECOMMISSIONED_FETCHER_IDS = frozenset({
-    # 历次节点审计中"删类"下线的抓取源（见 docs/sources/node_audit_playbook.md）。
-    # 它们的抓取器类已从 impl/ 移除，但历史归档文章仍留在库里——若不在此登记，
-    # 这些 source_id 会经由"归档来源"并集重新回流到读者层订阅目录，造成订阅分发
-    # 与节点管理不同步。读者目录据此排除它们（已订阅者除外，以便退订）。
-    # 删除一个节点时，除了删类 + 从 ESSENTIAL_FETCHER_IDS 移除，也应在此追加其 id，
-    # 并清理指向它的孤儿订阅（reader_subscriptions 中 source_ids 命中该 id 的行）——
-    # 否则 GET /api/reader/sources 的“已订阅者除外，以便退订”口子会让被订阅的下线源
-    # 仍出现在发现页/源栏（2026-07-21 删 x_ai_at_meta/x_openrouter 时踩到，已清理）。
-    "docs_gemini_api_changelog",
-    "docs_openai_api_changelog",
-    "github_qwen_code_releases",
-    "docs_alibaba_model_studio_announcements",
-    "web_bytedance_seed_models",
-    # X 社交波压缩成本下线（2026-07-21，观察期内）：类已删，历史归档推文留库，
-    # 在此登记以免经"归档来源"并集回流到读者订阅目录。
-    "x_ai_at_meta",
-    "x_openrouter",
-})
-
-
-FOCUSED_FETCHER_CURATION: Dict[str, Dict[str, str | bool]] = {}
 
 
 ADMISSION_STATUSES = ("admitted", "incubating")
@@ -134,27 +29,19 @@ def admission_status_of(value: Any) -> str:
 
 
 def focused_curation_for(source_id: str, *, is_template: bool = False) -> Dict[str, str | bool]:
-    if source_id in ESSENTIAL_FETCHER_IDS:
-        curation = FOCUSED_FETCHER_CURATION.get(source_id, {})
-        reason = str(curation.get("curation_reason") or "")
-        if reason.startswith("候选待加入："):
-            reason = reason.replace("候选待加入：", "推荐审查源：", 1)
-        if not reason:
-            reason = "推荐审查源：已按 v1.0 维度完成书面化标注，进入从 0 做加法的当前批次。"
+    """注册元数据里的两个历史字段 ``default_visible`` / ``curation_reason``。
+
+    「是不是进过审阅的策展源」现在只有一个答案:在不在策展源目录(``src/sources/catalog``)里。
+    以前这里另有一份手写白名单 ``ESSENTIAL_FETCHER_IDS``,内容恰好就是全部预设源,加源要改两处;
+    下线源的墓碑名单 ``DECOMMISSIONED_FETCHER_IDS`` 也曾在本模块,现在在目录的 ``system.toml``,
+    经 ``services.source_catalog.tombstone_ids`` 读。
+    这两个字段没有运行时消费方,留着只为注册元数据的输出不变;R3 抓取器去身份时随元数据一起瘦身。
+    """
+    if source_id in catalog_files.catalog():
         return {
-            **curation,
             "default_visible": True,
-            "curation_reason": reason,
+            "curation_reason": "推荐审查源：已按 v1.0 维度完成书面化标注，进入从 0 做加法的当前批次。",
         }
-    if source_id in FOCUSED_FETCHER_CURATION:
-        curation = FOCUSED_FETCHER_CURATION[source_id]
-        if curation.get("default_visible") is True:
-            return {
-                **curation,
-                "default_visible": False,
-                "curation_reason": f"{curation.get('curation_reason', '')} 未列入精品源白名单，默认隐藏。",
-            }
-        return curation
     if is_template:
         return {
             "default_visible": False,
@@ -187,6 +74,8 @@ class FetcherRegistry:
         动态扫描并注册指定包下的所有抓取器。
         默认扫描 src/fetchers/impl 文件夹。
         """
+        # 策展源目录先加载(在异常隔离之外):目录坏了就别扫了,不能只剩几个模板还照常启动。
+        catalog_files.catalog()
         try:
             # 导入包本身
             package = importlib.import_module(package_name)
@@ -202,6 +91,9 @@ class FetcherRegistry:
                         # 判断是否为 BaseFetcher 的子类（且排除自身）
                         if issubclass(obj, BaseFetcher) and obj is not BaseFetcher:
                             self.register(obj)
+                except catalog_files.CatalogError:
+                    # 预设类缺目录条目 / 目录结构错误:不是「某个模块坏了」,是身份来源坏了,必须起不来。
+                    raise
                 except Exception as module_err:
                     # ✨ 修复：隔离单个模块的加载错误，防止一颗老鼠屎坏了一锅粥
                     print(f"⚠️ 无法加载抓取器模块 [{full_module_name}]: {module_err}")

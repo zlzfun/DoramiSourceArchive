@@ -48,9 +48,9 @@ def _shared_page_fetcher(fetcher_id: str) -> bool:
         return False
     try:
         from fetchers.impl.curated_core_fetcher import SinglePageDocumentFetcher
-        from fetchers.registry import fetcher_registry
+        from services import source_catalog
 
-        cls = fetcher_registry.get_class(fetcher_id)
+        cls = source_catalog.fetcher_class(fetcher_id)
     except Exception:  # noqa: BLE001 - 未注册的绑定按普通源处理
         return False
     return isinstance(cls, type) and issubclass(cls, SinglePageDocumentFetcher)

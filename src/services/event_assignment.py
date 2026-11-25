@@ -58,7 +58,7 @@ from models.db import (
     EventRedirectRecord,
     SourceConfigRecord,
 )
-from services import user_sources
+from services import source_catalog, user_sources
 from services.article_time import SHANGHAI, parse_article_time
 from services.content_classification import classify_item, source_default_kinds
 from services.daily_brief import _DIGIT_RUN_RE, _normalized_title, _titles_look_same
@@ -68,7 +68,6 @@ from services.reader_ai import (
     _body_fingerprint,
     _cache_valid,
 )
-from services.source_naming import source_role
 from storage.fts import FTS_TABLE, MIN_TRIGRAM_CHARS, normalize_for_search
 
 logger = logging.getLogger(__name__)
@@ -339,34 +338,18 @@ class SourceMeta:
     owner: str = ""              # 注册表 source_owner → 配置 source_owner
 
 
-def _registry_class(source_id: str):
-    try:
-        from fetchers.registry import fetcher_registry
-
-        return fetcher_registry.get_class(source_id)
-    except Exception:  # noqa: BLE001 - 注册表不可用时按配置 / 兜底
-        return None
-
-
 def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, SourceMeta]:
-    """source_id → (角色, 形态, 主体):注册表类优先给形态与主体,配置行优先给角色(与早报重大事件通道同口径)。"""
+    """source_id → (角色, 形态, 主体),经源目录读服务(issue #262 R1a):预设类优先给形态与主体,
+    源行优先给角色(与早报重大事件通道同口径)。"""
     wanted = sorted({str(sid) for sid in source_ids if sid})
     if not wanted:
         return {}
-    configs: dict[str, SourceConfigRecord] = {}
-    for chunk in _chunks(wanted):
-        for row in session.exec(
-            select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(list(chunk)))
-        ).all():
-            configs[row.source_id] = row
-    classes = {source_id: _registry_class(source_id) for source_id in wanted}
-    # 既无配置行也无注册表类的源(只在归档里出现):形态按其条目的 content_type 判定,
+    layers = source_catalog.layers(session, wanted)
+    # 既无源行也无预设类的 id(只在归档里出现):形态按其条目的 content_type 判定,
     # 与事件榜展示、早报同口径——此前一律当 article,推文可被选成代表稿(issue #262 B8)。
-    unregistered = [sid for sid in wanted if sid not in configs and classes.get(sid) is None]
+    unregistered = [sid for sid in wanted if not layers[sid].anchored]
     fallback_shapes: dict[str, str] = {}
     if unregistered:
-        from api.sources import source_shape
-
         counts: dict[str, dict[str, int]] = {}
         for chunk in _chunks(unregistered):
             for sid, content_type, count in session.exec(
@@ -374,7 +357,7 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
                 .where(ArticleRecord.source_id.in_(list(chunk)))
                 .group_by(ArticleRecord.source_id, ArticleRecord.content_type)
             ).all():
-                shape = source_shape(sid, content_type, {})
+                shape = source_catalog.shape_from_content_type(content_type)
                 bucket = counts.setdefault(sid, {})
                 bucket[shape] = bucket.get(shape, 0) + int(count or 0)
         for sid, bucket in counts.items():
@@ -384,25 +367,18 @@ def load_source_meta(session: Session, source_ids: Iterable[str]) -> dict[str, S
             )[0]
     result: dict[str, SourceMeta] = {}
     for source_id in wanted:
-        config = configs.get(source_id)
-        cls = classes.get(source_id)
-        if config is not None:
-            role = source_role(
-                source_id,
-                source_scope=config.source_scope or "",
-                provenance_tier=config.provenance_tier or "",
-            )
-            from api.sources import row_shape
-
-            config_shape = row_shape(config)
+        source = layers[source_id]
+        record, preset = source.record, source.preset
+        if preset is not None:
+            shape = preset.shape
+        elif record is not None:
+            shape = source_catalog.row_shape(record)
         else:
-            role = source_role(source_id)
-            config_shape = fallback_shapes.get(source_id, "article")
-        shape = str(getattr(cls, "content_shape", "") or "").strip() if cls is not None else ""
-        owner = str(getattr(cls, "source_owner", "") or "").strip() if cls is not None else ""
-        if not owner and config is not None:
-            owner = str(config.source_owner or "").strip()
-        result[source_id] = SourceMeta(role=role, shape=shape or config_shape, owner=owner)
+            shape = fallback_shapes.get(source_id, "article")
+        owner = preset.source_owner.strip() if preset is not None else ""
+        if not owner and record is not None:
+            owner = str(record.source_owner or "").strip()
+        result[source_id] = SourceMeta(role=source_catalog.info_role(source), shape=shape, owner=owner)
     return result
 
 

@@ -156,22 +156,9 @@ class SinglePageDocumentFetcher(BaseFetcher):
 
 class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_openai_codex_changelog"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "Codex Changelog"
-    description = "OpenAI Codex 官方 Changelog 中的 Codex、CLI、IDE 与自动化更新。"
-    icon = "🟢"
     page_url = "https://developers.openai.com/codex/changelog"
-    source_url = page_url
     site_name = "OpenAI Codex"
     source_section = "Changelog"
-    source_owner = "openai"
-    source_brand = "codex"
-    source_scope = "developer_tool"
-    source_channel = "docs_changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
     default_limit = 12
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -288,22 +275,9 @@ class OpenAiCodexChangelogFetcher(SinglePageDocumentFetcher):
 
 class ClaudeCodeChangelogFetcher(SinglePageDocumentFetcher):
     source_id = "docs_claude_code_changelog"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "Claude Code Changelog"
-    description = "Claude Code 官方 Changelog 中的版本级工具更新。"
-    icon = "🟧"
     page_url = "https://code.claude.com/docs/en/changelog"
-    source_url = page_url
     site_name = "Claude Code"
     source_section = "Changelog"
-    source_owner = "anthropic"
-    source_brand = "claude_code"
-    source_scope = "developer_tool"
-    source_channel = "changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
     default_limit = 12
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -574,43 +548,17 @@ class DevsiteReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class GemmaReleaseNotesFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_gemma_release_notes"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "Gemma Release Notes"
-    description = "Gemma 官方 Release Notes 中的开放模型发布与更新。"
-    icon = "💎"
     page_url = "https://ai.google.dev/gemma/docs/releases"
-    source_url = page_url
     site_name = "Gemma"
     source_section = "Release Notes"
     listing_source_label = "gemma_release_notes_updates"
-    source_owner = "google"
-    source_brand = "gemma"
-    source_scope = "open_model_family"
-    source_channel = "docs_release_notes"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
 
 
 class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
     source_id = "docs_xai_release_notes"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "xAI Release Notes"
-    description = "xAI 官方 Release Notes 中的 Grok 模型、API 与产品更新。"
-    icon = "𝕏"
     page_url = "https://docs.x.ai/developers/release-notes"
-    source_url = page_url
     site_name = "xAI"
     source_section = "Developer Release Notes"
-    source_owner = "xai"
-    source_brand = "xai_api"
-    source_scope = "api_platform"
-    source_channel = "docs_changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
     default_limit = 12
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -758,22 +706,9 @@ class XAiDeveloperReleaseNotesFetcher(SinglePageDocumentFetcher):
 
 class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
     source_id = "docs_deepseek_api_changelog"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "DeepSeek API Changelog"
-    description = "DeepSeek API 官方 Changelog 中的模型、API 与平台更新。"
-    icon = "🧠"
     page_url = "https://api-docs.deepseek.com/updates/"
-    source_url = page_url
     site_name = "DeepSeek"
     source_section = "API Change Log"
-    source_owner = "deepseek"
-    source_brand = "deepseek"
-    source_scope = "api_platform"
-    source_channel = "docs_changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
 
     # DeepSeek 的 Change Log 是 Docusaurus 文档页：在 <article> 容器里以
     # <h2> 日期标题(``Date: 2026-04-24``，id 形如 ``date-2026-04-24``)分段，标题之后
@@ -860,22 +795,9 @@ class DeepSeekApiChangeLogFetcher(DevsiteReleaseNotesFetcher):
 
 class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
     source_id = "docs_zai_new_released"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "Z.ai 更新公告"
-    description = "Z.ai 官方发布页的 GLM 模型、API、Agent 与产品更新。"
-    icon = "🧩"
     page_url = "https://docs.z.ai/release-notes/new-released"
-    source_url = page_url
     site_name = "Z.ai"
     source_section = "New Released"
-    source_owner = "zai"
-    source_brand = "glm"
-    source_scope = "model_family"
-    source_channel = "docs_release_notes"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
     default_limit = 12
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -975,21 +897,9 @@ class ZaiNewReleasedFetcher(SinglePageDocumentFetcher):
 
 class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
     source_id = "web_bytedance_seed_research"
-    name = "ByteDance Seed Research"
-    description = "ByteDance Seed 官方 Publications 中的研究论文与技术报告。"
-    icon = "🌱"
     page_url = "https://seed.bytedance.com/en/research"
-    source_url = page_url
     site_name = "ByteDance Seed"
     source_section = "Research"
-    source_owner = "bytedance_seed"
-    source_brand = "seed"
-    source_scope = "research_lab"
-    source_channel = "research_index"
-    provenance_tier = "tier0_primary"
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
     default_limit = 15
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -1111,22 +1021,9 @@ class ByteDanceSeedResearchFetcher(SinglePageDocumentFetcher):
 
 class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
     source_id = "web_huggingface_daily_papers"
-    name = "Hugging Face Daily Papers"
-    description = "Hugging Face Daily Papers 的社区每日热门论文精选。"
-    icon = "🤗"
     page_url = "https://huggingface.co/papers"
-    source_url = page_url
     site_name = "Hugging Face"
     source_section = "Daily Papers"
-    source_owner = "huggingface"
-    source_brand = "daily_papers"
-    source_scope = "research_community"
-    source_channel = "paper_ranking"
-    provenance_tier = "tier1_curated"
-    default_kind = "paper"  # 每条都是一篇论文原文(arXiv 摘要页)
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
     default_limit = 20
     default_detail_max_chars = DETAIL_HARD_CAP
 
@@ -1256,12 +1153,7 @@ class HuggingFaceDailyPapersFetcher(SinglePageDocumentFetcher):
 class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_cursor_changelog"
-    default_kind = "release"  # changelog/发布说明:内容类型「版本更新」,文章列表里用紧凑行
-    name = "Cursor Changelog"
-    description = "Cursor 官方 Changelog 中的 AI 编程、Agent 与 IDE 产品更新。"
-    icon = "⌨️"
     listing_url = "https://cursor.com/changelog"
-    source_url = listing_url
     site_name = "Cursor"
     source_section = "Changelog"
     article_url_patterns = ["cursor.com/changelog/"]
@@ -1278,14 +1170,6 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
     drop_empty_content = True
     # Cursor 列表页每页仅约 5 条，更早的在 /changelog/page/N 翻页里；逐页累积以凑够 limit。
     max_listing_pages = 8
-    source_owner = "cursor"
-    source_brand = "cursor"
-    source_scope = "developer_tool"
-    source_channel = "changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public"
 
     _page_link_re = re.compile(r"/changelog/page/(\d+)/?$")
 
@@ -1307,11 +1191,7 @@ class CursorChangelogWebFetcher(BaseWebPageListFetcher):
 class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     default_fetch_detail = True
     source_id = "web_qbitai"
-    name = "量子位"
-    description = "量子位官网的中文 AI 新闻、模型、产品和产业动态。"
-    icon = "📰"
     listing_url = "https://www.qbitai.com/category/%E8%B5%84%E8%AE%AF"
-    source_url = listing_url
     site_name = "量子位"
     source_section = "资讯"
     article_url_patterns = ["qbitai.com/"]
@@ -1319,14 +1199,6 @@ class QbitAiWebsiteFetcher(BaseWebPageListFetcher):
     default_limit = 18
     # 旁路验收：crawl4ai 与专用提取器相似度 0.978，已迁移；未装 crawl4ai 时回退 _extract_qbitai_detail
     web_backend_enabled = True
-    source_owner = "qbitai"
-    source_brand = "量子位"
-    source_scope = "ai_media"
-    source_channel = "website"
-    provenance_tier = "tier1_curated"
-    signal_strength = "medium_signal"
-    noise_risk = "medium_noise"
-    fetch_reliability = "stable_public"
 
     @classmethod
     def get_parameter_schema(cls):
@@ -1749,24 +1621,10 @@ class ArenaLeaderboardChangelogFetcher(SinglePageDocumentFetcher):
     """把 Arena 单页 Leaderboard Changelog 按日期卡片拆成独立动态。"""
 
     source_id = "docs_arena_leaderboard_changelog"
-    default_kind = "release"  # 榜单维护记录:按版本更新呈现
-    name = "Arena 排行榜更新"
-    description = "Arena 各类排行榜新增模型、分数修订与方法变更。"
-    icon = "🏟️"
     page_url = "https://arena.ai/blog/leaderboard-changelog"
-    source_url = page_url
     site_name = "Arena"
     source_section = "Leaderboard Changelog"
-    admission_status = "incubating"  # 观察期:不进每日自动采集;验收转正后删掉这一行(默认 admitted)
     default_limit = 20
-    source_owner = "arena_intelligence"
-    source_brand = "Arena"
-    source_scope = "ai_benchmark_platform"
-    source_channel = "leaderboard_changelog"
-    provenance_tier = "tier0_primary"
-    signal_strength = "high_signal"
-    noise_risk = "low_noise"
-    fetch_reliability = "stable_public_ssr_page"
 
     _date_re = re.compile(
         r"^(January|February|March|April|May|June|July|August|September|October|November|December)"
@@ -1898,12 +1756,8 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     """
     default_fetch_detail = True
     source_id = "web_aiera"
-    name = "新智元"
-    description = "新智元官网的中文 AI 模型、产品、产业和研究资讯。"
-    icon = "📰"
     listing_url = "https://aiera.com.cn/asi-articles.html"
     api_url = "https://aiera.com.cn/wp-json/wp/v2/posts"
-    source_url = "https://aiera.com.cn/"
     site_name = "新智元"
     source_section = "Website"
     article_url_patterns = ["aiera.com.cn/asi-post.html?id="]
@@ -1914,14 +1768,6 @@ class AieraWebsiteFetcher(BaseWebPageListFetcher):
     api_max_pages = 20
     # 正文随列表接口一起返回,不再走详情页/浏览器后端
     web_backend_enabled = False
-    source_owner = "aiera"
-    source_brand = "新智元"
-    source_scope = "ai_media"
-    source_channel = "website"
-    provenance_tier = "tier1_curated"
-    signal_strength = "medium_signal"
-    noise_risk = "high_noise"
-    fetch_reliability = "stable_public_website"
 
     @staticmethod
     def _clean_aiera_detail_text(text: str) -> str:

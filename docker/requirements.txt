@@ -149,7 +149,9 @@ starlette==1.0.0
     #   mcp
     #   sse-starlette
 tomli==2.4.1 ; python_full_version < '3.11'
-    # via alembic
+    # via
+    #   alembic
+    #   doramisourcearchive
 typing-extensions==4.15.0
     # via
     #   alembic

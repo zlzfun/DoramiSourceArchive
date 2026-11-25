@@ -8,11 +8,30 @@
 - **行优先的字段**:可见性与运维相关的事实只在行上——``owner_username``、
   ``collection_authority_id``、``ai_analysis_enabled``、``is_active``、``retired_at``、绑定。
 - **身份 / 呈现 / 策展字段**:注册表类 > 行 > 内建兜底(日报、下线墓碑、播客目录)。
-  R1c 之后 62 个预设源在外网都有镜像行且与类属性逐字段相等,所以这条顺序不改变结果。
+  本机对账维护的镜像行与类属性逐字段相等,所以这条顺序通常不改变结果;分得出先后的只有
+  「行来自上游同步、上游与本机版本不同」的时候。
 - **都没有**:返回 ``origin="archive"`` 的占位视图——名称是裸 id、角色 ``media``、
   形态按调用方给的 ``content_type`` 证据推断。占位只在这里生成,消费方不再各写兜底。
 
 本模块只读,不写库;按 viewer 计算的资格(谁能看、能订阅)在调用方,不在这里缓存。
+
+**读注册表身份的唯一入口**(R1a 余项):业务代码(``api/`` ``services/`` ``mcp_server``、治理脚本)
+不再直接 ``import fetcher_registry`` 去读「哪些源、叫什么、什么形态、feed 地址是什么」,一律经这里的
+``preset_views`` / ``preset_binding`` / ``preset_metadata`` / ``fetcher_class`` / ``describe`` /
+``layers``。
+直接碰注册表的只剩执行层(``api/app.py`` 的采集执行、``collection_nodes`` 的绑定解析、抓取器
+自身)与本模块;守卫 ``tests/test_source_catalog_boundary.py``。R2 / R3 把身份与绑定参数搬出类
+属性时,只改这一个模块的取值来源。
+
+**两层与口径函数**:早报、事件榜、事件归并历来不用上面的合并视图,而是各自拿「源行」与「预设类」
+两层按自己的顺序取(角色看行、形态早报与事件榜看行而事件归并看类、主体看类)。``layers`` 把两层
+原样交出去,``info_role`` / ``reader_shape`` 是这些口径的唯一写法,与 ``[sources] model`` 无关。
+把它们统一成「一律以行为准」是 full 模式的事,不在 R1a。
+
+**目录文件里的系统级条目**(R2):系统源(公共日报)、已下线源的墓碑、源合集、新账号默认订阅的缺省
+名单写在 ``src/sources/catalog/system.toml`` 与 ``collections.toml``,不再是散在各模块的常量;
+业务代码经这里的 ``tombstone_ids`` / ``builtin_name`` / ``collection_entries`` /
+``default_subscription_ids`` 读,``fetchers.catalog_files`` 只有抓取器层与本模块直接用。
 """
 
 from __future__ import annotations
@@ -24,13 +43,17 @@ from typing import Iterable, Mapping, Optional
 
 from sqlmodel import Session, select
 
+from fetchers import catalog_files   # 只依赖标准库的目录文件加载器,不会连带导入注册表
 from models.db import SourceConfigRecord
+from services.source_naming import DEFAULT_SOURCE_ROLE, _role_from_metadata
 
 
 USER_SOURCE_PREFIX = "user_rss_"
 DAILY_BRIEF_SOURCE_ID = "dorami_daily_brief"
 
 SHAPES = ("article", "social", "podcast")
+# 旧客户端 / 旧数据仍可能带 bulletin(issue #178 撤销「动态」容器并入 article)。
+LEGACY_SHAPE_ALIASES = {"bulletin": "article"}
 SOCIAL_CONTENT_TYPES = frozenset({"social_post"})
 PODCAST_CONTENT_TYPES = frozenset({"podcast_episode"})
 X_SOURCE_TYPES = frozenset({"x", "twitter", "x_timeline"})
@@ -52,16 +75,9 @@ ORIGINS = (
 ADMISSION_PROVISIONAL = "provisional"
 ADMISSION_STATUSES = ("admitted", "incubating", ADMISSION_PROVISIONAL)
 
-# 信息角色(与 source_naming / sourceTaxonomy.js 同一判定序:个人→榜单→媒体→官方)。
-PERSONAL_SCOPES = frozenset({
-    "personal_commentary", "expert_commentary", "executive_commentary", "expert_newsletter",
-})
-LEADERBOARD_SCOPES = frozenset({
-    "community", "developer_community", "research_community", "forum",
-    "ai_benchmark_platform", "ai_benchmark_analysis",
-})
-MEDIA_SCOPES = frozenset({"ai_media", "tech_media"})
-DEFAULT_ROLE = "media"
+# 信息角色词表与判定序的单一定义在 services/source_naming.py(与 sourceTaxonomy.js 逐字一致:
+# 个人→榜单→媒体→官方);这里只引用,不另写一份。
+DEFAULT_ROLE = DEFAULT_SOURCE_ROLE
 
 _CURATION_FIELDS = (
     "source_owner",
@@ -79,13 +95,14 @@ def role_from_metadata(scope: str, tier: str) -> str:
     """策展元数据 → 角色;两项都空 = 身份不可考,不给官方待遇。"""
     scope = str(scope or "")
     tier = str(tier or "")
-    if tier == "tier2_personal_social" or scope in PERSONAL_SCOPES:
-        return "personal"
-    if scope in LEADERBOARD_SCOPES:
-        return "leaderboard"
-    if scope in MEDIA_SCOPES or tier == "tier1_curated":
-        return "media"
-    return "official" if (scope or tier) else DEFAULT_ROLE
+    return _role_from_metadata(scope, tier, fallback="official" if (scope or tier) else DEFAULT_ROLE)
+
+
+def normalize_shape(shape: object) -> str:
+    """形态归一:合法值原样返回,旧别名(bulletin)映射到 article,其余返回空串。"""
+    value = str(shape or "").strip().lower()
+    value = LEGACY_SHAPE_ALIASES.get(value, value)
+    return value if value in SHAPES else ""
 
 
 def shape_from_content_type(content_type: str) -> str:
@@ -191,52 +208,94 @@ def current_model() -> str:
     return _model
 
 
-# ── 注册表与内建兜底(进程内常量,缓存) ──────────────────────────────────────
+# ── 注册表与内建兜底 ───────────────────────────────────────────────────────
+#
+# 视图按类缓存,但每次取用都对照类上的当前属性值:属性没变就复用同一个视图对象,变了(测试里
+# monkeypatch 某个类的准入状态、热重载换了类)就重建。不用进程级的一次性缓存——那样「缓存建在
+# 属性被临时改写的那一刻」会把后面的调用全带偏。
+
+# 预设源的采集绑定事实:今天还是抓取器类属性(feed 地址、列表页、X 账号);R2 / R3 把它们搬进
+# 目录文件与行上的绑定参数后,只改这里的取值来源。
+_BINDING_ATTRS = ("feed_url", "listing_url", "source_url", "handle", "user_id")
+
+_SIGNATURE_ATTRS = (
+    "name", "description", "icon", "content_shape", "content_type", "platform", "default_kind",
+    "source_url", "listing_url", "feed_url", "admission_status", "is_template", *_CURATION_FIELDS,
+)
+_view_cache: dict[str, tuple[tuple, SourceView]] = {}
+_discovery_retried = False
 
 
-@lru_cache(maxsize=1)
-def _registry_views() -> dict[str, SourceView]:
+def _registry():
+    global _discovery_retried
     try:
-        from fetchers.registry import admission_status_of, fetcher_registry
+        from fetchers.registry import fetcher_registry
     except Exception:  # noqa: BLE001 - 注册表不可用时只按行与占位
-        return {}
-    if not fetcher_registry._fetchers:
+        return None
+    if not fetcher_registry._fetchers and not _discovery_retried:
+        # 导入期的扫描一个类都没挂上(少见):补扫一次,仍然为空就不再每次调用都重扫。
+        _discovery_retried = True
         fetcher_registry.discover()
-    views: dict[str, SourceView] = {}
-    for source_id, cls in fetcher_registry._fetchers.items():
-        is_template = bool(getattr(cls, "is_template", False))
-        shape = str(getattr(cls, "content_shape", "") or "article").strip().lower()
-        views[source_id] = SourceView(
-            source_id=source_id,
-            origin=ORIGIN_CATALOG,
-            name=str(getattr(cls, "name", "") or source_id),
-            description=str(getattr(cls, "description", "") or ""),
-            icon=str(getattr(cls, "icon", "") or ""),
-            shape=shape if shape in SHAPES else "article",
-            content_type=str(getattr(cls, "content_type", "") or ""),
-            platform=str(getattr(cls, "platform", "") or "").strip().lower(),
-            default_kind=str(getattr(cls, "default_kind", "") or ""),
-            base_url=str(
-                getattr(cls, "source_url", "")
-                or getattr(cls, "listing_url", "")
-                or getattr(cls, "feed_url", "")
-                or ""
-            ),
-            admission_status=admission_status_of(getattr(cls, "admission_status", "")),
-            daily=(
-                not is_template
-                and admission_status_of(getattr(cls, "admission_status", "")) == "admitted"
-            ),
-            fetcher_id=source_id,
-            registered=True,
-            is_template=is_template,
-            **{name: str(getattr(cls, name, "") or "") for name in _CURATION_FIELDS},
-        )
-    return views
+    return fetcher_registry
+
+
+def _build_registry_view(source_id: str, cls) -> SourceView:
+    from fetchers.registry import admission_status_of
+
+    is_template = bool(getattr(cls, "is_template", False))
+    shape = str(getattr(cls, "content_shape", "") or "article").strip().lower()
+    admission = admission_status_of(getattr(cls, "admission_status", ""))
+    return SourceView(
+        source_id=source_id,
+        origin=ORIGIN_CATALOG,
+        name=str(getattr(cls, "name", "") or source_id),
+        description=str(getattr(cls, "description", "") or ""),
+        icon=str(getattr(cls, "icon", "") or ""),
+        shape=shape if shape in SHAPES else "article",
+        content_type=str(getattr(cls, "content_type", "") or ""),
+        platform=str(getattr(cls, "platform", "") or "").strip().lower(),
+        default_kind=str(getattr(cls, "default_kind", "") or ""),
+        base_url=str(
+            getattr(cls, "source_url", "")
+            or getattr(cls, "listing_url", "")
+            or getattr(cls, "feed_url", "")
+            or ""
+        ),
+        admission_status=admission,
+        daily=(not is_template and admission == "admitted"),
+        fetcher_id=source_id,
+        registered=True,
+        is_template=is_template,
+        **{name: str(getattr(cls, name, "") or "") for name in _CURATION_FIELDS},
+    )
+
+
+def _view_of_class(source_id: str, cls) -> SourceView:
+    signature = (cls, *(getattr(cls, name, None) for name in _SIGNATURE_ATTRS))
+    cached = _view_cache.get(source_id)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    view = _build_registry_view(source_id, cls)
+    _view_cache[source_id] = (signature, view)
+    return view
+
+
+def _registry_views() -> dict[str, SourceView]:
+    registry = _registry()
+    if registry is None:
+        return {}
+    return {
+        source_id: _view_of_class(source_id, cls)
+        for source_id, cls in list(registry._fetchers.items())
+    }
 
 
 def registry_view(source_id: str) -> Optional[SourceView]:
-    return _registry_views().get(source_id)
+    registry = _registry()
+    if registry is None or not source_id:
+        return None
+    cls = registry.get_class(source_id)
+    return _view_of_class(source_id, cls) if cls is not None else None
 
 
 def registry_source_ids(*, include_templates: bool = False) -> list[str]:
@@ -247,39 +306,128 @@ def registry_source_ids(*, include_templates: bool = False) -> list[str]:
 
 
 def clear_registry_cache() -> None:
-    """测试或热重载后重建注册表视图。"""
-    _registry_views.cache_clear()
+    """清掉按类缓存的视图(取用时本来就会对照类属性重建,留这个入口给想从零开始的测试)。"""
+    _view_cache.clear()
+
+
+def preset_views(*, include_templates: bool = False) -> dict[str, SourceView]:
+    """注册表里的预设源视图,**按注册顺序**(不排序:X 探针取第一个有稳定 user_id 的预设、
+    系统源撞库检测同地址后者覆盖前者,都依赖这个顺序)。"""
+    return {
+        sid: view for sid, view in _registry_views().items()
+        if include_templates or not view.is_template
+    }
+
+
+def preset_binding(source_id: str) -> Mapping[str, str]:
+    """预设源的采集绑定事实(``feed_url`` / ``listing_url`` / ``source_url`` / ``handle`` /
+    ``user_id``,缺的为空串);不是预设源返回空映射。"""
+    registry = _registry()
+    cls = registry.get_class(str(source_id or "")) if registry is not None and source_id else None
+    if cls is None:
+        return {}
+    return {name: str(getattr(cls, name, "") or "") for name in _BINDING_ATTRS}
+
+
+def preset_default_kinds() -> dict[str, str]:
+    """source_id → 类上声明的内容类型先验(含模板,原样、未归一);只读一个属性、不建视图——
+    ``content_classification.source_default_kinds`` 在目录与列表接口里按源调用,要便宜。"""
+    registry = _registry()
+    if registry is None:
+        return {}
+    return {
+        source_id: str(getattr(cls, "default_kind", "") or "")
+        for source_id, cls in list(registry._fetchers.items())
+    }
+
+
+def template_ids() -> set[str]:
+    """抓取模板(``generic_*``,``is_template``)的 id:它们是执行基座,不是来源。"""
+    registry = _registry()
+    if registry is None:
+        return set()
+    return {
+        source_id for source_id, cls in list(registry._fetchers.items())
+        if getattr(cls, "is_template", False)
+    }
+
+
+def preset_metadata() -> list[dict]:
+    """预设源(含模板)的注册元数据字典——阅读器目录、源管理、MCP ``list_sources`` 沿用的字段全集
+    (名称 / 图标 / 简介 / 形态 / 策展维度 / 参数表)。每次调用返回新对象,调用方可以就地改。"""
+    registry = _registry()
+    return registry.get_all_metadata() if registry is not None else []
+
+
+def fetcher_class(fetcher_id: str):
+    """抓取器 id → 类(没有返回 None)。给「这个源绑的是不是某一类抓取器」这种判定用;
+    要源的身份走 ``describe`` / ``registry_view``。"""
+    return _bound_class(str(fetcher_id or ""))
+
+
+def podcast_catalog_source(source_id: str):
+    """播客精选目录里的条目(代码常量,不是注册表类);没有返回 None。"""
+    try:
+        return _podcast_catalog().get(str(source_id or ""))
+    except Exception:  # noqa: BLE001 - 目录不可用时按「不在目录里」
+        return None
+
+
+# ── 目录文件里的系统级条目:系统源 / 墓碑 / 合集 / 默认订阅 ──────────────────────
+
+# 系统源产出的条目类型是代码里的事实(谁写的条目谁知道),不进目录文件。
+_SYSTEM_CONTENT_TYPES = {DAILY_BRIEF_SOURCE_ID: "daily_brief"}
+_TOMBSTONE_CONTENT_TYPES = {"social": "social_post", "podcast": "podcast_episode"}
+
+
+def tombstone_ids() -> frozenset[str]:
+    """已下线的策展源:类与目录条目已删,历史归档仍在。读者目录不回流、收录通道不写入、对账建退役行。"""
+    return frozenset(catalog_files.loaded().tombstones)
+
+
+def builtin_name(source_id: str) -> str:
+    """没有抓取器类的内建 id(系统源、墓碑)在目录里登记的名称——历史文章的来源展示要可读名;
+    不是内建 id 返回空串。"""
+    files = catalog_files.loaded()
+    entry = files.system.get(source_id) or files.tombstones.get(source_id)
+    return entry.name if entry is not None else ""
+
+
+def collection_entries() -> tuple[catalog_files.CollectionEntry, ...]:
+    """源合集(目录文件里的顺序)。成员都是目录里的现役策展源,加载时已校验。"""
+    return catalog_files.loaded().collections
+
+
+def default_subscription_ids() -> tuple[str, ...]:
+    """新账号默认订阅的缺省名单(有序);运维的 KV 覆盖在 ``services.reader_defaults``。"""
+    return catalog_files.loaded().default_subscriptions
 
 
 def _builtin_view(source_id: str) -> Optional[SourceView]:
-    """没有行也没有注册表类的内建 id:公共日报、下线墓碑、播客目录常量。"""
-    if source_id == DAILY_BRIEF_SOURCE_ID:
-        from services.source_naming import SOURCE_FRIENDLY_NAMES
-
+    """没有行也没有注册表类的内建 id:系统源(公共日报)、下线墓碑、播客目录常量。"""
+    files = catalog_files.loaded()
+    system = files.system.get(source_id)
+    if system is not None:
         return SourceView(
             source_id=source_id,
             origin=ORIGIN_SYSTEM,
-            name=SOURCE_FRIENDLY_NAMES.get(source_id, source_id),
-            shape="article",
-            content_type="daily_brief",
-            source_owner="dorami",
-            source_scope="aggregator",
-            provenance_tier="tier1_curated",
+            name=system.name,
+            shape=system.shape,
+            content_type=_SYSTEM_CONTENT_TYPES.get(source_id, ""),
+            source_owner=system.owner,
+            source_scope=system.scope,
+            provenance_tier=system.tier,
             fetcher_id="",
         )
-    try:
-        from fetchers.registry import DECOMMISSIONED_FETCHER_IDS
-        from services.source_naming import SOURCE_FRIENDLY_NAMES
-    except Exception:  # noqa: BLE001
-        DECOMMISSIONED_FETCHER_IDS, SOURCE_FRIENDLY_NAMES = frozenset(), {}
-    if source_id in DECOMMISSIONED_FETCHER_IDS:
+    tombstone = files.tombstones.get(source_id)
+    if tombstone is not None:
         return SourceView(
             source_id=source_id,
             origin=ORIGIN_CATALOG,
-            name=SOURCE_FRIENDLY_NAMES.get(source_id, source_id),
-            shape="social" if source_id.startswith("x_") else "article",
-            content_type="social_post" if source_id.startswith("x_") else "",
-            platform="x" if source_id.startswith("x_") else "",
+            name=tombstone.name,
+            shape=tombstone.shape,
+            content_type=_TOMBSTONE_CONTENT_TYPES.get(tombstone.shape, ""),
+            platform=tombstone.platform,
             retired_at="decommissioned",
             is_active=False,
         )
@@ -334,6 +482,66 @@ def _bound_class(fetcher_id: str):
     return fetcher_registry.get_class(fetcher_id)
 
 
+def binding_shape(source_type: str, fetcher_id: str = "") -> str:
+    """「类型 + 绑定」→ 形态:绑定的抓取器类优先;没有绑定时 X / social 类型归社交、播客类型归播客。"""
+    if fetcher_id:
+        cls = _bound_class(fetcher_id)
+        if cls is not None:
+            shape = normalize_shape(str(getattr(cls, "content_shape", "article")))
+            if shape:
+                return shape
+    source_type = str(source_type or "").strip().lower()
+    if source_type in X_SOURCE_TYPES | {"social"}:
+        return "social"
+    if source_type in PODCAST_SOURCE_TYPES:
+        return "podcast"
+    return "article"
+
+
+def binding_content_type(source_type: str, fetcher_id: str = "") -> str:
+    """「类型 + 绑定」→ 预期的条目 ``content_type``(零产出的源在目录里也要有类型)。"""
+    if fetcher_id:
+        cls = _bound_class(fetcher_id)
+        if cls is not None:
+            return str(getattr(cls, "content_type", "") or "")
+    source_type = str(source_type or "").strip().lower()
+    if source_type in X_SOURCE_TYPES | {"social"}:
+        return "social_post"
+    if source_type in PODCAST_SOURCE_TYPES:
+        return "podcast_episode"
+    if source_type in {"rss", "atom"}:
+        return "rss_article"
+    if source_type in {"web", "webpage"}:
+        return "web_article"
+    return ""
+
+
+def binding_platform(source_type: str, fetcher_id: str = "") -> str:
+    """「类型 + 绑定」→ 平台标识:绑定的抓取器类优先,X 类型兜底为 x。"""
+    if fetcher_id:
+        cls = _bound_class(fetcher_id)
+        if cls is not None:
+            return str(getattr(cls, "platform", "") or "").strip().lower()
+    if str(source_type or "").strip().lower() in X_SOURCE_TYPES:
+        return "x"
+    return ""
+
+
+def row_shape(row: object) -> str:
+    """源行的形态(阅读侧口径:阅读器目录、早报、事件榜、榜单、文章列表):显式 ``shape`` 列
+    (R1c)> 绑定的抓取器类 > ``source_type``。自 ``api.sources`` 原样搬来。"""
+    explicit = normalize_shape(getattr(row, "shape", ""))
+    if explicit:
+        return explicit
+    return binding_shape(
+        str(getattr(row, "source_type", "") or ""),
+        str(getattr(row, "fetcher_id", "") or ""),
+    )
+
+
+# 目录视图(``view_from_row``:源管理里无绑定的源、收录的形态门禁)自己的判法。与上面的阅读侧
+# 判法在三处不同:不认 ``source_type=social``、不认旧别名 ``bulletin``、绑定类的形态不合法时不
+# 归一。存量如此,R1a 不动;两套并成一套留到 full 模式(backlog)。
 def _row_shape(row: SourceConfigRecord, source_type: str) -> str:
     explicit = str(getattr(row, "shape", "") or "").strip().lower()
     if explicit in SHAPES:
@@ -515,6 +723,79 @@ def describe(
 def get(session: Session, source_id: str, *, content_type: str = "") -> SourceView:
     sid = str(source_id or "").strip()
     return describe(session, [sid], content_types={sid: content_type})[sid] if sid else archive_placeholder("")
+
+
+# ── 两层与口径函数(早报 / 事件榜 / 事件归并) ────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SourceLayers:
+    """一个源的两层来历,不合并:消费方按各自沿用的口径取。"""
+
+    source_id: str
+    record: Optional[SourceConfigRecord]   # 源行(没有为 None)
+    preset: Optional[SourceView]           # 预设类的视图(注册表里没有同名类为 None)
+
+    @property
+    def anchored(self) -> bool:
+        """有行或有预设类;两者都没有的 id 只在归档里出现(或是内建 id)。"""
+        return self.record is not None or self.preset is not None
+
+
+def layers(
+    session: Session,
+    source_ids: Iterable[str],
+    *,
+    rows: Optional[Mapping[str, SourceConfigRecord]] = None,
+) -> dict[str, SourceLayers]:
+    """批量取两层。键按调用方给的原样(不去空白):消费方拿条目上的 ``source_id`` 回查,
+    带空白的脏 id 也要查得到——它没有行也没有类。
+
+    ``rows``:调用方已经取好的源行(source_id → 行,须覆盖本次要查的全部 id)。传了就不再查库
+    ——事件榜本来就要拿行做凭证 / 私有判定,不必同一批 id 查两遍。
+    """
+    wanted = sorted({str(sid) for sid in source_ids if sid})
+    if not wanted:
+        return {}
+    if rows is None:
+        loaded: dict[str, SourceConfigRecord] = {}
+        for chunk in _chunks(wanted):
+            for row in session.exec(
+                select(SourceConfigRecord).where(SourceConfigRecord.source_id.in_(chunk))
+            ).all():
+                loaded[row.source_id] = row
+        rows = loaded
+    return {
+        source_id: SourceLayers(source_id, rows.get(source_id), registry_view(source_id))
+        for source_id in wanted
+    }
+
+
+def info_role(source: SourceLayers) -> str:
+    """信息角色 official / media / personal / leaderboard(评分、早报、事件层用;不含阅读器的 custom)。
+
+    有行:行上的策展范围与信源层级说了算,空值就是空值(两项都空 = 身份不可考 = media),
+    不回退到同名的预设类。没有行:预设类 → 播客精选目录 → media。
+    """
+    from services.source_naming import source_role
+
+    record = source.record
+    if record is not None:
+        return source_role(
+            source.source_id,
+            source_scope=record.source_scope or "",
+            provenance_tier=record.provenance_tier or "",
+        )
+    return source_role(source.source_id)
+
+
+def reader_shape(source: SourceLayers, content_type: str = "") -> str:
+    """早报 / 事件榜用的形态:有行看行(``row_shape``),没行看预设类,都没有看条目的 ``content_type``。"""
+    if source.record is not None:
+        return row_shape(source.record)
+    if source.preset is not None:
+        return source.preset.shape
+    return shape_from_content_type(content_type)
 
 
 def provisional_source_ids(session: Session) -> set[str]:
