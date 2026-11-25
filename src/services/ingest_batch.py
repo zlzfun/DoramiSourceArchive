@@ -88,7 +88,9 @@ def _resolve_all(
             try:
                 resolved = ingest_push.resolve_source(ctx, kind, source, item_url=str(item.get("url") or ""))
                 prepared.append((index, item, resolved, None))
-            except ingest_push.IngestRejected as exc:
+            except ValueError as exc:
+                # IngestRejected 之外,身份派生对清洗后为空的账号名也抛 ValueError(handle 为「!!!」之类);
+                # 同样只拒收这一条,不让整批 500(issue #341 检视 R1-1)。
                 prepared.append((index, item, None, str(exc)))
     return prepared
 

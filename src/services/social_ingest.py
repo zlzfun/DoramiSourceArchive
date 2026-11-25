@@ -215,6 +215,38 @@ def _from_fields(
 _RAW_SHAPE = 'raw 需为 {"data": {…}, "includes": {…}} 形态的 X API 帖子对象'
 
 
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
+
+
+def _check_raw_author(post: dict[str, Any], includes: dict[str, Any]) -> None:
+    """作者对象的字段不是字符串的 ``raw`` 不收:归一化会把它们字符串化,对象就成了账号名。"""
+    author_id = str(post.get("author_id") or "").strip()
+    for user in _dict_items(includes.get("users")):
+        if not author_id or str(user.get("id") or "") != author_id:
+            continue
+        for key in ("username", "name", "profile_image_url"):
+            if user.get(key) is not None and not isinstance(user[key], str):
+                raise SocialPayloadRejected(f"raw.includes.users 里作者的 {key} 需为字符串")
+
+
+def _raw_link_warnings(includes: dict[str, Any], warnings: list[str]) -> None:
+    """归一化会丢掉不是 http(s) 的配图与头像;丢了要说(整页的 includes 原样给时,提到的可能是别的帖子的)。"""
+
+    def unusable(value: Any) -> bool:
+        return value not in (None, "") and not http_url(value)
+
+    media = sum(
+        1 for entry in _dict_items(includes.get("media"))
+        if unusable(entry.get("url")) or (not entry.get("url") and unusable(entry.get("preview_image_url")))
+    )
+    if media:
+        warnings.append(f"raw.includes.media 里有 {media} 项的链接不是 http(s),已忽略")
+    avatars = sum(1 for entry in _dict_items(includes.get("users")) if unusable(entry.get("profile_image_url")))
+    if avatars:
+        warnings.append(f"raw.includes.users 里有 {avatars} 个头像不是 http(s) 链接,已忽略")
+
+
 def _from_raw(
     item: dict[str, Any], raw: Any, platform: str, author: dict[str, Any], warnings: list[str]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -226,9 +258,13 @@ def _from_raw(
     includes = raw.get("includes")
     if includes is not None and not isinstance(includes, dict):
         raise SocialPayloadRejected(_RAW_SHAPE)
-    raw_id = str(post.get("id") or "").strip()
+    includes = includes or {}
+    post_id = post.get("id")
+    raw_id = str(post_id).strip() if isinstance(post_id, (str, int)) and not isinstance(post_id, bool) else ""
     if not raw_id:
         raise SocialPayloadRejected("raw.data 缺少帖子 id")
+    _check_raw_author(post, includes)
+    _raw_link_warnings(includes, warnings)
     given_id = str(item.get("post_id") or "").strip()
     if given_id and given_id != raw_id:
         raise SocialPayloadRejected("post_id 与 raw.data.id 不一致")
@@ -246,7 +282,7 @@ def _from_raw(
     }
     try:
         social = normalize_x_post_extensions(
-            post, {"includes": includes or {}}, fallback_handle=handle, fallback_user=fallback_user
+            post, {"includes": includes}, fallback_handle=handle, fallback_user=fallback_user
         )
         content = x_post_text(post)
     except InvalidXRawData as exc:

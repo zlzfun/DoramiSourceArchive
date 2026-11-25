@@ -108,6 +108,14 @@ def _stored(sink, article_id):
     return row, json.loads(row.extensions_json or "{}")
 
 
+def _reader_summary(sink, article_id):
+    """读者列表里这一条的摘要(列表项直接投影 summary_zh,不看指纹)。"""
+    from api.articles_view import serialize_article_list_item
+    from models.db import ArticleRecord
+
+    return serialize_article_list_item(_row(sink.engine, ArticleRecord, article_id))["summary_zh"]
+
+
 def _set_extension(sink, article_id, key, value):
     from models.db import ArticleRecord
 
@@ -234,6 +242,9 @@ def test_structured_push_matches_the_fetcher_on_what_the_card_reads(
 
 def test_whatever_is_not_used_shows_up_in_the_receipt(monkeypatch, tmp_path):
     app_module, sink = _setup(monkeypatch, tmp_path)
+    bad_links = _x_payload("quoted", post_id="7")
+    bad_links["includes"]["users"][0]["profile_image_url"] = "javascript:alert(1)"
+    bad_links["includes"]["media"][0]["url"] = "ftp://bad/pic.jpg"
     with TestClient(app_module.app) as client:
         _login(client)
         token = _issue_token(client)
@@ -259,8 +270,10 @@ def test_whatever_is_not_used_shows_up_in_the_receipt(monkeypatch, tmp_path):
             # 5:给了 raw 又给了结构化字段。
             {"kind": "social_post", "raw": _x_payload("quoted", post_id="6"), "content": "别的正文",
              "media_urls": [IMG_B]},
+            # 6:raw 里不是 http(s) 的头像与配图(归一化会丢掉它们)。
+            {"kind": "social_post", "raw": bad_links},
         ]).json()["results"]
-    assert [r["status"] for r in results] == ["created"] * 6, results
+    assert [r["status"] for r in results] == ["created"] * 7, results
     assert "warnings" not in results[0]
     assert _stored(sink, "x_new_lab_1")[1]["media_urls"] == [IMG_A]
     assert results[1]["warnings"] == [
@@ -282,6 +295,12 @@ def test_whatever_is_not_used_shows_up_in_the_receipt(monkeypatch, tmp_path):
     assert results[5]["warnings"] == ["已给 raw,这些字段以 raw 为准:content、media_urls"]
     row, ext = _stored(sink, "x_new_lab_6")
     assert row.content == "Big news 👇 https://t.co/q" and ext["media_urls"] == [IMG_A]
+    assert results[6]["warnings"] == [
+        "raw.includes.media 里有 1 项的链接不是 http(s),已忽略",
+        "raw.includes.users 里有 1 个头像不是 http(s) 链接,已忽略",
+    ]
+    _row_, ext = _stored(sink, "x_new_lab_7")
+    assert ext["media_urls"] == [] and ext["author_avatar_url"] == "" and ext["quoted"]["media_urls"] == [IMG_Q]
 
 
 def test_wrongly_shaped_new_fields_do_not_fail_the_batch(monkeypatch, tmp_path):
@@ -362,21 +381,33 @@ def test_pushing_again_fills_what_is_missing_and_overwrites_nothing(monkeypatch,
     assert queued == [["x_new_lab_2001"], ["x_new_lab_2001"]] == prefetched
 
 
-def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path):
+CACHES = {
+    "summary_zh": "按收录时的正文生成的摘要",  # 没有指纹的旧缓存:指纹校验拦不住它
+    "translation_zh": "正文译文", "translation_zh_fp": "fp",
+    "translation_zh_social": {"text": "主推译文", "fp": "x", "v": 1},
+}
+
+
+@pytest.mark.parametrize("pushed_text", ["Agent 自己整理的一句话", None])
+def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path, pushed_text):
+    """``pushed_text=None``:收录时的正文与平台原文相同(只有结构不全)。"""
     from storage.impl import db_storage
 
     app_module, sink = _setup(monkeypatch, tmp_path)
     payload = _x_payload("retweeted", handle="OpenAI", user_id="4398626122", post_id="555")
+    same_text = pushed_text is None
     with TestClient(app_module.app) as client:
         _login(client)
         token = _issue_token(client)
         pushed = _push(client, token, [
-            {"kind": "social_post", "post_id": "555", "content": "Agent 自己整理的一句话",
+            {"kind": "social_post", "post_id": "555", "content": pushed_text or payload["data"]["text"],
              "author": {"handle": "OpenAI"}, "extensions": {"tags": ["agent-tag"]},
              "quoted": {"content": "Agent 以为这是引用", "author": {"handle": "someone"}}},
         ]).json()["results"][0]
         assert (pushed["status"], pushed["id"], pushed["source_id"]) == ("created", "x_openai_555", "x_openai")
-        _set_extension(sink, "x_openai_555", "summary_zh", "摘要缓存")
+        for key, value in CACHES.items():
+            _set_extension(sink, "x_openai_555", key, value)
+        assert _reader_summary(sink, "x_openai_555") == CACHES["summary_zh"]
         before, _ext = _stored(sink, "x_openai_555")
 
         native = _fetched(sink, payload, "x_openai")
@@ -389,7 +420,9 @@ def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path):
         assert ext["reposted"]["author_handle"] == "other" and "quoted" not in ext
         assert ext["media_urls"] == [IMG_Q] and ext["tags"] == ["AI"]
         assert ext["raw_data"]["data"]["id"] == "555" and ext["metrics"] == {"like_count": 7, "retweet_count": 2}
-        assert ext["summary_zh"] == "摘要缓存"
+        # 正文换了:与正文绑定的缓存一并去掉,读者列表不再给出按旧正文生成的摘要;正文没换就都留着。
+        assert {key: ext.get(key) for key in CACHES} == (CACHES if same_text else dict.fromkeys(CACHES))
+        assert _reader_summary(sink, "x_openai_555") == (CACHES["summary_zh"] if same_text else None)
         assert row.archive_updated_at > before.archive_updated_at
         assert (row.fetched_date, row.ingest_channel) == (before.fetched_date, "push")
 
@@ -403,6 +436,78 @@ def test_the_fetched_version_replaces_an_ingested_post(monkeypatch, tmp_path):
         ]).json()["results"][0]
     assert repush["status"] == "duplicate"
     assert _stored(sink, "x_openai_555")[1] == ext
+
+
+def test_filling_in_the_text_later_keeps_the_structure(monkeypatch, tmp_path):
+    """先推了没有正文、但带引用帖与配图的一条,之后只补正文:结构不能被冲掉(检视 R1-2)。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    structure_only = _structured("quoted", content="")
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        assert _push(client, token, [structure_only]).json()["results"][0]["status"] == "created"
+        _set_extension(sink, "x_new_lab_2001", "summary_zh", "没有正文时不该有的摘要")
+        before, before_ext = _stored(sink, "x_new_lab_2001")
+        assert not before.has_content and before_ext["quoted"] and before_ext["media_urls"] == [IMG_A]
+        text_only = {"kind": "social_post", "post_id": "2001", "content": "后来补上的正文\n第二行",
+                     "author": {"handle": "new_lab"}}
+        second = _push(client, token, [text_only]).json()["results"][0]
+        third = _push(client, token, [{**text_only, "content": "再推一个不同的正文"}]).json()["results"][0]
+    assert (second["status"], third["status"]) == ("refreshed", "duplicate")
+    row, ext = _stored(sink, "x_new_lab_2001")
+    assert (row.content, row.title, row.has_content) == ("后来补上的正文\n第二行", "后来补上的正文", True)
+    assert ext["quoted"] == before_ext["quoted"] and ext["media_urls"] == [IMG_A]
+    assert ext["author_avatar_url_large"] == AVATAR_LARGE and "summary_zh" not in ext
+    assert (row.fetched_date, row.publish_date) == (before.fetched_date, before.publish_date)
+    assert row.archive_updated_at > before.archive_updated_at
+
+
+def test_the_fetched_version_replaces_an_ingested_post_without_text(monkeypatch, tmp_path):
+    from storage.impl import db_storage
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    payload = _x_payload("quoted", handle="OpenAI", user_id="4398626122", post_id="557")
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        pushed = _push(client, token, [
+            {"kind": "social_post", "post_id": "557", "author": {"handle": "OpenAI"}, "media_urls": [IMG_B]},
+        ]).json()["results"][0]
+        assert pushed["status"] == "created"
+        before, _ext = _stored(sink, "x_openai_557")
+        assert not before.has_content
+        native = _fetched(sink, payload, "x_openai")
+        assert asyncio.run(sink.save_with_outcome(native)) == db_storage.SAVE_STRUCTURE_FILLED
+    row, ext = _stored(sink, "x_openai_557")
+    assert (row.content, row.title, row.has_content) == (native.content, native.title, True)
+    assert ext["media_urls"] == [IMG_A] and ext["quoted"]["author_handle"] == "other"
+    assert ext["raw_data"]["data"]["id"] == "557"
+    # 走的是社交补全而不是通用的补正文:到达时间不动。
+    assert (row.fetched_date, row.ingest_channel) == (before.fetched_date, "push")
+
+
+def test_an_unusable_author_rejects_only_that_item(monkeypatch, tmp_path):
+    """清洗后为空的账号名、raw 里不是字符串的作者字段:只拒收这一条,同批其它条目照常(检视 R1-1)。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    object_username = _x_payload("quoted", post_id="2010")
+    object_username["includes"]["users"][0]["username"] = {"@": []}
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        response = _push(client, token, [
+            {"kind": "social_post", "raw": object_username},
+            {"kind": "social_post", "post_id": "1", "content": "x", "author": {"handle": "!!!"}},
+            {"kind": "social_post", "raw": {"data": {"id": {"n": 1}, "text": "x"}}, "author": {"handle": "new_lab"}},
+            {"kind": "social_post", "post_id": "2", "content": "正常的一条", "author": {"handle": "new_lab"}},
+        ])
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [(r["status"], r.get("reason")) for r in results[:3]] == [
+        ("rejected", "raw.includes.users 里作者的 username 需为字符串"),
+        ("rejected", "缺少作者 handle,无法确定来源"),
+        ("rejected", "raw.data 缺少帖子 id"),
+    ], results
+    assert (results[3]["status"], results[3]["id"]) == ("created", "x_new_lab_2")
 
 
 @pytest.mark.parametrize("with_platform_raw", [True, False])

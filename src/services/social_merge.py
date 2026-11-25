@@ -6,7 +6,8 @@
 - 抓取器抓到同一条:抓取版是平台原样,整体换成抓取版(``adopt_fetched``)。
 
 抓取入库的条目、已经换成抓取版的条目都带 ``raw_data.data``,不再被任何一条规则改写。
-译文缓存、摘要缓存等服务端写的键不在社交键里,两条规则都原样保留。
+译文缓存、摘要缓存等服务端写的键不在社交键里,两条规则都原样保留;正文变了的(补上正文、换成抓取版的
+正文)由调用方再过一遍 ``drop_content_caches``。
 """
 
 from __future__ import annotations
@@ -30,6 +31,22 @@ FILL_KEYS = (
     "quoted",
     "reposted",
 )
+
+
+# 与正文绑定的服务端缓存。读者列表直接取 ``summary_zh``、不看指纹,没有指纹的旧缓存连指纹校验也拦不住,
+# 所以正文一变就去掉(``paper_fulltext`` 换正文时同一做法)。标题译文回执另由 ``preserve_title_receipt`` 判定。
+CONTENT_BOUND_KEYS = frozenset({
+    "summary_zh",
+    "summary_zh_fp",
+    "translation_zh",
+    "translation_zh_fp",
+    "translation_zh_version",
+    "translation_zh_social",
+})
+
+
+def drop_content_caches(extensions: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in extensions.items() if key not in CONTENT_BOUND_KEYS}
 
 
 def _empty(value: Any) -> bool:
