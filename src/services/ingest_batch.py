@@ -3,6 +3,9 @@
 推送令牌(``ding_``,通道 ``push``)与管理员「单条收录」(会话,通道 ``manual``)共用这一条路径:
 身份解析 → 服务端建条目 → 链接查重 → 同源内容判重 → 入库 → 收录记录。HTTP 鉴权、额度与审计留在路由。
 
+逐条回执里的 ``warnings``(issue #341)列出没有被采用的东西:未识别的字段、白名单之外的扩展键、不是
+http(s) 的链接等。条目照常处理,``warnings`` 只是让调用方知道哪些内容没有进库。
+
 两段式:先在一个会话里把整批的出处解析完(批内新建的临时源互相可见、身份冲突可核对),
 再逐条入库——每条独立事务,单条载荷问题只拒收这一条。
 """
@@ -17,7 +20,7 @@ from typing import Any, Callable, Optional
 from sqlmodel import Session
 
 from models.db import ArticleRecord
-from services import content_fingerprint, ingest_policy, ingest_push
+from services import content_fingerprint, ingest_policy, ingest_push, social_ingest
 from storage.impl import db_storage
 
 
@@ -50,22 +53,44 @@ def social_source(item: dict[str, Any]) -> dict[str, Any]:
     return source
 
 
+def _prepare_social(
+    items: list[dict[str, Any]], notes: list[list[str]]
+) -> list[tuple[dict[str, Any], Optional[str]]]:
+    """社交帖先整理成入库形状:出处解析要用的作者可能在帖子链接或 X 原始 JSON 里。"""
+    prepared: list[tuple[dict[str, Any], Optional[str]]] = []
+    for index, item in enumerate(items):
+        reason = None
+        if item.get("kind") == "social_post":
+            try:
+                item, extra = social_ingest.prepare(item)
+                notes[index].extend(extra)
+            except social_ingest.SocialPayloadRejected as exc:
+                reason = str(exc)
+        prepared.append((item, reason))
+    return prepared
+
+
 def _resolve_all(
-    db_sink, items: list[dict[str, Any]], caller: IngestCaller
+    db_sink, items: list[tuple[dict[str, Any], Optional[str]]], caller: IngestCaller
 ) -> list[tuple[int, dict[str, Any], Optional[ingest_push.ResolvedSource], Optional[str]]]:
     prepared = []
     with Session(db_sink.engine) as session:
         ctx = ingest_push.new_context(session, caller.actor)
-        for index, item in enumerate(items):
+        for index, (item, payload_error) in enumerate(items):
             if caller.remaining is not None and index >= caller.remaining:
                 prepared.append((index, item, None, "超出今日收录额度"))
+                continue
+            if payload_error:
+                prepared.append((index, item, None, payload_error))
                 continue
             kind = item.get("kind")
             source = social_source(item) if kind == "social_post" else dict(item.get("source") or {})
             try:
                 resolved = ingest_push.resolve_source(ctx, kind, source, item_url=str(item.get("url") or ""))
                 prepared.append((index, item, resolved, None))
-            except ingest_push.IngestRejected as exc:
+            except ValueError as exc:
+                # IngestRejected 之外,身份派生对清洗后为空的账号名也抛 ValueError(handle 为「!!!」之类);
+                # 同样只拒收这一条,不让整批 500(issue #341 检视 R1-1)。
                 prepared.append((index, item, None, str(exc)))
     return prepared
 
@@ -75,12 +100,19 @@ async def ingest(
     items: list[dict[str, Any]],
     caller: IngestCaller,
     *,
-    on_created: Optional[Callable[[list[str]], None]] = None,
+    on_stored: Optional[Callable[[list[str]], None]] = None,
+    warnings: Optional[list[list[str]]] = None,
 ) -> list[dict[str, Any]]:
-    """逐条返回 created / duplicate / duplicate_url / duplicate_content / refreshed / rejected。"""
+    """逐条返回 created / duplicate / duplicate_url / duplicate_content / refreshed / rejected。
+
+    ``on_stored`` 收到这一批里新建与被补全的条目 id(分析入队、配图预取;两者对已处理过的条目都是
+    空操作)。``warnings`` 是路由层按条目给的提示(未识别的字段等),与这里产生的合并进回执。
+    """
     results: list[dict[str, Any]] = []
-    created_ids: list[str] = []
-    for index, item, resolved, reason in _resolve_all(db_sink, items, caller):
+    stored_ids: list[str] = []
+    given = warnings or []
+    notes: list[list[str]] = [list(given[i]) if i < len(given) else [] for i in range(len(items))]
+    for index, item, resolved, reason in _resolve_all(db_sink, _prepare_social(items, notes), caller):
         kind = item.get("kind")
         base = {"index": index, "kind": kind}
         if resolved is None:
@@ -90,7 +122,8 @@ async def ingest(
             with Session(db_sink.engine) as session:
                 id_prefix = ingest_push.item_id_prefix(session, resolved.source_id)
             content = ingest_push.build_content(
-                kind, resolved.source_id, item, id_prefix=id_prefix, channel=caller.channel
+                kind, resolved.source_id, item, id_prefix=id_prefix, channel=caller.channel,
+                warnings=notes[index],
             )
         except (ingest_push.IngestRejected, ValueError, TypeError, OverflowError) as exc:
             # 单条载荷问题只拒收这一条;整批照常回执、审计照常执行(实现检视 R1 #12)。
@@ -145,11 +178,12 @@ async def ingest(
             with Session(db_sink.engine) as session:
                 ingest_push.record_pick(session, content.id, caller.actor, note, channel=caller.channel)
                 session.commit()
+        if outcome in db_storage.SAVE_STORED_OUTCOMES:
+            stored_ids.append(content.id)
         if outcome == db_storage.SAVE_CREATED:
-            created_ids.append(content.id)
             status = "created"
-        elif outcome in {db_storage.SAVE_CONTENT_FILLED, db_storage.SAVE_METADATA_REPAIRED,
-                         db_storage.SAVE_REFRESHED}:
+        elif outcome in db_storage.SAVE_STORED_OUTCOMES or outcome == db_storage.SAVE_REFRESHED:
+            # 已有条目被补上了正文、元数据或社交帖的结构(配图 / 引用帖 / 原帖)。
             status = "refreshed"
         elif outcome == db_storage.SAVE_DUPLICATE:
             status = "duplicate"
@@ -161,6 +195,9 @@ async def ingest(
             **base, "status": status, "id": content.id, "source_id": resolved.source_id,
             "source_created": bool(resolved.created and status == "created"),
         })
-    if created_ids and on_created is not None:
-        on_created(created_ids)
+    if stored_ids and on_stored is not None:
+        on_stored(stored_ids)
+    for result in results:
+        if notes[result["index"]]:
+            result["warnings"] = list(dict.fromkeys(notes[result["index"]]))
     return results
