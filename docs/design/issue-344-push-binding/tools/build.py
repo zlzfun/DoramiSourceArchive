@@ -20,7 +20,7 @@ import re
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
-VERSION = "2"
+VERSION = "4"
 
 PAGES = (
     ("tokens", "ingest.body.html", "收录令牌"),

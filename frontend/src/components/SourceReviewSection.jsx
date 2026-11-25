@@ -38,7 +38,7 @@ export default function SourceReviewSection({ source }) {
 
   return (
     <div className="inspector-section">
-      <h3 className="micro-label">源审查</h3>
+      <h3 className="tools-title">源审查</h3>
       <div className="inspector-review-grid">
         {signal && <div><span className="tiny-meta">信号</span><div className="inspector-review-val">{labelFrom(SIGNAL_LABELS, signal)}</div></div>}
         {noise && <div><span className="tiny-meta">噪声</span><div className="inspector-review-val">{labelFrom(NOISE_LABELS, noise)}</div></div>}

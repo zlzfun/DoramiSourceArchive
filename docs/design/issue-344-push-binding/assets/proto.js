@@ -161,14 +161,16 @@
       .filter(([actor, t]) => t.active && !ofSource(sid).some((b) => b[0] === actor))
       .map(([actor, t]) => `<option>${actor} · ${t.preview}</option>`).join('');
     return `
-      <div class="inspector-section" data-proto="push">
-        <div class="inspector-section-head"><h3 class="micro-label">推送</h3></div>
-        <div class="bind-list">${rows}</div>
-        <div class="bind-add">
-          <select class="node-param-input inspector-param-select" aria-label="令牌"><option value="">令牌</option>${options}</select>
-          <button type="button" class="${BTN} action-button-quiet">绑定</button>
+      <section class="acq-panel" data-proto="push">
+        <div class="acq-panel-head"><h3 class="tools-title">推送</h3></div>
+        <div class="acq-panel-body is-list">
+          <div class="bind-list">${rows}</div>
+          <div class="bind-add">
+            <select class="node-param-input inspector-param-select" aria-label="令牌"><option value="">令牌</option>${options}</select>
+            <button type="button" class="${BTN} action-button-quiet">绑定</button>
+          </div>
         </div>
-      </div>`;
+      </section>`;
   }
 
   const REG = { kind: 'social', scope: 'open' };
@@ -292,10 +294,23 @@
     } else {
       dot.textContent = '社交 · X 时间线';
       const sections = Array.from(inspector.querySelectorAll('.inspector-section'));
-      const params = sections.find((sec) => sec.querySelector('.micro-label')?.textContent.trim() === '运行参数');
-      params.querySelector('.micro-label').textContent = '抓取';
-      params.querySelector('.inspector-section-head').insertAdjacentHTML('beforeend', '<span class="acq-fetcher">X 时间线</span>');
-      const review = sections.find((sec) => sec.querySelector('.micro-label')?.textContent.trim() === '源审查');
+      const titled = (text) => sections.find((sec) => sec.querySelector('.micro-label')?.textContent.trim() === text);
+      // 「抓取」一个框:现网的「运行参数」区、动作钮、「近期运行」区都收进去;「近期运行」降成框内小节
+      const params = titled('运行参数');
+      const runs = titled('近期运行');
+      const panel = document.createElement('section');
+      panel.className = 'acq-panel';
+      panel.innerHTML = '<div class="acq-panel-head"><h3 class="tools-title">抓取</h3><span class="acq-fetcher">X 时间线</span></div><div class="acq-panel-body"></div>';
+      const body = panel.querySelector('.acq-panel-body');
+      params.before(panel);
+      params.querySelector('.inspector-section-head').remove();
+      body.append(...params.childNodes);
+      params.remove();
+      body.append(...inspector.querySelectorAll('.inspector-body > .inspector-actions, .inspector-body > .inspector-preview'));
+      runs.className = 'acq-sec';
+      body.append(runs);
+      const review = titled('源审查');
+      review.querySelector('.micro-label').className = 'tools-title';
       review.insertAdjacentHTML('beforebegin', pushSection('x_openai'));
     }
     if (open === 'register') {

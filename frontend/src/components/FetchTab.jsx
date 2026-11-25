@@ -782,32 +782,34 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
     const candidates = ingestTokens.filter(token => token.is_active && !bindings.some(b => b.token_id === token.id));
     if (!bindings.length && !candidates.length) return null;
     return (
-      <div className="inspector-section">
-        <div className="inspector-section-head">
-          <h3 className="micro-label">推送</h3>
+      <section className="acq-panel">
+        <div className="acq-panel-head">
+          <h3 className="tools-title">推送</h3>
         </div>
-        <BindList
-          rows={bindings.map(binding => ({
-            key: `${fetcher.id}:${binding.token_id}`,
-            id: binding.token_id,
-            name: binding.actor,
-            mono: binding.token_preview,
-            pushedAt: binding.last_pushed_at,
-            muted: !binding.is_active,
-          }))}
-          onUnbind={row => unbindToken(fetcher, row)}
-          busyKey={bindBusy}
-        />
-        <BindAdd
-          key={fetcher.id}
-          label="令牌"
-          groups={[{ options: candidates.map(token => ({ value: String(token.id), label: `${token.actor} · ${token.token_preview}` })) }]}
-          onBind={value => bindToken(fetcher, Number(value))}
-          onFocus={loadIngestTokens}
-          busy={bindBusy === 'add'}
-          selectClassName="node-param-input inspector-param-select"
-        />
-      </div>
+        <div className="acq-panel-body is-list">
+          <BindList
+            rows={bindings.map(binding => ({
+              key: `${fetcher.id}:${binding.token_id}`,
+              id: binding.token_id,
+              name: binding.actor,
+              mono: binding.token_preview,
+              pushedAt: binding.last_pushed_at,
+              muted: !binding.is_active,
+            }))}
+            onUnbind={row => unbindToken(fetcher, row)}
+            busyKey={bindBusy}
+          />
+          <BindAdd
+            key={fetcher.id}
+            label="令牌"
+            groups={[{ options: candidates.map(token => ({ value: String(token.id), label: `${token.actor} · ${token.token_preview}` })) }]}
+            onBind={value => bindToken(fetcher, Number(value))}
+            onFocus={loadIngestTokens}
+            busy={bindBusy === 'add'}
+            selectClassName="node-param-input inspector-param-select"
+          />
+        </div>
+      </section>
     );
   };
   // 登记完:重取目录与令牌,切到新源所在的内容类型并选中它。
@@ -1251,12 +1253,13 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
               </div>
             )}
 
-            {pushSection}
+            {/* 顺序与有抓取器的源一致:先抓取(这里只有一句「没有抓取器」),后推送 */}
             {(fetcher.retired || pushBindingsOf(fetcher).length === 0) && (
               <p className="inspector-hint">
                 {fetcher.retired ? '已退役' : '没有抓取器'}
               </p>
             )}
+            {pushSection}
           </div>
         </>
       );
@@ -1348,105 +1351,107 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
             </button>
           </div>
 
-          <div className="inspector-section">
-            <div className="inspector-section-head">
-              <h3 className="micro-label">抓取</h3>
+          <section className="acq-panel">
+            <div className="acq-panel-head">
+              <h3 className="tools-title">抓取</h3>
               <span className="acq-fetcher">{channelLabelOf(fetcher)}</span>
             </div>
-            {params.length === 0 ? (
-              <div className="inspector-empty-mini">该源无需抓取参数</div>
-            ) : (
-              <div className="inspector-params">
-                {params.map(param => (
-                  <div key={param.field} className="inspector-param">
-                    <label className="inspector-param-label" title={param.field}>
-                      {param.label || param.field}
-                      {param.hint && <span className="inspector-param-hint">{param.hint}</span>}
-                    </label>
-                    {renderParamInput(fetcher.id, param)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="inspector-actions">
-            <button
-              type="button"
-              className="action-button action-button-primary inspector-act"
-              disabled={isRunning}
-              onClick={() => runSingleFetcher(fetcher)}
-            >
-              {isRunning ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 立即运行
-            </button>
-            <button
-              type="button"
-              className="action-button action-button-quiet inspector-act"
-              disabled={preview?.status === 'running'}
-              onClick={() => runNodePreview(fetcher)}
-            >
-              <FlaskConical /> 试抓预览
-            </button>
-            <button
-              type="button"
-              className="action-button action-button-quiet inspector-act"
-              onClick={() => saveNodeAsJob(fetcher)}
-            >
-              <Save /> 存为采集任务
-            </button>
-          </div>
-
-          {preview && (
-            <div className="inspector-preview">
-              {preview.status === 'running' ? (
-                <div className="inspector-preview-head">
-                  <span className="inspector-spin" /> 试抓中（每源 {TEST_RUN_LIMIT} 条）…
-                </div>
-              ) : preview.status === 'error' ? (
-                <div className="inspector-preview-head is-bad">
-                  <AlertTriangle className="h-3.5 w-3.5" /> 试抓失败{preview.error ? `：${preview.error}` : ''}
-                </div>
+            <div className="acq-panel-body">
+              {params.length === 0 ? (
+                <div className="inspector-empty-mini">该源无需抓取参数</div>
               ) : (
-                <>
-                  <div className="inspector-preview-head">
-                    试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
-                  </div>
-                </>
+                <div className="inspector-params">
+                  {params.map(param => (
+                    <div key={param.field} className="inspector-param">
+                      <label className="inspector-param-label" title={param.field}>
+                        {param.label || param.field}
+                        {param.hint && <span className="inspector-param-hint">{param.hint}</span>}
+                      </label>
+                      {renderParamInput(fetcher.id, param)}
+                    </div>
+                  ))}
+                </div>
               )}
-            </div>
-          )}
 
-          <div className="inspector-section">
-            <h3 className="micro-label">近期运行</h3>
-            {inspectorRunsLoading ? (
-              <div className="inspector-empty-mini">加载中…</div>
-            ) : inspectorRuns.length === 0 ? (
-              <div className="inspector-empty-mini">尚无运行记录，首次运行后这里会出现批次时间线</div>
-            ) : (
-              <div className="inspector-runlist">
-                {inspectorRuns.map(run => {
-                  const meta = runStatusMeta(run.status);
-                  return (
-                    <button
-                      key={run.id}
-                      type="button"
-                      className="inspector-runrow"
-                      onClick={() => onViewRuns?.(fetcher.id)}
-                      title="查看运行历史"
-                    >
-                      <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
-                      <b>{meta.label}</b>
-                      <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
-                      {(run.skipped_count ?? 0) > 0 && (
-                        <span className="inspector-run-skip">跳过 {run.skipped_count}</span>
-                      )}
-                      <time>{formatRelativeTime(run.started_at)}</time>
-                    </button>
-                  );
-                })}
+              <div className="inspector-actions">
+                <button
+                  type="button"
+                  className="action-button action-button-primary inspector-act"
+                  disabled={isRunning}
+                  onClick={() => runSingleFetcher(fetcher)}
+                >
+                  {isRunning ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 立即运行
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button-quiet inspector-act"
+                  disabled={preview?.status === 'running'}
+                  onClick={() => runNodePreview(fetcher)}
+                >
+                  <FlaskConical /> 试抓预览
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button-quiet inspector-act"
+                  onClick={() => saveNodeAsJob(fetcher)}
+                >
+                  <Save /> 存为采集任务
+                </button>
               </div>
-            )}
-          </div>
+
+              {preview && (
+                <div className="inspector-preview">
+                  {preview.status === 'running' ? (
+                    <div className="inspector-preview-head">
+                      <span className="inspector-spin" /> 试抓中（每源 {TEST_RUN_LIMIT} 条）…
+                    </div>
+                  ) : preview.status === 'error' ? (
+                    <div className="inspector-preview-head is-bad">
+                      <AlertTriangle className="h-3.5 w-3.5" /> 试抓失败{preview.error ? `：${preview.error}` : ''}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="inspector-preview-head">
+                        试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="acq-sec">
+                <h4 className="micro-label">近期运行</h4>
+                {inspectorRunsLoading ? (
+                  <div className="inspector-empty-mini">加载中…</div>
+                ) : inspectorRuns.length === 0 ? (
+                  <div className="inspector-empty-mini">尚无运行记录，首次运行后这里会出现批次时间线</div>
+                ) : (
+                  <div className="inspector-runlist">
+                    {inspectorRuns.map(run => {
+                      const meta = runStatusMeta(run.status);
+                      return (
+                        <button
+                          key={run.id}
+                          type="button"
+                          className="inspector-runrow"
+                          onClick={() => onViewRuns?.(fetcher.id)}
+                          title="查看运行历史"
+                        >
+                          <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
+                          <b>{meta.label}</b>
+                          <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
+                          {(run.skipped_count ?? 0) > 0 && (
+                            <span className="inspector-run-skip">跳过 {run.skipped_count}</span>
+                          )}
+                          <time>{formatRelativeTime(run.started_at)}</time>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
 
           {renderPushSection(fetcher)}
 
