@@ -38,7 +38,7 @@ def test_topic_needs_meaning_and_never_becomes_title_positive_without_verificati
         with pytest.raises(ValidationError): service.ConditionAST.model_validate({**TOPIC, **patch})
     old = service.ConditionAST(all_of=[{'any_of': ['AI']}])
     assert 'match_mode' not in old.model_dump(exclude_none=True)
-    assert service.evaluate(old, 'AI 产品发布', BODY)[0] == 'core'
+    assert service.evaluate(old, 'AI 产品发布', BODY)[0] == 'mention'
 
 
 def test_topic_span_proof_is_body_bound_and_repeatably_normalized():
@@ -104,3 +104,39 @@ def test_topic_prompt_uses_meaning_and_preserves_the_rules_prompt():
     assert '无需出现固定关键词' in topic and 'group_indexes:[]' in topic
     rules=bridge.build_interest_system_prompt(span_mode=True,semantic_intent=True)
     assert '不能替代或放宽all_of' in rules
+
+
+def test_a_substantial_related_section_is_not_an_article_level_core():
+    data = payload()
+    verdict = answer(data)
+    verdict['scope'] = 'substantial_section'
+    with pytest.raises(ValueError, match='core requires article main topic'):
+        windows.validate_semantic_verdict(data, verdict)
+    verdict['outcome'] = 'mention'
+    assert windows.validate_semantic_verdict(data, verdict)['outcome'] == 'mention'
+
+
+def test_title_overlap_cannot_prove_the_body_is_about_the_interest():
+    ast = service.ConditionAST(all_of=[{'any_of': ['医疗']}])
+    outcome, _ = service.evaluate(ast, '产品发布：医疗只是一个例子', '正文介绍通用办公工作台，医疗仅是场景列表中的一项。')
+    assert outcome == 'mention'
+
+
+@pytest.mark.parametrize('patch', [
+    {'scope': 'substantial_section'}, {'method': 'deterministic_title'},
+    {'verifier_policy': {}},
+])
+def test_current_read_rejects_legacy_or_section_only_core_without_rewriting_it(store, patch):
+    cid = seed(store, condition_ast=TOPIC, title='工作台体验记', body=BODY)
+    run(store, lambda **kw: windows.validate_semantic_verdict(kw['payload'], answer(kw['payload'])))
+    before_requests = records(store, Request)
+    with Session(store.engine) as s:
+        assert len(service.current_matches(s, 'alice')) == 1
+        row = s.get(Match, records(store, Match)[0]['id'])
+        row.evidence_json = json.dumps({**json.loads(row.evidence_json), **patch})
+        s.add(row); s.commit()
+        saved = row.evidence_json
+        assert service.current_matches(s, 'alice') == []
+        s.refresh(row)
+        assert row.evidence_json == saved
+    assert records(store, Request) == before_requests

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 from sqlalchemy import event
 
-from tests.test_custom_interests import store, save, add_article, NOW, AST
+from tests.test_custom_interests import store, save, add_article, run_core_cycle, NOW, AST
 from tests.test_reader_interests import _setup, _login
 from models.db import ArticleRecord, AppSettingRecord, ReaderSubscriptionRecord
 from services import custom_interests as custom
@@ -17,11 +17,19 @@ from api.routers import interests, personal_briefs
 
 
 def seed_match(session, condition, article, *, fingerprint=None, outcome='core'):
+    from services.interest_governance_llm import current_verifier_policy
+    # Projection tests seed already-verified main-topic evidence, not title hints.
+    flag = session.get(AppSettingRecord, 'ai_beta_global_enabled')
+    if flag is None: flag = AppSettingRecord(key='ai_beta_global_enabled')
+    flag.value='true'; session.add(flag)
+    from models.db import UserRecord
+    user = session.get(UserRecord, condition.owner_username)
+    user.ai_beta_enabled = True; session.add(user); session.commit()
     fingerprint = fingerprint or custom.evidence_snapshot(session, article)[0]
     m = custom.Match(owner_username=condition.owner_username, condition_id=condition.id,
         condition_revision=condition.revision, article_id=article.id, fingerprint=fingerprint,
         matcher_version=custom.MATCHER_VERSION, outcome=outcome,
-        evidence_json=json.dumps({'title_groups': [['enterprise'], ['agent'], ['on-premise']]}),
+        evidence_json=json.dumps({'method':'semantic', 'scope':'main', 'verifier_policy':current_verifier_policy(session), 'evidence':[{'kind':'text','quote':article.content}], 'reason':'Article core topic is enterprise deployment.'}),
         updated_at=NOW.isoformat())
     session.add(m)
     session.commit()
@@ -30,7 +38,10 @@ def seed_match(session, condition, article, *, fingerprint=None, outcome='core')
 
 def test_full_validation_before_limit_and_batched_snapshot(store, monkeypatch):
     with Session(store.engine) as session:
+        from services.interest_governance_llm import current_verifier_policy
         c = save(session)
+        session.add(AppSettingRecord(key='ai_beta_global_enabled',value='true'));session.commit()
+        proof=json.dumps({'method':'semantic','scope':'main','verifier_policy':current_verifier_policy(session)})
         for n in range(2005):
             a = ArticleRecord(id=f'x{n:04}', title='Enterprise on-premise Agent', source_id='rss_public',
                 source_url='https://example.test/a', content_type='rss_article', content='body',
@@ -39,7 +50,7 @@ def test_full_validation_before_limit_and_batched_snapshot(store, monkeypatch):
             session.flush()
             session.add(custom.Match(owner_username='alice', condition_id=c.id, condition_revision=1,
                 article_id=a.id, fingerprint='current' if n >= 2000 else 'stale',
-                matcher_version=custom.MATCHER_VERSION, outcome='core', updated_at=NOW.isoformat()))
+                matcher_version=custom.MATCHER_VERSION, outcome='core', evidence_json=proof, updated_at=NOW.isoformat()))
         session.commit()
         calls = []
         monkeypatch.setattr(custom, 'evidence_snapshot', lambda s, a, **kw: (calls.append(a.id) or 'current', a.content, None))
@@ -88,7 +99,7 @@ def test_custom_drilldown_current_token_and_legacy_cursor(store):
             pagination_token=first['pagination_token'], match_contract=1, auth={'sub':'alice'}, session=session)
         assert len(next_page['items']) == 3 and next_page['next_cursor'] is None
         assert not {x['article_id'] for x in first['items']} & {x['article_id'] for x in next_page['items']}
-        assert first['items'][0]['interest_matches'][0]['method'] == 'deterministic_title'
+        assert first['items'][0]['interest_matches'][0]['method'] == 'semantic'
         # Legacy cursor does not opt in to a cross-page snapshot guarantee.
         assert len(interests.custom_interest_matches(c.id, cursor=first['next_cursor'],
             auth={'sub':'alice'}, session=session)['items']) == 3
@@ -130,7 +141,7 @@ def test_frozen_brief_name_revision_lane_and_no_current_fallback(store):
         c = save(session, name='Frozen name')
         a = add_article(session)
         cid = c.id
-    custom.run_match_cycle(store.engine)
+    run_core_cycle(store)
     with Session(store.engine) as session:
         generated = digest.generate_personal_digest(session,'alice',now=NOW)
         edition = generated.edition
@@ -226,6 +237,9 @@ def test_custom_receipt_serializer_omits_guest_and_list_without_mutation(store):
 
 def test_list_detail_union_exact_and_get_pure(monkeypatch, tmp_path):
     app, sink = _setup(monkeypatch, tmp_path)
+    from config import LLMConfig
+    from services import interest_governance_llm as bridge
+    monkeypatch.setattr(bridge, 'resolve_llm_config', lambda _: LLMConfig(base_url='https://example.com/v1',api_key='fixture',model='aux'))
     with Session(sink.engine) as session:
         session.add(AppSettingRecord(key='personal_digest_enabled',value='true'))
         c = custom.save_condition(session,'user',custom.ConditionInput(name='Same name',condition=AST))
@@ -275,7 +289,7 @@ def test_podcast_batch_fingerprint_and_response_only_withdrawal(store):
         c = save(session)
         add_article(session)
         cid = c.id
-    custom.run_match_cycle(store.engine)
+    run_core_cycle(store)
     with Session(store.engine) as session:
         generated = digest.generate_personal_digest(session,'alice',now=NOW)
         row = next(r for r in generated.items if r.article_id == 'a')

@@ -318,7 +318,7 @@ def test_paused_condition_drops_backlog_and_denied_semantic_preserves_lexical(st
         user=session.get(UserRecord,'alice');user.ai_beta_enabled=False;session.add(user);session.commit()
     calls=[]
     run(store,lambda **kw:calls.append(kw),2)
-    assert calls==[] and records(store,Match)[0]['outcome']=='core'
+    assert calls==[] and records(store,Match)[0]['outcome']=='mention'
 
 
 def test_concurrent_worker_cannot_reauthorize_same_page(store):

@@ -391,7 +391,7 @@ def evaluate(condition: ConditionAST, title: str, body: str, *, usable=True):
     elif excluded or not all(hits):
         outcome, reason = 'no_match', '包含排除项' if excluded else '未同时满足全部条件'
     elif all(title_hits):
-        outcome, reason = 'core', '标题同时包含全部条件组'
+        outcome, reason = 'mention', '标题包含条件词组，尚未确认正文核心议题'
     else:
         outcome, reason = 'mention', '全文提及，尚不能确定为核心议题'
     return outcome, {'reason': reason, 'groups': hits, 'title_groups': title_hits, 'excluded': excluded}
@@ -458,12 +458,16 @@ def current_matches(session: Session, username: str, *, condition_ids=None, arti
                 continue
         except (ValueError, TypeError, AttributeError):
             continue
+        # Only a current article-level semantic verdict can recommend a private
+        # interest. Historical title/section positives remain stored for audit.
+        if (evidence.get('method') != 'semantic' or evidence.get('scope') != 'main'
+                or not valid_verifier_policy(evidence.get('verifier_policy'))
+                or evidence['verifier_policy'] != policy):
+            continue
         if intent is not None:
             from services.interest_evidence_windows import semantic_intent_hash
             assessment = evidence.get('intent_assessment') or {}
-            if (not isinstance(assessment, dict) or evidence.get('method') != 'semantic'
-                    or not valid_verifier_policy(evidence.get('verifier_policy'))
-                    or evidence['verifier_policy'] != policy
+            if (not isinstance(assessment, dict)
                     or evidence.get('semantic_intent_version') != intent.get('version')
                     or evidence.get('semantic_intent_hash') != semantic_intent_hash(intent)
                     or assessment.get('verdict') != 'satisfied'

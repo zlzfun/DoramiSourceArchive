@@ -53,6 +53,23 @@ def trusted_fake(store, verifier):
     return adapted
 
 
+
+def run_core_cycle(store, **kwargs):
+    """Exercise the real worker with a grounded main-topic verifier, no provider."""
+    from services.interest_evidence_windows import validate_semantic_verdict
+    with Session(store.engine) as session:
+        flag = session.get(AppSettingRecord, 'ai_beta_global_enabled')
+        if flag is None: flag = AppSettingRecord(key='ai_beta_global_enabled')
+        flag.value = 'true'; session.add(flag); session.commit()
+    def verify(**kw):
+        data = kw['payload']; sid = data['evidence_windows'][0]['spans'][0]['span_id']
+        return validate_semantic_verdict(data, {
+            'outcome': 'core', 'scope': 'main', 'reason': 'Article explains enterprise on-premise agent deployment.',
+            'missing_group_indexes': [], 'evidence': [{'kind':'text', 'span_id':sid, 'group_indexes':[0,1,2]}],
+        })
+    return service.run_match_cycle(store.engine, semantic_verifier=trusted_fake(store, verify), **kwargs)
+
+
 def add_article(session, aid='a', *, title='Enterprise on-premise Agent', source='rss_public', body='Enterprise on-premise Agent deployment is the central topic.', age=1):
     article = ArticleRecord(id=aid,title=title,source_id=source,source_url='https://example.com/'+aid,
         content_type='rss_article',publish_date=(NOW-dt.timedelta(hours=age)).isoformat(),
@@ -73,7 +90,7 @@ def save(session, name='Enterprise agent', **kw):
 
 def test_compound_does_not_collapse_to_or_and_mentions_are_not_core():
     condition=service.ConditionAST.model_validate(AST)
-    assert service.evaluate(condition,'Enterprise on-premise Agent','full evidence')[0]=='core'
+    assert service.evaluate(condition,'Enterprise on-premise Agent','full evidence')[0]=='mention'
     assert service.evaluate(condition,'Enterprise news','on-premise Agent appears once')[0]=='mention'
     assert service.evaluate(condition,'Enterprise Agent','deployment')[0]=='no_match'
     assert service.evaluate(condition,'Enterprise on-premise Agent gaming','')[0]=='no_match'
@@ -110,9 +127,9 @@ def test_worker_paging_resume_fingerprint_and_acl(store):
         add_article(session,'b')
         add_article(session,'c',source='user_rss_secret')
         add_article(session,'future',age=-2)
-    first=service.run_match_cycle(store.engine,limit=1)
+    first=run_core_cycle(store,limit=1)
     assert first['processed']==1
-    assert service.run_match_cycle(store.engine,limit=1)['processed']==1
+    assert run_core_cycle(store,limit=1,now=NOW+dt.timedelta(minutes=10))['processed']==1
     with Session(store.engine) as session:
         assert {a.id for _,_,a in service.current_matches(session,'alice')}=={'a','b'}
         assert service.current_matches(session,'bob')==[]
@@ -121,7 +138,7 @@ def test_worker_paging_resume_fingerprint_and_acl(store):
         session.add(AppSettingRecord(key='reader_hidden_source_ids',value='["rss_public"]'));session.commit()
         assert service.current_matches(session,'alice')==[]
     # Resume the same keyset; forbidden and future content cannot be installed.
-    for _ in range(4): service.run_match_cycle(store.engine,limit=1)
+    for n in range(4): run_core_cycle(store,limit=1,now=NOW+dt.timedelta(minutes=20+n*10))
     with Session(store.engine) as session:
         matches=session.exec(select(InterestArticleMatchRecord)).all()
         assert {m.article_id for m in matches}=={'a','b'}
@@ -134,7 +151,7 @@ def test_custom_only_brief_selects_existing_lane_and_typed_refs(store):
     with Session(store.engine) as session:
         save(session)
         add_article(session)
-    assert service.run_match_cycle(store.engine)['processed']==1
+    assert run_core_cycle(store)['processed']==1
     with Session(store.engine) as session:
         interests=digest._load_interests(session,'alice')
         assert interests[0].tag_code is None
@@ -197,7 +214,7 @@ def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, mo
         row=save(session)
         cid=row.id
         add_article(session)
-    service.run_match_cycle(store.engine)
+    run_core_cycle(store)
     with Session(store.engine) as session:
         pending=digest.start_personal_digest_edition(session,'alice',now=NOW+dt.timedelta(minutes=1))
         pending_id=pending.edition.id
@@ -241,7 +258,7 @@ def test_inflight_edit_fences_completion_and_preserves_durable_pending(store, mo
             'missing_group_indexes':[], 'evidence':[{'kind':'text','span_id':sid,'group_indexes':[0,1,2]}],
             'intent_assessment':{'verdict':'satisfied','reason':'Grounded fixture relation',
                 'evidence_span_ids':[sid],'negative_example_indexes':[]}})
-    service.run_match_cycle(store.engine,semantic_verifier=trusted_fake(store, verify) if semantic_edit else None)
+    service.run_match_cycle(store.engine,semantic_verifier=trusted_fake(store, verify)) if semantic_edit else run_core_cycle(store)
     with Session(store.engine) as session:
         result=digest.generate_personal_digest(session,'alice',now=NOW+dt.timedelta(minutes=2),pending_edition_id=pending_id)
         assert result.status in {'ready','degraded'}
@@ -253,7 +270,7 @@ def test_historical_edition_filters_revoked_source_snapshot(store):
     with Session(store.engine) as session:
         save(session)
         add_article(session)
-    service.run_match_cycle(store.engine)
+    run_core_cycle(store)
     with Session(store.engine) as session:
         result=digest.generate_personal_digest(session,'alice',now=NOW+dt.timedelta(minutes=1))
         assert serialize_edition(session,result.edition)['items']
@@ -395,7 +412,8 @@ def test_older_ast_parser_rejection_backs_off_without_starving_legacy_job(store,
         assert job.last_error=='matching_failed'
         assert dt.datetime.fromisoformat(job.next_attempt_at)>=now+dt.timedelta(minutes=5)
         assert session.exec(select(service.Request)).all()==[]
-        assert len(service.current_matches(session,'alice'))==1
+        assert service.current_matches(session,'alice')==[]
+        assert session.exec(select(service.Match)).one().outcome == 'mention'
 
 
 def test_router_preview_is_free_and_roundtrips_nested_intent(store):
@@ -469,7 +487,7 @@ def test_runtime_publication_rechecks_custom_evidence_after_titles(store, monkey
     with Session(store.engine) as session:
         save(session)
         add_article(session)
-    service.run_match_cycle(store.engine)
+    run_core_cycle(store)
     stamp = NOW + dt.timedelta(minutes=1)
     with Session(store.engine) as session:
         pending = digest.start_personal_digest_edition(session, 'alice', now=stamp)

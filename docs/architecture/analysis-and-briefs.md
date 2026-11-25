@@ -30,3 +30,5 @@ Since v3.51.1(issue #33 §5)reader interest and subscription edits **no longer t
 ## 游客早报:共享一版(issue #213)
 
 全体游客读同一份按默认订阅编排的个人早报:版面归保留账号 `guest:shared`(早报路由的 `_username` 把访客身份换成它),08:30 定时遍历启用账号时自然包含;当天首位游客打开时 `ensure` 现场生成。游客不能重编(白名单不含);当天版面失败时游客打开会触发一次系统重试(10 分钟内不重复,原因 `manual_rebuild`),默认名单变化时系统以 `subscription_changed` 重编当日游客版。页面对游客:眉头下恒为「游客版 · 按默认订阅编排 · 登录后按你的订阅与兴趣编排」,不出「重新编排」「立即重编」「重试生成」与兴趣引导;选篇理由里的「你订阅的」显示为「默认订阅的」(`frontend/src/utils/guestCopy.js`,只改显示、快照不动)。
+
+Private interest recommendations require a current semantic verdict with `scope=main`: the article must center on the interest as a core argument or key event (2026-11-25). A related section, example, background passage or title phrase alone is not a core match. Old-policy results and frozen editions remain auditable; changing the prompt does not authorize repeating already billed work. Semantic centrality remains a model judgment requiring real-sample evaluation.

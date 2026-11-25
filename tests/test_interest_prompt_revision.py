@@ -94,3 +94,29 @@ def test_prompt_drift_after_factory_creation_blocks_before_post(store, monkeypat
     assert verifier.available() is False
     run(store,verifier)
     assert seen==[] and records(store,Request)==[]
+
+
+def test_plain_rule_old_prompt_core_is_hidden_without_recharge(store):
+    seed(store)
+    calls=[]
+    verifier=trusted_fake(store,lambda **kw:calls.append(kw) or answer(kw['payload']))
+    old_policy={**verifier.verifier_policy,'prompt_version':'interest-relation-v3-topic','prompt_sha256':'a'*64}
+    verifier.verifier_policy=old_policy
+    run(store,verifier)
+    before=records(store,Request)
+    assert records(store,Match)[0]['outcome']=='core'
+    with Session(store.engine) as session:
+        assert service.current_matches(session,'alice')==[]
+    run(store,lambda **kw:calls.append(kw) or answer(kw['payload']),10)
+    assert records(store,Request)==before and len(calls)==1
+
+
+def test_all_prompt_modes_require_article_level_centrality():
+    variants=[bridge.build_interest_system_prompt(span_mode=span,semantic_intent=intent)
+        for span in (False,True) for intent in (False,True)]
+    variants.append(bridge.build_interest_system_prompt(span_mode=True,semantic_intent=True,topic_mode=True))
+    for prompt in variants:
+        assert '核心观点或关键事件' in prompt
+        assert 'main指整篇文章而非当前页' in prompt
+        assert '删除相关片段后文章主旨仍' in prompt
+        assert 'scope须main或substantial_section' not in prompt

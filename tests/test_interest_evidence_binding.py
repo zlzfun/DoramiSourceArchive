@@ -70,7 +70,7 @@ def test_mixed_versions_current_and_history_with_pure_get(store):
     with Session(store.engine) as s:
         a = add_article(s); old = save(s, 'old'); new = save(s, 'new')
         legacy = seed_match(s, old, a)
-        raw = {'method': 'deterministic_title', 'title_groups': [['enterprise'], ['agent']], 'evidence_binding_version': 2}
+        raw = {**json.loads(legacy.evidence_json), 'evidence_binding_version': 2}
         fp = custom.evidence_snapshot(s, a, binding_version=2)[0]
         custom._put_match(s, new, a, fp, 'core', raw, NOW.isoformat()); s.commit()
         s.refresh(legacy)

@@ -335,7 +335,9 @@ def validate_semantic_verdict(payload: dict, verdict: dict, *, normalized: bool 
         raise ValueError('too many evidence quotes')
     satisfying_clusters = []
     if verdict['outcome'] == 'core':
-        if scope not in {'main', 'substantial_section'} or missing or not text_groups:
+        if scope != 'main':
+            raise ValueError('core requires article main topic')
+        if missing or not text_groups:
             raise ValueError('core lacks substantive text evidence')
         if not topic_mode and source_groups == indexes:
             raise ValueError('core requires a condition group supported only by text')
