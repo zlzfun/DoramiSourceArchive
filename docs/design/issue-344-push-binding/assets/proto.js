@@ -120,13 +120,25 @@
     if (open === 'token') tokenDrawer(q.get('actor') || 'grok-bot');
   }
 
-  // ── 源管理:行上的「推送」徽标与最近一批、检视器的「推送」区、登记来源 ──
-  const pushPill = (sid) => `<span class="tier-pill push-pill" title="推送 · ${ofSource(sid).map((b) => b[0]).join('、')}">推送</span>`;
+  // ── 源管理:行上的获取方式(抓取 / 推送)、检视器的「抓取」「推送」两区、登记来源 ──
+  const CHANNEL = { x_user_timeline: 'X 时间线' };
   const watchPill = '<span class="tier-pill incubating-pill" title="观察期">观察</span>';
   const tempPill = '<span class="tier-pill provisional-pill" title="临时源:未列入目录">临时</span>';
   const allRows = () => Array.from(document.querySelectorAll('.board-node'));
   const rowOf = (sid) => allRows().find((n) => n.querySelector('.board-node-sid')?.textContent.trim() === sid);
+  const pushersOf = (sid) => ofSource(sid).map((b) => b[0]).join('、');
 
+  // 现网这一格写的是内容形态(与上面的页签重复),title 里带着采集通道;样页改成获取方式。
+  function fetcherLabelOf(node) {
+    const raw = (node.querySelector('.board-node-type').title.split('采集通道：')[1] || '').trim();
+    return CHANNEL[raw] || raw;
+  }
+  function setAcq(node, kind, title) {
+    const chip = node.querySelector('.board-node-type');
+    chip.textContent = { fetch: '抓取', push: '推送', both: '抓取 · 推送', none: '无抓取' }[kind];
+    chip.title = title;
+    chip.classList.toggle('acq-none', kind === 'none');
+  }
   function setRow(node, { pills, time, res, listed }) {
     const name = node.querySelector('.board-node-name');
     name.querySelectorAll('.tier-pill').forEach((p) => p.remove());
@@ -222,27 +234,41 @@
     button.addEventListener('click', registerDrawer);
     acts.insertBefore(button, acts.firstChild);
 
-    // 「收录」组:已有三行改徽标与最近一批,加一行不限出处的源
+    // 「收录」组多一行不限出处的源(从现网的一行克隆,再改内容)
     const nova = rowOf('x_nova_labs');
     const grokWrap = nova.parentElement.cloneNode(true);
-    setRow(nova, { pills: [watchPill, pushPill('x_nova_labs')], time: '30 分钟前', res: '推送 · 累计 2 则', listed: true });
-    nova.title = '收录 · 推送';
-    setRow(rowOf('x_agentweekly'), { pills: [tempPill, pushPill('x_agentweekly')], time: '1 小时前', res: '推送 · 累计 1 则' });
-    const openai = rowOf('x_openai');
-    openai.querySelector('.board-node-name').insertAdjacentHTML('beforeend', pushPill('x_openai'));
-
     const grok = grokWrap.querySelector('.board-node');
     grok.classList.remove('board-node-sel');
-    grok.title = '收录 · 推送';
     grok.querySelector('.board-node-name').title = 'Grok 推荐';
     grok.querySelector('.board-node-name-text').textContent = 'Grok 推荐';
     const sid = grok.querySelector('.board-node-sid');
     sid.textContent = 'push_grok_picks';
     sid.title = 'push_grok_picks';
     grok.querySelector('.board-node-trend svg').innerHTML = trend([3, 5, 2, 6, 4, 7, 10]);
-    setRow(grok, { pills: [watchPill, pushPill('push_grok_picks')], time: '12 分钟前', res: '推送 · 累计 37 则', listed: true });
     const group = nova.closest('.board-group');
     group.insertBefore(grokWrap, group.querySelector('.board-group-head').nextSibling);
+
+    // 每一行:形态签改成获取方式。有抓取器的写「抓取」,没有的写「无抓取」(原来名字后面的「无采集」徽标拿掉)。
+    allRows().forEach((node) => {
+      const unbound = node.querySelector('.unbound-pill');
+      if (!unbound) { setAcq(node, 'fetch', `抓取器:${fetcherLabelOf(node)}`); return; }
+      unbound.remove();
+      setAcq(node, 'none', '没有抓取器,也没有推送');
+      const res = node.querySelector('.board-node-last-res');
+      res.textContent = res.textContent.replace('无采集 · ', '');
+      node.title = node.title.replace('无采集绑定', '无抓取');
+    });
+    // 有推送绑定的四行
+    setRow(grok, { pills: [watchPill], time: '12 分钟前', res: '累计 37 则', listed: true });
+    setRow(nova, { pills: [watchPill], time: '30 分钟前', res: '累计 2 则', listed: true });
+    setRow(rowOf('x_agentweekly'), { pills: [tempPill], time: '1 小时前', res: '累计 1 则' });
+    ['push_grok_picks', 'x_nova_labs', 'x_agentweekly'].forEach((id) => {
+      const node = rowOf(id);
+      setAcq(node, 'push', `推送:${pushersOf(id)}`);
+      node.title = `收录 · 推送:${pushersOf(id)}`;
+    });
+    const openai = rowOf('x_openai');
+    setAcq(openai, 'both', `抓取器:X 时间线 · 推送:${pushersOf('x_openai')}`);
 
     // 计数跟着多出来的一行
     const bump = (el) => { if (el) el.textContent = String(Number(el.textContent) + 1); };
@@ -253,19 +279,24 @@
     });
     group.querySelector('.board-group-count').textContent = `${group.querySelectorAll('.board-node').length} 个源`;
 
-    // 检视器:选中的源加「推送」区
+    // 检视器:「抓取」「推送」并列两区
     const inspector = document.querySelector('.board-inspector');
     const dot = inspector.querySelector('.inspector-sid-dot');
     if (page === 'sources') {
       inspector.querySelector('.inspector-stamp').textContent = '收录';
       inspector.querySelector('.inspector-head .signal-dot').title = '推送';
-      dot.textContent = '社交 · 收录 · 推送';
+      dot.textContent = '社交 · 收录';
       const list = Array.from(inspector.querySelectorAll('.inspector-act')).find((b) => b.textContent.includes('列入'));
       if (list) list.remove();
       inspector.querySelector('.inspector-hint').outerHTML = pushSection('x_nova_labs');
     } else {
-      dot.textContent = `${dot.textContent} · 推送`;
-      inspector.querySelector('.inspector-actions').insertAdjacentHTML('afterend', pushSection('x_openai'));
+      dot.textContent = '社交 · X 时间线';
+      const sections = Array.from(inspector.querySelectorAll('.inspector-section'));
+      const params = sections.find((sec) => sec.querySelector('.micro-label')?.textContent.trim() === '运行参数');
+      params.querySelector('.micro-label').textContent = '抓取';
+      params.querySelector('.inspector-section-head').insertAdjacentHTML('beforeend', '<span class="acq-fetcher">X 时间线</span>');
+      const review = sections.find((sec) => sec.querySelector('.micro-label')?.textContent.trim() === '源审查');
+      review.insertAdjacentHTML('beforebegin', pushSection('x_openai'));
     }
     if (open === 'register') {
       if (q.get('reg') === 'one') REG.scope = 'one';
