@@ -659,6 +659,8 @@ async def lifespan(app: FastAPI):
                 seconds=30,
                 max_instances=1,
             )
+    # issue #343:读者改完兴趣 / 订阅后静置一满就编——记意向的地方把到点时刻交给调度器;随 lifespan 登记与撤销。
+    personal_digest_refresh_service.set_preference_due_hook(schedule_preference_refresh)
 
     from services import translation_jobs, title_translation
     from services.briefs_runtime import BriefRuntime
@@ -681,6 +683,7 @@ async def lifespan(app: FastAPI):
             translation_worker.cancel()
             await asyncio.gather(translation_worker, return_exceptions=True)
         _mcp_gate._app = None
+        personal_digest_refresh_service.set_preference_due_hook(None)
         # AsyncIOScheduler binds to the current event loop. TestClient and clean
         # service restarts create a new loop, so never retain a running scheduler
         # whose loop has already closed.
@@ -3267,6 +3270,37 @@ def execute_personal_digest_pending_job():
         _dorami_logger.warning("个人早报就绪巡检失败: %s", exc)
     # issue #343:读者面不留重编入口——偏好改动、生成失败、新内容落地都在这里自动换版。
     personal_digest_refresh_service.run_refresh_cycle(db_sink.engine)
+
+
+PREFERENCE_REFRESH_JOB_PREFIX = "personal_digest_preference:"
+
+
+def execute_preference_refresh_job() -> None:
+    """读者改完兴趣 / 订阅、静置期满时跑一次偏好换版(issue #343),不等 30 秒巡检的下一拍。"""
+
+    try:
+        personal_digest_refresh_service.apply_preference_intents(db_sink.engine)
+    except Exception as exc:  # noqa: BLE001 - 30 秒巡检是兜底
+        _dorami_logger.warning("个人早报偏好到点换版失败: %s", exc)
+
+
+def schedule_preference_refresh(username: str, due_at: datetime.datetime) -> None:
+    """按「意向时刻 + 静置期」定一个一次性任务。每个账号一个 id:连着改几次只留最后一次(静置重新起算)。
+
+    调度器没起(拆分部署里不跑调度的进程、测试里没进 lifespan)时什么都不做——30 秒巡检会接手。
+    从请求线程里调用:AsyncIOScheduler 的 add_job 会把唤醒投回事件循环,跨线程安全。
+    """
+
+    if not username or not scheduler.running:
+        return
+    scheduler.add_job(
+        execute_preference_refresh_job,
+        "date",
+        run_date=due_at,
+        id=f"{PREFERENCE_REFRESH_JOB_PREFIX}{username}",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
 
 
 async def execute_daily_brief_job():

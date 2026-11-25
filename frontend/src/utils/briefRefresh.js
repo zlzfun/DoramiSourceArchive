@@ -1,10 +1,12 @@
 // 今天的早报由系统自动换版(issue #343):新内容落地、读者改了兴趣或订阅、生成失败后重试,都不需要读者操作。
 // 页面只做三件事——按后端给的 refresh_pending 决定多久再来取一次;新的一版快到时在页头说一声「正在编排」;
 // 取到新的一版时,决定现在换不换(读者正往下读就先不换,回到页首或切回页面时再换),换的时候不硬切
-// (动效在 utils/spatialMotion 的 leaveBrief / swapInBrief)。
+// (排程与请求先后在 utils/briefSwap,动效在 utils/spatialMotion 的 leaveBrief / swapInBrief)。
 
-export const SOON_POLL_MS = 8000;      // 在途 / 几十秒内会有新版
-export const CONTENT_POLL_MS = 60000;  // 等新内容落地(上午)
+export const SOON_POLL_MS = 3000;          // 在途 / 新的一版马上到:头一分钟问得勤(改完偏好约十来秒就换)
+export const SOON_FAST_WINDOW_MS = 60000;  // 一分钟还没到(在途的版本在等模型、意向落成失败被推后十分钟):放慢
+export const SOON_SLOW_POLL_MS = 10000;
+export const CONTENT_POLL_MS = 60000;      // 等新内容落地(上午)
 
 const IN_FLIGHT = new Set(['pending', 'generating']);
 const PUBLISHED = new Set(['ready', 'degraded']);
@@ -13,11 +15,19 @@ const PUBLISHED = new Set(['ready', 'degraded']);
 // (读者把订阅和兴趣都清空后再订回来,页面靠它知道稍后会有新版)
 const pendingOf = (today) => today?.edition?.refresh_pending || today?.refresh_pending || null;
 
-// 多久再取一次今日早报;0 = 不必再取
-export function briefPollInterval(today) {
+// 要不要再来取今日早报、按哪一档:'soon'(在途 / 新的一版马上到)、'content'(等新内容落地)、''(不必再取)
+export function briefPollKind(today) {
   const pending = pendingOf(today);
-  if (IN_FLIGHT.has(today?.status) || pending === 'soon') return SOON_POLL_MS;
-  if (pending === 'content') return CONTENT_POLL_MS;
+  if (IN_FLIGHT.has(today?.status) || pending === 'soon') return 'soon';
+  if (pending === 'content') return 'content';
+  return '';
+}
+
+// 这一档已经等了 waitedMs,下一次隔多久再取;0 = 不取。
+// soon 正常是十来秒的事,但不保证:头一分钟每 3 秒,之后每 10 秒,不拿 3 秒的频率陪跑十分钟
+export function briefPollDelay(kind, waitedMs = 0) {
+  if (kind === 'soon') return waitedMs < SOON_FAST_WINDOW_MS ? SOON_POLL_MS : SOON_SLOW_POLL_MS;
+  if (kind === 'content') return CONTENT_POLL_MS;
   return 0;
 }
 
@@ -27,7 +37,7 @@ export function isBriefPreparing(today) {
   return today?.status === 'failed' && today?.edition?.refresh_pending === 'soon';
 }
 
-// 眼前是编好的一版,而新的一版几十秒内就到(读者刚改了兴趣或订阅):页头的编排时刻换成「正在编排」。
+// 眼前是编好的一版,而新的一版马上就到(读者刚改了兴趣或订阅,正常十来秒):页头的编排时刻换成「正在编排」。
 // 等新内容落地(content)可能是几个小时,不算
 export function isBriefRefreshing(today) {
   return PUBLISHED.has(today?.status) && today?.edition?.refresh_pending === 'soon';

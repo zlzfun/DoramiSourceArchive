@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import threading
 import time
 from typing import Any, Callable, Iterable, Sequence
 
@@ -57,8 +58,11 @@ CONTENT_MAX_WAIT_SECONDS = 900
 CONTENT_CUTOFF = dt.time(12, 0)
 # 一批内容里有账号补编失败时,整批最多再试几轮;之后放弃这一批,等下一批内容。
 CONTENT_PASS_MAX_TRIES = 3
-# 读者连点几个标签、连订几个源:停手这么久才落成一版。
-PREFERENCE_QUIET_SECONDS = 30
+# 读者连点几个标签、连订几个源:停手这么久才落成一版。静置一满就编(announce_preference_intent 让宿主
+# 到点跑一次),不等 30 秒巡检的下一拍;没有宿主时由巡检接手。
+PREFERENCE_QUIET_SECONDS = 10
+# 到点任务比静置期晚这么一点:保证它读到的「已静置时长」不小于静置期。
+PREFERENCE_DUE_SLACK_SECONDS = 0.2
 # 偏好换版失败后,把意向往后推这么久再试。
 PREFERENCE_RETRY_SECONDS = 600
 # 补扫「偏好变了却没记上意向」的间隔(写入点记意向失败、管理员侧改动了读者的范围等)。
@@ -658,6 +662,55 @@ def _apply_one_preference_intent(
         return outcome
 
 
+# 到点任务与 30 秒巡检可能同时来:串行跑。并发本身是安全的(发布在写锁内复核当前版本,后到的一方落空),
+# 串行只是不把试算和备标题白做一遍;后进来的一方等前一方跑完再按最新状况判。
+_PREFERENCE_PASS_LOCK = threading.Lock()
+
+# 宿主(进程里的调度器)登记的回调:(账号, 到点时刻) → 到点跑一次 apply_preference_intents。
+_preference_due_hook: Callable[[str, dt.datetime], None] | None = None
+
+
+def set_preference_due_hook(hook: Callable[[str, dt.datetime], None] | None) -> None:
+    global _preference_due_hook
+    _preference_due_hook = hook
+
+
+def preference_due_at(edition: PersonalDigestEditionRecord) -> dt.datetime | None:
+    """这条兴趣 / 订阅意向几时静置期满(意向时刻 + 静置期)。"""
+
+    requested = _parse(str(edition.desired_requested_at)) if edition.desired_requested_at else None
+    if requested is None:
+        return None
+    return requested + dt.timedelta(seconds=PREFERENCE_QUIET_SECONDS + PREFERENCE_DUE_SLACK_SECONDS)
+
+
+def announce_preference_intent(
+    edition: PersonalDigestEditionRecord | None,
+    *,
+    now: dt.datetime | None = None,
+) -> dt.datetime | None:
+    """记下意向之后调用:告诉宿主这条意向几时到点,到点就编,不等巡检的下一拍。
+
+    意向挂在在途版本上的不叫(那一版落成后由巡检判);没有宿主(测试、调度器没起)也不叫——
+    30 秒巡检始终是兜底,这里只是让正常情况快一点。回调出错不影响调用方。
+    """
+
+    hook = _preference_due_hook
+    if edition is None or hook is None:
+        return None
+    report_date = (now or _now()).astimezone(SHANGHAI).date().isoformat()
+    if not is_preference_intent(edition, report_date):
+        return None
+    due = preference_due_at(edition)
+    if due is None:
+        return None
+    try:
+        hook(edition.owner_username, due)
+    except Exception:  # noqa: BLE001
+        logger.warning("个人早报偏好到点任务登记失败 username=%s", edition.owner_username, exc_info=True)
+    return due
+
+
 def apply_preference_intents(
     engine: Engine,
     *,
@@ -666,6 +719,16 @@ def apply_preference_intents(
 ) -> dict[str, int]:
     """把静置够久的兴趣 / 订阅意向落成新版。"""
 
+    with _PREFERENCE_PASS_LOCK:
+        return _apply_preference_intents(engine, now=now, clock=clock)
+
+
+def _apply_preference_intents(
+    engine: Engine,
+    *,
+    now: dt.datetime | None,
+    clock: Callable[[], dt.datetime] | None,
+) -> dict[str, int]:
     current = (now or _now()).astimezone(SHANGHAI)
     publish_clock = clock or ((lambda: current) if now is not None else _now)
     report_date = current.date().isoformat()
@@ -916,19 +979,23 @@ __all__ = [
     "CONTENT_REFRESH_STATE_KEY",
     "FAILURE_RETRY_DELAYS",
     "LOCAL_ANALYSIS_MARK_KEY",
+    "PREFERENCE_DUE_SLACK_SECONDS",
     "PREFERENCE_QUIET_SECONDS",
     "PREFERENCE_SWEEP_SECONDS",
+    "announce_preference_intent",
     "apply_preference_intents",
     "failure_retry_due_at",
     "is_empty_preferences_edition",
     "is_preference_intent",
     "local_landing_at",
     "note_local_analysis",
+    "preference_due_at",
     "publish_refresh",
     "refresh_for_new_content",
     "refresh_pending",
     "retry_failed_editions",
     "run_refresh_cycle",
+    "set_preference_due_hook",
     "sweep_stale_preferences",
     "sync_landing_at",
 ]

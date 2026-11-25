@@ -447,18 +447,24 @@ def note_preference_change(
     username: str,
     reason: DigestGenerationReason | str,
 ) -> PersonalDigestEditionRecord | None:
-    """读者改了兴趣 / 订阅之后调用(issue #343):只记意向,由巡检静置合并后换版。"""
+    """读者改了兴趣 / 订阅之后调用(issue #343):只记意向,静置合并后换版。
+
+    静置一满就编:记上意向后把到点时刻告诉调度器(``announce_preference_intent``),不等 30 秒巡检的
+    下一拍;调度器没起或登记失败时巡检照常接手。
+    """
 
     if not username:
         return None
     with Session(engine) as session:
         if not personal_digest_enabled(session):
             return None
-        return digest_service.request_preference_rebuild(
+        edition = digest_service.request_preference_rebuild(
             session,
             accounts_service.account_username_for(username),
             reason=reason,
         )
+        digest_refresh.announce_preference_intent(edition)
+        return edition
 
 
 def trigger_today_revision(

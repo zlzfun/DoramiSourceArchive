@@ -5,26 +5,38 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  CONTENT_POLL_MS, SOON_POLL_MS, briefFace, briefPollInterval, isBriefPreparing, isBriefRefreshing, isBriefSwap,
+  CONTENT_POLL_MS, SOON_FAST_WINDOW_MS, SOON_POLL_MS, SOON_SLOW_POLL_MS,
+  briefFace, briefPollDelay, briefPollKind, isBriefPreparing, isBriefRefreshing, isBriefSwap,
 } from '../src/utils/briefRefresh.js';
 
 const today = (status, edition = {}) => ({ status, edition: { id: 1, refresh_pending: null, ...edition } });
 
-test('多久再取一次:在途或很快有新版 8 秒,等新内容 60 秒,不会再动就不取', () => {
-  assert.equal(briefPollInterval(today('pending')), SOON_POLL_MS);
-  assert.equal(briefPollInterval(today('generating')), SOON_POLL_MS);
-  assert.equal(briefPollInterval(today('ready', { refresh_pending: 'soon' })), SOON_POLL_MS);
-  assert.equal(briefPollInterval(today('failed', { refresh_pending: 'soon' })), SOON_POLL_MS);
-  assert.equal(briefPollInterval(today('degraded', { refresh_pending: 'content' })), CONTENT_POLL_MS);
-  assert.equal(briefPollInterval(today('ready')), 0);
-  assert.equal(briefPollInterval(today('failed')), 0);
-  assert.equal(briefPollInterval({ status: 'not_started', edition: null }), 0);
-  assert.equal(briefPollInterval({ status: 'empty_subscriptions', edition: null }), 0);
+test('要不要再取、按哪一档:在途或马上有新版是 soon,等新内容是 content,不会再动就不取', () => {
+  assert.equal(briefPollKind(today('pending')), 'soon');
+  assert.equal(briefPollKind(today('generating')), 'soon');
+  assert.equal(briefPollKind(today('ready', { refresh_pending: 'soon' })), 'soon');
+  assert.equal(briefPollKind(today('failed', { refresh_pending: 'soon' })), 'soon');
+  assert.equal(briefPollKind(today('degraded', { refresh_pending: 'content' })), 'content');
+  assert.equal(briefPollKind(today('ready')), '');
+  assert.equal(briefPollKind(today('failed')), '');
+  assert.equal(briefPollKind({ status: 'not_started', edition: null }), '');
+  assert.equal(briefPollKind({ status: 'empty_subscriptions', edition: null }), '');
   // 空订阅的引导页没有 edition:重新订阅后后端在顶层告知稍后有新版
-  assert.equal(briefPollInterval({ status: 'empty_subscriptions', edition: null, refresh_pending: 'soon' }), SOON_POLL_MS);
-  assert.equal(briefPollInterval({ status: 'empty_subscriptions', edition: null, refresh_pending: null }), 0);
-  assert.equal(briefPollInterval(null), 0);
-  assert.ok(SOON_POLL_MS < CONTENT_POLL_MS);
+  assert.equal(briefPollKind({ status: 'empty_subscriptions', edition: null, refresh_pending: 'soon' }), 'soon');
+  assert.equal(briefPollKind({ status: 'empty_subscriptions', edition: null, refresh_pending: null }), '');
+  assert.equal(briefPollKind(null), '');
+});
+
+test('隔多久再取:soon 头一分钟每 3 秒、之后放慢到 10 秒(它不保证十来秒就到);content 每 60 秒', () => {
+  assert.equal(briefPollDelay('soon'), SOON_POLL_MS);
+  assert.equal(briefPollDelay('soon', SOON_FAST_WINDOW_MS - 1), SOON_POLL_MS);
+  assert.equal(briefPollDelay('soon', SOON_FAST_WINDOW_MS), SOON_SLOW_POLL_MS);
+  assert.equal(briefPollDelay('soon', 10 * 60 * 1000), SOON_SLOW_POLL_MS);
+  assert.equal(briefPollDelay('content'), CONTENT_POLL_MS);
+  assert.equal(briefPollDelay('content', 3 * 60 * 60 * 1000), CONTENT_POLL_MS);
+  assert.equal(briefPollDelay(''), 0);
+  assert.equal(SOON_POLL_MS, 3000);
+  assert.ok(SOON_POLL_MS < SOON_SLOW_POLL_MS && SOON_SLOW_POLL_MS < CONTENT_POLL_MS);
 });
 
 test('失败了但系统还会重试:照「编排中」画;重试用尽才是失败', () => {
@@ -79,20 +91,29 @@ test('版面换没换:换了一版、编排完成、清成空订阅都算;同一
   assert.equal(briefFace(null), '');
 });
 
-test('换版不硬切:后台换上来的版面走淡出 → 换上来,页头在新版快到时写「正在编排」', () => {
+test('换版的接线:后台换上来的走 soft,排程 / 请求先后 / 选择跟随用的是 utils/briefSwap(行为在 briefSwap.test.mjs 里测)', () => {
   const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
   const page = read('../src/components/PersonalBriefPage.jsx');
   const has = (text, piece) => assert.equal(text.includes(piece), true, `没找到:${piece}`);
   // 后台再取(quiet)与放下留着的那一版都按 soft 走;首次载入不带
   has(page, 'showToday(data, { soft: quiet })');
   has(page, 'showToday(heldTodayRef.current, { soft: true })');
-  has(page, 'leaveBrief(sheetRef.current)');
-  has(page, 'swapInBrief(sheetRef.current)');
-  // 桌面页头的编排时刻位、手机的日期钮,各说一次
+  has(page, 'swap.run(kind, apply, () => leaveBrief(sheetRef.current))');
+  has(page, 'if (done.applied) swapInBrief(sheetRef.current);');
+  // 迟到的旧响应不采用;取到了就清掉旧的加载错误
+  has(page, 'if (!order.adopt(seq)) return data;');
+  has(page, 'if (!quiet && order.current(seq)) setError(');
+  // 今天换版时带着版本号的选择跟着换;读者自己挑日期 / 版次时撤掉「回页首换当前版」(三个入口)
+  has(page, 'setSel((sel) => followToday(sel, prev, data));');
+  assert.equal(page.split("swap.drop('view');").length - 1, 3);
+  // 订阅范围变了悄悄再取一次:桌面与手机两处调用方都把订阅集合传进来
+  has(page, 'const scopeKey = useMemo(() => scopeKeyOf(subscribedIds), [subscribedIds]);');
+  has(read('../src/components/ReaderTab.jsx'), 'subscribedIds={subscribedIds}\n          sourceMap={sourceMap}\n          restore={briefRestore}');
+  has(read('../src/components/mobile/MobileReader.jsx'), 'interestVersion={interestVersion}\n            subscribedIds={subscribedIds}\n            restore={briefRestore}');
+  // 桌面页头的编排时刻位、手机的日期钮,各说一次「正在编排」
   has(page, 'const refreshing = usesToday && showEdition && isBriefRefreshing(today);');
   has(page, '<Loader2 className="animate-spin" aria-hidden="true" />正在编排</> : topNote}');
   has(page, "{refreshing ? '正在编排' : dayText}");
-  has(page, "aria-label={`往期早报，正在看 ${dayText}${refreshing ? '，正在编排' : ''}`}");
   const motion = read('../src/utils/spatialMotion.js');
   // 取值只用 token:淡出用 fast 档,换上来用 move 弹簧;减少动效不演淡出、只淡入
   has(motion, "{ duration: MOTION.fast, easing: 'linear', fill: 'forwards' }");

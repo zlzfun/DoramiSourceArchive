@@ -157,6 +157,23 @@ def captured_log():
 
 
 @pytest.fixture(autouse=True)
+def no_background_preference_refresh(monkeypatch):
+    """改兴趣 / 订阅后的「到点即编」(issue #343)在测试里不登记。
+
+    带 lifespan 的用例里调度器是活的:登记之后静置期一满(10 秒;打桩成 0 时是立刻)就会在后台线程换版,
+    用例的断言就取决于它跑了多久。换版一律由用例自己推进(``apply_preference_intents`` / ``run_refresh_cycle``)。
+    要测登记本身的用例取这个夹具的返回值(真正的登记函数)自己接回去。
+    """
+
+    from services import personal_digest_refresh
+
+    real = personal_digest_refresh.set_preference_due_hook
+    monkeypatch.setattr(personal_digest_refresh, "_preference_due_hook", None)
+    monkeypatch.setattr(personal_digest_refresh, "set_preference_due_hook", lambda hook: None)
+    return real
+
+
+@pytest.fixture(autouse=True)
 def fresh_premium_scan_throttle():
     """精品导读候选巡检的降频状态是进程级的(issue #318):每个用例从「刚启动」开始。
 

@@ -420,7 +420,8 @@ def test_preference_change_is_debounced_then_published_once(storage):
         digest.request_preference_rebuild(
             session, "alice", reason=DigestGenerationReason.INTEREST_CHANGED, now=first_edit
         )
-        second_edit = first_edit + dt.timedelta(seconds=20)
+        quiet = refresh.PREFERENCE_QUIET_SECONDS
+        second_edit = first_edit + dt.timedelta(seconds=quiet - 2)
         _follow(session, "alice", other_id, at=second_edit)
         session.commit()
         digest.request_preference_rebuild(
@@ -428,12 +429,12 @@ def test_preference_change_is_debounced_then_published_once(storage):
         )
     assert _marker(storage) == ("interest_changed", second_edit.isoformat())
 
-    # 距最后一次改动不足静置时间:先不动(第一次改动已经过去 40 秒也不算)
-    waiting = refresh.apply_preference_intents(storage.engine, now=second_edit + dt.timedelta(seconds=20))
+    # 距最后一次改动不足静置时间:先不动(第一次改动早已过了静置期也不算)
+    waiting = refresh.apply_preference_intents(storage.engine, now=second_edit + dt.timedelta(seconds=quiet - 1))
     assert waiting == {"waiting": 1}
     assert _editions(storage) == [(1, "ready", "scheduled")]
 
-    done = refresh.apply_preference_intents(storage.engine, now=second_edit + dt.timedelta(seconds=31))
+    done = refresh.apply_preference_intents(storage.engine, now=second_edit + dt.timedelta(seconds=quiet + 1))
     assert done == {"published": 1}
     assert _editions(storage) == [(1, "superseded", "scheduled"), (2, "ready", "interest_changed")]
     assert _marker(storage, 1) == (None, None)
@@ -1395,3 +1396,127 @@ def test_sweep_style_request_never_touches_an_existing_intent(storage):
                 now=later + dt.timedelta(minutes=1), only_if_absent=flag,
             )
             assert _marker(storage) == ("subscription_changed", future)
+
+
+# --------------------------------------------------------------------------- 静置一满就编(到点任务)
+
+
+def _alice_with_interest_intent(storage, *, edited: dt.datetime) -> None:
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        _first_edition(session, stale=False)
+        _follow(session, "alice", tag_id, at=edited)
+        session.commit()
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.INTEREST_CHANGED, now=edited
+        )
+
+
+def test_recorded_intent_tells_the_host_exactly_when_it_is_due(storage, no_background_preference_refresh):
+    """记下意向后把「意向时刻 + 静置期」交给宿主;到点跑一次就能落成,早一秒还不行。"""
+
+    edited = NOW + dt.timedelta(minutes=5)
+    _alice_with_interest_intent(storage, edited=edited)
+    calls: list[tuple[str, dt.datetime]] = []
+    no_background_preference_refresh(lambda username, due: calls.append((username, due)))
+    try:
+        with Session(storage.engine) as session:
+            edition = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+            due = refresh.announce_preference_intent(edition, now=edited)
+        expected = edited + dt.timedelta(
+            seconds=refresh.PREFERENCE_QUIET_SECONDS + refresh.PREFERENCE_DUE_SLACK_SECONDS
+        )
+        assert due == expected
+        assert calls == [("alice", expected)]
+
+        # 到点之前跑没有用,到点那一刻跑就落成——宿主不必再多等
+        assert refresh.apply_preference_intents(storage.engine, now=due - dt.timedelta(seconds=1)) == {"waiting": 1}
+        assert refresh.apply_preference_intents(storage.engine, now=due) == {"published": 1}
+
+        # 意向已经落成:没有可登记的
+        with Session(storage.engine) as session:
+            current = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+            assert refresh.announce_preference_intent(current, now=due) is None
+        assert refresh.announce_preference_intent(None, now=due) is None
+        assert len(calls) == 1
+    finally:
+        no_background_preference_refresh(None)
+
+
+def test_intent_on_an_edition_still_generating_is_not_announced(storage, no_background_preference_refresh):
+    """在途版本上的意向等它落成后由巡检判,不登记到点任务;宿主回调出错也不影响记意向的一方。"""
+
+    edited = NOW + dt.timedelta(minutes=5)
+    _alice_with_interest_intent(storage, edited=edited)
+    calls: list[str] = []
+
+    def broken(username, due):
+        calls.append(username)
+        raise RuntimeError("scheduler is gone")
+
+    no_background_preference_refresh(broken)
+    try:
+        with Session(storage.engine) as session:
+            edition = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+            assert refresh.announce_preference_intent(edition, now=edited) is not None  # 回调抛错被吞掉
+            edition.status = "generating"
+            assert refresh.announce_preference_intent(edition, now=edited) is None
+            session.rollback()
+        assert calls == ["alice"]
+        # 没有宿主(调度器没起):什么都不做,巡检照常接手
+        no_background_preference_refresh(None)
+        with Session(storage.engine) as session:
+            edition = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+            assert refresh.announce_preference_intent(edition, now=edited) is None
+        assert refresh.apply_preference_intents(storage.engine, now=edited + dt.timedelta(minutes=1)) == {
+            "published": 1
+        }
+    finally:
+        no_background_preference_refresh(None)
+
+
+def test_due_job_and_patrol_never_run_the_preference_pass_at_once(storage, monkeypatch):
+    """到点任务与 30 秒巡检可能同时来:偏好那一步串行跑,后到的等前一个跑完再按最新状况判。"""
+
+    edited = NOW + dt.timedelta(minutes=5)
+    _alice_with_interest_intent(storage, edited=edited)
+    real = refresh._apply_one_preference_intent  # noqa: SLF001
+    state = {"inside": 0, "peak": 0}
+    first_inside = threading.Event()
+    release = threading.Event()
+
+    def slow(*args, **kwargs):
+        state["inside"] += 1
+        state["peak"] = max(state["peak"], state["inside"])
+        first_inside.set()
+        assert release.wait(10)
+        try:
+            return real(*args, **kwargs)
+        finally:
+            state["inside"] -= 1
+
+    monkeypatch.setattr(refresh, "_apply_one_preference_intent", slow)
+    tick = edited + dt.timedelta(minutes=1)
+    results: list[dict] = []
+    workers = [
+        threading.Thread(target=lambda: results.append(refresh.apply_preference_intents(storage.engine, now=tick)))
+        for _ in range(2)
+    ]
+    workers[0].start()
+    assert first_inside.wait(10)
+    workers[1].start()
+    time.sleep(0.2)                    # 第二个若没被挡住,这时已经进到同一步里了
+    assert state["peak"] == 1
+    release.set()
+    for worker in workers:
+        worker.join(15)
+        assert not worker.is_alive()
+    assert state["peak"] == 1
+    # 一个落成,另一个进来时意向已清:只出一版
+    assert sorted(results, key=len) == [{}, {"published": 1}]
+    assert _editions(storage) == [(1, "superseded", "scheduled"), (2, "ready", "interest_changed")]
+

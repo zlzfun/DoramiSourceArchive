@@ -9,7 +9,8 @@ import {
 } from '../api';
 import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
-import { briefFace, briefPollInterval, isBriefPreparing, isBriefRefreshing, isBriefSwap } from '../utils/briefRefresh';
+import { briefFace, briefPollDelay, briefPollKind, isBriefPreparing, isBriefRefreshing, isBriefSwap } from '../utils/briefRefresh';
+import { createRequestOrder, createSoftSwap, followToday, isReplacedView, scopeKeyOf } from '../utils/briefSwap';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
 import BriefPodcastGuide from './BriefPodcastGuide';
@@ -431,6 +432,7 @@ export default function PersonalBriefPage({
   supersedePendingOpen = null, // 直接开外链前作废在途的站内打开(慢网下先点内链条目再点社交条目)
   sourceMap = {},
   interestVersion = 0,
+  subscribedIds = null, // 读者的订阅集合:内容变了说明今天这一版会被换,页面悄悄再取一次(issue #343)
   mobile = false,
   // 收藏(issue #184 海报与条目的星):阅读器的收藏集合与切换,与条目列 / 阅读窗同一份状态
   favoriteIds = null,
@@ -510,60 +512,50 @@ export default function PersonalBriefPage({
   const heldTodayRef = useRef(null);
   const readingRef = useRef(false);
   const usesTodayRef = useRef(true);   // 眼前看的是不是今天这一版(看往期时版面不归这里换)
-  // 系统换上来的版面不硬切(不是读者点出来的,硬切像页面自己跳了一下):旧版面先淡出(swapRef 记着这一小段),
-  // 淡完 apply() 才把新的放上去,放上去的那次提交(swapTick)里新版面淡入并上移。淡出期间再来的同一类(kind)以最后一份为准
-  const swapRef = useRef(null);
+  // 系统换上来的版面不硬切(不是读者点出来的,硬切像页面自己跳了一下):旧版面先淡出,淡完才把新的放上去,
+  // 放上去的那次提交(swapTick)里新版面淡入并上移。排程在 utils/briefSwap 的 createSoftSwap(淡出期间再来的同一类以最后一份为准)
   const [swapTick, setSwapTick] = useState(0);
-  const softSwap = useCallback((kind, apply) => {
-    const pending = swapRef.current;
-    if (pending && !pending.landed) { pending.applies[kind] = apply; return; }
-    const leave = leaveBrief(sheetRef.current);
-    // 上一次刚放上去、那次提交还没到(pending.landed):它留下的淡出终帧一并交给这一次撤
-    const job = { applies: { [kind]: apply }, animations: [...(pending?.animations || []), ...leave.animations], landed: false, timer: 0 };
-    const land = () => {
-      job.landed = true;
-      Object.values(job.applies).forEach((fn) => fn());
-      setSwapTick((n) => n + 1);
-    };
-    swapRef.current = job;
-    if (leave.duration) job.timer = window.setTimeout(land, leave.duration);
-    else land();
-  }, []);
-  useEffect(() => () => {
-    window.clearTimeout(swapRef.current?.timer);
-    swapRef.current = null;
-  }, []);
+  const [swap] = useState(() => createSoftSwap({ onLand: () => setSwapTick((n) => n + 1) }));
+  const softSwap = useCallback((kind, apply) => swap.run(kind, apply, () => leaveBrief(sheetRef.current)), [swap]);
+  useEffect(() => () => { swap.dispose().forEach((animation) => animation.cancel()); }, [swap]);
   const putToday = useCallback((data) => {
+    const prev = todayRef.current;
     todayRef.current = data;
     setToday(data);
+    // 带着版本号看今天(从正文返回留的位置)时,今天这一版换了,选择跟着换——否则眼前仍是被换下的那一版
+    setSel((sel) => followToday(sel, prev, data));
     if (TERMINAL.has(data?.status)) loadHistory();
   }, [loadHistory]);
   // soft:后台换上来的(轮询、切回页面、放下留着的那一版)——版面真的变了才演;首次载入与读者自己触发的直接放。
   // 旧版面正在淡出时不管哪一种都排进去,免得淡完又被先前那一份盖回来
   const showToday = useCallback((data, { soft = false } = {}) => {
     heldTodayRef.current = null;
-    const leaving = swapRef.current && !swapRef.current.landed;
     const changed = soft && usesTodayRef.current && briefFace(todayRef.current) !== briefFace(data);
-    if (leaving || changed) softSwap('today', () => putToday(data));
+    if (swap.leaving() || changed) softSwap('today', () => putToday(data));
     else putToday(data);
-  }, [putToday, softSwap]);
+  }, [putToday, softSwap, swap]);
   const releaseHeldToday = useCallback(() => {
     if (heldTodayRef.current) showToday(heldTodayRef.current, { soft: true });
   }, [showToday]);
 
-  // quiet:后台再取(轮询 / 切回页面)——失败不盖掉眼前的版面;force:不管读到哪都换(首次载入、读者自己触发的)
+  // quiet:后台再取(轮询 / 切回页面 / 订阅范围变了)——失败不盖掉眼前的版面;force:不管读到哪都换(首次载入、读者自己触发的)。
+  // 几路请求可以重叠:更晚发出的已经被采用之后,迟到的旧响应(成功或失败)不再采用
+  const [order] = useState(createRequestOrder);
   const loadToday = useCallback(async ({ ensure = false, quiet = false, force = false } = {}) => {
+    const seq = order.begin();
     if (!quiet) setError('');
     try {
       const data = ensure ? await ensurePersonalBrief() : await fetchTodayPersonalBrief();
+      if (!order.adopt(seq)) return data;
+      setError('');   // 取到了:先前那次载入失败留下的错误不该再盖着版面(后台再取成功也算)
       if (!force && readingRef.current && isBriefSwap(todayRef.current, data)) heldTodayRef.current = data;
       else showToday(data, { soft: quiet });
       return data;
     } catch (err) {
-      if (!quiet) setError(err.message || '加载今日早报失败，请重试');
+      if (!quiet && order.current(seq)) setError(err.message || '加载今日早报失败，请重试');
       return null;
     }
-  }, [showToday]);
+  }, [order, showToday]);
 
   // 挂载时取走另一种版式交过来的位置。它比外出上下文(restore)新:交接器只在真跨 1024 卸载时存、下一次挂载即取走,
   // 而父级的 restore 是从正文返回那次留下的、之后没清——正文返回 → 换日期 / 版次 → 跨版式时,以交接的这份为准
@@ -584,13 +576,27 @@ export default function PersonalBriefPage({
   }, [interestVersion, loadToday, loadHistory]);
 
   const todayStatus = today?.status;
-  // 后端说今天这版还会被换(refresh_pending)或正在编:隔一会儿再取一次
-  const pollMs = briefPollInterval(today);
+  // 后端说今天这版还会被换(refresh_pending)或正在编:隔一会儿再取一次。间隔按这一档已经等了多久算(briefPollDelay)
+  const pollKind = briefPollKind(today);
   useEffect(() => {
-    if (!pollMs) return undefined;
-    const timer = window.setInterval(() => loadToday({ quiet: true }), pollMs);
-    return () => window.clearInterval(timer);
-  }, [pollMs, loadToday]);
+    if (!pollKind) return undefined;
+    const started = Date.now();
+    let timer = 0;
+    const again = () => {
+      timer = window.setTimeout(() => { loadToday({ quiet: true }); again(); }, briefPollDelay(pollKind, Date.now() - started));
+    };
+    again();
+    return () => window.clearTimeout(timer);
+  }, [pollKind, loadToday]);
+  // 读者的订阅范围变了(条目上的「+ 订阅」、手机长按菜单里订阅 / 退订……):今天这一版会被换,而此前可能已经不轮询了——
+  // 悄悄再取一次,后端回 soon 之后轮询与页头的「正在编排」自己接上。不走带骨架屏的整页重载,不打断阅读
+  const scopeKey = useMemo(() => scopeKeyOf(subscribedIds), [subscribedIds]);
+  const scopeKeyRef = useRef(scopeKey);
+  useEffect(() => {
+    if (scopeKeyRef.current === scopeKey) return;
+    scopeKeyRef.current = scopeKey;
+    loadToday({ quiet: true });
+  }, [scopeKey, loadToday]);
   // 切回这个页面:留着没换的那一版现在换上,顺带再取一次(后台标签页的定时器会被浏览器压慢)
   useEffect(() => {
     const onVisible = () => {
@@ -684,12 +690,11 @@ export default function PersonalBriefPage({
   // 换版的后一半:新版面放上去的这次提交里,撤掉旧版面淡出留下的终帧,新版面淡入并上移。
   // 排在「到场」之后——这次提交若正好是早报第一次有内容,三拍先占了,这里就不再叠一层
   useLayoutEffect(() => {
-    const job = swapRef.current;
-    if (!job?.landed) return;
-    swapRef.current = null;
-    job.animations.forEach((animation) => animation.cancel());
-    swapInBrief(sheetRef.current);
-  }, [swapTick]);
+    const done = swap.settle();
+    if (!done) return;
+    done.animations.forEach((animation) => animation.cancel());
+    if (done.applied) swapInBrief(sheetRef.current);   // 放上去的那一件被撤了(读者自己切了日期):只收尾,不演
+  }, [swapTick, swap]);
   useLayoutEffect(() => {
     const r = restoreRef.current;
     if (!r || !cardsReady) return undefined;
@@ -721,16 +726,20 @@ export default function PersonalBriefPage({
   }, [placeKeeper, mobile]);
 
   const closeHistory = useCallback(() => setHistOpen(false), []);
+  // 读者自己挑了日期 / 版次:还没执行的「回页首换成当前版」作废(它晚 150ms 才落,不能把读者刚选的盖回去)
   const pickDay = (key) => {
+    swap.drop('view');
     setSel({ date: key === todayKey ? null : key, revision: null });
     setHistOpen(false);
   };
   const pickRevision = (revision) => {
+    swap.drop('view');
     setSel((prev) => ({ ...prev, revision }));
     setHistOpen(false);
   };
   // 手机底页月历:点单版的日子 = 那天最新一版;多版的日子在月历下方选版次(可以不是正在看的那天)
   const pickEdition = (key, revision) => {
+    swap.drop('view');
     setSel({ date: key === todayKey ? null : key, revision: revision ?? null });
     setHistOpen(false);
   };
@@ -867,19 +876,27 @@ export default function PersonalBriefPage({
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
-  // 带着旧版本号回到今天(从正文返回时留的位置),而那一版已经被换下:读者回到页首时换成当前这一版
-  const replacedView = isToday && !usesToday && edition?.status === 'superseded' && !!todayEdition;
+  // 带着旧版本号回到今天(从正文返回时留的位置),而那一版已经被换下:照旧显示、位置不动,读者在页首(或回到页首)时换成当前这一版。
+  // 「被换下」按今天的事实判(utils/briefSwap.isReplacedView),不看那一版详情里的状态——详情可能是它被换下之前取的
+  const replacedView = isReplacedView({ isToday, usesToday, todayStatus, revision: sel.revision });
   const replacedViewRef = useRef(replacedView);
   useEffect(() => { replacedViewRef.current = replacedView; });
+  const leaveReplacedView = useCallback(() => {
+    if (!replacedViewRef.current) return;
+    replacedViewRef.current = false;   // 滚动事件是连着来的:只换这一次
+    softSwap('view', () => setSel({ date: null, revision: null }));
+  }, [softSwap]);
+  // 落位之后本来就停在页首(从头条点进正文再回来)、或在页首时今天换了版:没有滚动事件可等,这里直接换
+  useEffect(() => {
+    if (!replacedView || loading || detailLoading) return;
+    if ((sheetRef.current?.scrollTop || 0) <= TOP_SLOP) leaveReplacedView();
+  }, [replacedView, loading, detailLoading, leaveReplacedView]);
   const noteScroll = (event) => {
     const top = event.currentTarget.scrollTop;
     readingRef.current = usesTodayRef.current && top > TOP_SLOP;
     if (top > TOP_SLOP) return;
     releaseHeldToday();
-    if (replacedViewRef.current) {
-      replacedViewRef.current = false;   // 滚动事件是连着来的:只换这一次
-      softSwap('view', () => setSel({ date: null, revision: null }));
-    }
+    leaveReplacedView();
   };
   // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
   // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
