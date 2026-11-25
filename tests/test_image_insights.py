@@ -300,9 +300,7 @@ def test_budget_exhaustion_returns_cache_and_finishes_in_background(stack, monke
         release = asyncio.Event()
 
         async def held_chat(**kwargs):
-            # 视觉调用挂到用例放行为止。30 秒的上限只有预算失效(到点不返回)时才会等满,
-            # 那时用例以断言失败收场
-            await asyncio.wait_for(release.wait(), 30)
+            await release.wait()  # 视觉调用挂到用例放行为止
             vision_calls.append("done")
             return json.dumps({"kind": "chart", "relevant": True, "caption": "慢图", "details": "读数 42"})
 
@@ -310,7 +308,9 @@ def test_budget_exhaustion_returns_cache_and_finishes_in_background(stack, monke
         # 取图放在预算窗口之外(issue #339):截止时刻定下之后才取图的话,取图一慢就没有图排得进
         # 视觉调用,也就没有任务可转后台,结果取决于机器当时有多忙
         assert await service.media_store.get_or_fetch(url) is not None
-        first = await service.ensure_notes("slow", VISION, budget_seconds=0.05)  # 服务端钳到下限 0.5s
+        # 预算由服务端钳到下限 0.5s。外面这层 10 秒是宽上限:预算要是没传到位(回到默认的 20 秒)
+        # 或根本不生效,在这里超时,不会一直等视觉调用
+        first = await asyncio.wait_for(service.ensure_notes("slow", VISION, budget_seconds=0.05), 10)
         assert first == "" and vision_calls == []
         assert service._background  # 超预算任务转后台
         release.set()

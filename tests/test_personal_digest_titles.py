@@ -27,8 +27,11 @@ from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 NOW_ISO = dt.datetime(2026, 9, 9, 8, 30, tzinfo=dt.timezone(dt.timedelta(hours=8))).isoformat()
 CONFIGURED = LLMConfig(base_url="http://llm.test", api_key="k", model="main", aux_model="aux")
-# 挂住的供应商替身最多等这么久。只有预算失效(到点不取消)时才会等满,那时用例以断言失败收场,
-# 不会把整个 job 挂到超时。
+# 记账用例里挂住的供应商睡这么久,比预算长一个数量级:预算要是没传到位(比如回到默认的 20 秒),
+# 它会先返回,用例失败。这个数的大小不影响那条用例的结果。
+SLOW_PROVIDER_SECONDS = 3
+# 真实发布器用例里挂住的供应商睡这么久,要远大于任何可能的卡顿:那里供应商在另一个任务里跑,取消晚一拍
+# 才传到,事件循环要是卡过了「预算到点」和「供应商返回」两个时刻,译文会先写进缓存。
 HUNG_PROVIDER_SECONDS = 30
 
 
@@ -146,7 +149,8 @@ def test_budget_timeout_falls_back_without_blocking(storage, monkeypatch):
 
     这条只验预算的记账,不经真实的共享标题发布器(它每条标题要做三次写事务,见下一条)。
     替身直接调用供应商,``Fast`` 那条从头到尾不让出事件循环,轮不到预算定时器先触发;
-    ``Slow`` 那条的结局只取决于到点有没有被取消。两头都不看墙上时钟(issue #339)。
+    ``Slow`` 那条的预算定时器总排在它自己的定时器前面,只要预算照传入的值生效,它就是被取消的。
+    两头都不看墙上时钟(issue #339)。
     """
 
     async def publish_inline(_engine, _article_id, _title, call, **_kwargs):
@@ -158,7 +162,7 @@ def test_budget_timeout_falls_back_without_blocking(storage, monkeypatch):
         if title == "Fast":
             return "快"
         try:
-            await asyncio.sleep(HUNG_PROVIDER_SECONDS)
+            await asyncio.sleep(SLOW_PROVIDER_SECONDS)
         except asyncio.CancelledError:
             outcome[title] = "cancelled"
             raise
