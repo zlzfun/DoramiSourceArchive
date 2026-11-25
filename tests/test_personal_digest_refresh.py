@@ -7,8 +7,11 @@ import datetime as dt
 import json
 import os
 import sys
+import threading
+import time
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import Session, select
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -27,8 +30,13 @@ from models.db import (  # noqa: E402
     UserInterestTagRecord,
     UserRecord,
 )
+from services import archive_sync_v2  # noqa: E402
 from services import personal_digest as digest  # noqa: E402
 from services import personal_digest_refresh as refresh  # noqa: E402
+from services import personal_digest_titles as digest_titles  # noqa: E402
+from services import remote_sync  # noqa: E402
+from services import title_cache  # noqa: E402
+from services.briefs_contract import adapt_edition, envelope  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
@@ -82,14 +90,20 @@ def _seed_article(
     source: str = "rss_a",
     score: float = 8.0,
     at: dt.datetime | None = None,
+    cached_title: str | None = None,
 ) -> str:
     """文章与分析行的时间都落在 ``at``——默认早于首版的编排时刻,模拟同步进来的行带上游时间。"""
 
     stamp = (at or NOW - dt.timedelta(hours=1, minutes=number)).isoformat()
     article_id = f"article-{number:02d}"
+    title = f"Article {number}"
     session.add(ArticleRecord(
         id=article_id,
-        title=f"Article {number}",
+        title=title,
+        extensions_json=json.dumps({
+            title_cache.TITLE_KEY: cached_title,
+            title_cache.TITLE_FP_KEY: title_cache.fingerprint(title),
+        }) if cached_title else "{}",
         content_type="rss_article",
         source_id=source,
         source_url=f"https://example.com/{article_id}",
@@ -460,7 +474,25 @@ def test_preference_change_reverted_before_the_quiet_period_publishes_nothing(st
     assert _marker(storage) == (None, None)
 
 
-def test_preference_change_applies_after_noon_and_empties_on_last_unsubscribe(storage):
+def _bot_state(storage, username: str = "alice") -> str:
+    """机器人接口眼里的今天:只取最大 revision、不看状态(docs/contracts/admin_reader_briefs.md)。"""
+
+    from api.routers.personal_briefs import serialize_edition
+
+    with Session(storage.engine) as session:
+        edition = session.exec(
+            select(PersonalDigestEditionRecord)
+            .where(PersonalDigestEditionRecord.owner_username == username)
+            .order_by(PersonalDigestEditionRecord.revision.desc())
+        ).first()
+        if edition.briefs_payload_json and edition.status in {"ready", "degraded"}:
+            projected = adapt_edition(json.loads(edition.briefs_payload_json))
+        else:
+            projected = adapt_edition(serialize_edition(session, edition))
+        return envelope("l00000001", username, projected)["status"]
+
+
+def test_emptied_preferences_publish_an_empty_edition_and_resubscribing_recovers(storage):
     with Session(storage.engine) as session:
         session.add(_user())
         session.add(_subscribe("alice", "rss_a"))
@@ -475,14 +507,111 @@ def test_preference_change_applies_after_noon_and_empties_on_last_unsubscribe(st
         digest.request_preference_rebuild(
             session, "alice", reason=DigestGenerationReason.SUBSCRIPTION_CHANGED, now=afternoon
         )
+    assert _bot_state(storage) == "ready"
 
     # 上午截止只管「因新内容换版」;读者自己改的任何时候都跟上
     result = refresh.apply_preference_intents(storage.engine, now=afternoon + dt.timedelta(minutes=1))
     assert result == {"empty": 1}
-    # 退订到一个源都不剩且没有兴趣:当日版本清成空订阅状态(沿用既有重编口径)
-    assert _editions(storage) == [(1, "superseded", "scheduled")]
+    # 订阅与兴趣都空:落成一版零条目的终态版,而不是把今天的版本全标成被换下——
+    # 机器人只取最大 revision,那样它会看到同一个 revision 从成功变成失败
+    rows = _editions(storage)
+    assert rows[0] == (1, "superseded", "scheduled")
+    assert rows[1][0] == 2 and rows[1][1] in {"ready", "degraded"} and rows[1][2] == "subscription_changed"
+    assert _article_ids(storage, 2) == []
+    assert _bot_state(storage) == "empty"
     with Session(storage.engine) as session:
-        assert digest._latest_edition(session, "alice", TODAY) is None  # noqa: SLF001
+        empty = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+        assert refresh.is_empty_preferences_edition(session, empty)
+
+        # 重新订阅:空版继续承载意向,巡检自动恢复
+        row = session.exec(select(ReaderSubscriptionRecord)).one()
+        row.is_active = True
+        session.add(row)
+        session.commit()
+        back = afternoon + dt.timedelta(minutes=10)
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.SUBSCRIPTION_CHANGED, now=back
+        )
+    assert _marker(storage, 2)[0] == "subscription_changed"
+    assert refresh.apply_preference_intents(storage.engine, now=back + dt.timedelta(minutes=1)) == {
+        "published": 1
+    }
+    assert [row[:2] for row in _editions(storage)] == [(1, "superseded"), (2, "superseded"), (3, "ready")]
+    assert _article_ids(storage, 3) == ["article-01"]
+    assert _bot_state(storage) == "ready"
+
+
+def test_preferences_emptied_while_an_edition_is_generating_still_end_in_an_empty_edition(storage):
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        session.commit()
+        pending = digest.start_personal_digest_edition(session, "alice", now=NOW).edition
+        carrier, token = digest.claim_personal_digest_generation(session, pending.id, now=NOW)
+        assert carrier.status == "generating"
+        row = session.exec(select(ReaderSubscriptionRecord)).one()
+        row.is_active = False
+        session.add(row)
+        session.commit()
+        edited = NOW + dt.timedelta(seconds=5)
+        # 在途时清空偏好:只记意向,不把今天的版本全标成被换下
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.SUBSCRIPTION_CHANGED, now=edited
+        )
+        assert _editions(storage) == [(1, "generating", "scheduled")]
+        assert _marker(storage) == ("subscription_changed", edited.isoformat())
+        # 在途期间巡检不处理这条意向
+        assert refresh.apply_preference_intents(storage.engine, now=edited + dt.timedelta(minutes=1)) == {}
+        digest.generate_personal_digest(
+            session, "alice", now=NOW, pending_edition_id=pending.id, generation_token=token,
+        )
+    # 它按冻结的旧范围落成之后,意向才被处理:换成空版
+    assert _editions(storage)[0][:2] == (1, "ready")
+    assert refresh.apply_preference_intents(storage.engine, now=edited + dt.timedelta(minutes=2)) == {
+        "empty": 1
+    }
+    assert _article_ids(storage, 2) == []
+    assert _bot_state(storage) == "empty"
+
+
+def test_empty_edition_never_carries_items_even_when_a_breaking_event_qualifies(storage):
+    """「无订阅不出报」:空版连不看订阅的「重大事件」也不放——否则读者端按「范围空、兴趣空」把它
+    映射成空订阅引导时,会把一版实际有条目的早报藏起来。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        entity = CmsTagRecord(
+            code="entity.openai", kind="entity", name_zh="OpenAI", normalized_name="openai",
+            status="active", user_selectable=True, entity_type="organization",
+            created_at=NOW_ISO, updated_at=NOW_ISO,
+        )
+        session.add(entity)
+        session.flush()
+        headline = _seed_article(session, 2, source="rss_openai_news", score=9.6)
+        second = _seed_article(session, 3, source="x_openai", score=9.8)
+        from models.db import ArticleTagAssignmentRecord
+
+        for article_id in (headline, second):
+            session.add(ArticleTagAssignmentRecord(
+                article_id=article_id, tag_id=entity.id, tag_kind="entity", relevance=0.9,
+                created_at=NOW_ISO, updated_at=NOW_ISO,
+            ))
+        session.commit()
+        # 有订阅时这条官方一手确实够格上头条(证明造的数据有效)
+        session.add(_subscribe("alice", "rss_a"))
+        session.commit()
+        with_scope = digest.generate_personal_digest(session, "alice", now=NOW, dry_run=True)
+        assert any(item.selection_lane == "breaking" for item in with_scope.items)
+        row = session.exec(select(ReaderSubscriptionRecord)).one()
+        row.is_active = False
+        session.add(row)
+        session.commit()
+
+        assert digest.generate_personal_digest(session, "alice", now=NOW).status == "empty_subscriptions"
+        empty = digest.generate_personal_digest(session, "alice", now=NOW, allow_empty=True)
+        assert empty.edition is not None and empty.items == ()
+        assert refresh.is_empty_preferences_edition(session, empty.edition)
 
 
 def test_intent_left_on_a_replaced_edition_follows_the_current_one(storage):
@@ -746,3 +875,523 @@ def test_pending_job_runs_the_refresh_cycle_and_one_broken_step_does_not_stop_th
     )
     app_module.execute_personal_digest_pending_job()
     assert ran == ["preferences", "failures", "content"]
+
+
+# --------------------------------------------------------------------------- 检视 R1 的修复
+
+
+def _editions_detail(storage, username: str = "alice"):
+    with Session(storage.engine) as session:
+        rows = session.exec(
+            select(PersonalDigestEditionRecord)
+            .where(PersonalDigestEditionRecord.owner_username == username)
+            .order_by(PersonalDigestEditionRecord.revision)
+        ).all()
+        return [
+            (row.revision, row.status, json.loads(row.expected_source_ids_json)) for row in rows
+        ]
+
+
+def test_publish_rechecks_the_current_edition_and_scope_inside_the_write_lock(storage, monkeypatch):
+    """R1 #1:试算到拿写锁之间(备标题可能调模型)别的触发换了版 / 改了范围,旧输入不能盖回去。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        session.add(_subscribe("alice", "rss_b", token="b"))
+        _upstream_source(session, "rss_a")
+        _upstream_source(session, "rss_b")
+        _seed_article(session, 1, source="rss_a", score=7.0)
+        session.commit()
+        _first_edition(session)
+        _seed_article(session, 2, source="rss_a", score=9.0)
+        _seed_article(session, 3, source="rss_b", score=8.5)
+        session.commit()
+    landing = NOW + dt.timedelta(minutes=35)
+    _sync_landed(storage, landing)
+    real_warm = digest_titles.localize_edition_titles
+    interleaved: list[str] = []
+
+    def takedown_during_warmup(session, edition, **kwargs):
+        # 管理员下架 rss_a,全员重编先一步落成了第 2 版(只含 rss_b)
+        if not interleaved and kwargs.get("persist") is False:
+            interleaved.append("takedown")
+            with Session(storage.engine) as other:
+                row = other.exec(
+                    select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.name == "sub-token")
+                ).one()
+                row.is_active = False
+                other.add(row)
+                other.commit()
+                digest.generate_personal_digest(
+                    other, "alice", now=landing + dt.timedelta(minutes=4),
+                    generation_reason=DigestGenerationReason.SUBSCRIPTION_CHANGED,
+                )
+        return real_warm(session, edition, **kwargs)
+
+    monkeypatch.setattr(digest_titles, "localize_edition_titles", takedown_during_warmup)
+    counts = refresh.refresh_for_new_content(storage.engine, now=landing + dt.timedelta(minutes=4))
+    assert interleaved == ["takedown"]
+    assert counts["published"] == 0 and counts["skipped"] == 1 and counts["failed"] == 0
+    # 没有第 3 版把 rss_a 放回去;当前版本就是下架后的那一版
+    assert _editions_detail(storage) == [
+        (1, "superseded", ["rss_a", "rss_b"]),
+        (2, "ready", ["rss_b"]),
+    ]
+
+
+def test_publish_uses_the_scope_as_of_the_write_lock(storage, monkeypatch):
+    """R1 #1 的另一半:期间读者退订了一个源但没有新版本出现——发布按锁内的范围,不按试算时的。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        session.add(_subscribe("alice", "rss_b", token="b"))
+        _upstream_source(session, "rss_a")
+        _upstream_source(session, "rss_b")
+        _seed_article(session, 1, source="rss_b", score=7.0)
+        session.commit()
+        _first_edition(session)
+        _seed_article(session, 2, source="rss_a", score=9.0)
+        _seed_article(session, 3, source="rss_b", score=8.5)
+        session.commit()
+    landing = NOW + dt.timedelta(minutes=35)
+    _sync_landed(storage, landing)
+    real_warm = digest_titles.localize_edition_titles
+    done: list[int] = []
+
+    def unsubscribe_during_warmup(session, edition, **kwargs):
+        if not done and kwargs.get("persist") is False:
+            done.append(1)
+            with Session(storage.engine) as other:
+                row = other.exec(
+                    select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.name == "sub-token")
+                ).one()
+                row.is_active = False
+                other.add(row)
+                other.commit()
+        return real_warm(session, edition, **kwargs)
+
+    monkeypatch.setattr(digest_titles, "localize_edition_titles", unsubscribe_during_warmup)
+    counts = refresh.refresh_for_new_content(storage.engine, now=landing + dt.timedelta(minutes=4))
+    assert counts["published"] == 1
+    detail = _editions_detail(storage)
+    assert detail[-1][0] == 2 and detail[-1][2] == ["rss_b"]
+    assert "article-02" not in _article_ids(storage, 2)
+
+
+def test_published_edition_is_final_the_moment_it_becomes_visible(storage):
+    """R1 #2:终态、带标题的条目、机器人投影在同一次提交里出现——同一 revision 的输出不会先后不一。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _upstream_source(session)
+        _seed_article(session, 1, score=7.0)
+        session.commit()
+        _first_edition(session)
+        _seed_article(session, 2, score=9.0, cached_title="缓存中文标题")
+        session.commit()
+    landing = NOW + dt.timedelta(minutes=35)
+    _sync_landed(storage, landing)
+    seen: list[tuple[bool, list[str | None]]] = []
+
+    def at_commit(_session):
+        # 每次提交之后用另一条连接看:第 2 版一旦可见,就必须已经是最终的样子
+        with Session(storage.engine) as probe:
+            edition = probe.exec(
+                select(PersonalDigestEditionRecord).where(PersonalDigestEditionRecord.revision == 2)
+            ).first()
+            if edition is None or seen:
+                return
+            titles = [
+                json.loads(item.snapshot_json).get("title_zh")
+                for item in probe.exec(
+                    select(PersonalDigestItemRecord)
+                    .where(PersonalDigestItemRecord.edition_id == edition.id)
+                    .order_by(PersonalDigestItemRecord.position)
+                ).all()
+            ]
+            seen.append((edition.briefs_payload_json is not None, titles))
+
+    event.listen(Session, "after_commit", at_commit)
+    try:
+        counts = refresh.refresh_for_new_content(storage.engine, now=landing + dt.timedelta(minutes=4))
+    finally:
+        event.remove(Session, "after_commit", at_commit)
+    assert counts["published"] == 1
+    assert seen, "第 2 版没有出现"
+    frozen_at_first_sight, titles = seen[0]
+    assert frozen_at_first_sight is True
+    assert "缓存中文标题" in titles
+    with Session(storage.engine) as session:
+        edition = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+        frozen = json.loads(edition.briefs_payload_json)
+        assert [item["snapshot"].get("title_zh") for item in frozen["items"]] == titles
+
+
+def _clone_edition_sql(revision: int, status: str) -> str:
+    """裸连接上「另一个请求刚发布了一版」:把第 1 版复制成指定版次与状态。"""
+
+    return (
+        "INSERT INTO personal_digest_editions "
+        "(owner_username, report_date, revision, status, check_after, cutoff_at, generated_at,"
+        " expected_source_ids_json, due_source_ids_json, source_state_snapshot_json, policy_version,"
+        " taxonomy_version, interest_version, interest_snapshot_json, generation_attempt_count,"
+        " generation_reason, sync_stale, analysis_incomplete, created_at, updated_at) "
+        "SELECT owner_username, report_date, ?, ?, check_after, cutoff_at, updated_at,"
+        " expected_source_ids_json, due_source_ids_json, source_state_snapshot_json, policy_version,"
+        " taxonomy_version, interest_version, interest_snapshot_json, 0, 'manual_rebuild', 0, 0,"
+        " updated_at, updated_at FROM personal_digest_editions WHERE revision = 1"
+    ), (revision, status)
+
+
+def _run_while_holding_write_lock(storage, work, holder_sql: list[tuple[str, tuple]]):
+    """确定性交错:另一条连接持写锁期间 ``work`` 必须卡在拿锁处;对方提交后它才继续。"""
+
+    holder = storage.engine.raw_connection()
+    outcome: list[object] = []
+    try:
+        holder.isolation_level = None  # 显式 BEGIN / COMMIT
+        cursor = holder.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        worker = threading.Thread(target=lambda: outcome.append(work()))
+        worker.start()
+        time.sleep(0.5)
+        assert worker.is_alive(), "没有等写锁就读了"
+        for sql, params in holder_sql:
+            cursor.execute(sql, params)
+        cursor.execute("COMMIT")
+    finally:
+        holder.close()
+    worker.join(timeout=30)
+    assert not worker.is_alive()
+    return outcome[0] if outcome else None
+
+
+def test_intent_is_recorded_on_the_edition_that_is_current_after_taking_the_lock(storage):
+    """R1 #4:读当前版、判落后、记意向在同一个写事务里——不会记到刚被换下的版本上而丢掉。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        _first_edition(session, stale=False)
+        edited = NOW + dt.timedelta(minutes=5)
+        _follow(session, "alice", tag_id, at=edited)
+        session.commit()
+
+    def record():
+        with Session(storage.engine) as session:
+            digest.request_preference_rebuild(
+                session, "alice", reason=DigestGenerationReason.INTEREST_CHANGED, now=edited
+            )
+
+    clone_sql, clone_params = _clone_edition_sql(2, "ready")
+    _run_while_holding_write_lock(storage, record, [
+        ("UPDATE personal_digest_editions SET status = 'superseded' WHERE revision = 1", ()),
+        (clone_sql, clone_params),
+    ])
+    # 第 2 版冻结的仍是旧兴趣:意向记在它上面,而不是落空
+    assert _marker(storage, 1) == (None, None)
+    assert _marker(storage, 2) == ("interest_changed", edited.isoformat())
+
+
+def test_intent_waits_while_the_replacing_edition_is_still_generating(storage):
+    """R1 #5:换下它的那一版还在编(冻结的是旧偏好)时,意向不清不挪;它落成后再挪过去。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        _first_edition(session, stale=False)
+        # 重编先冻结了旧偏好并进入生成
+        rebuild_at = NOW + dt.timedelta(minutes=5)
+        pending = digest.start_personal_digest_edition(
+            session, "alice", now=rebuild_at,
+            generation_reason=DigestGenerationReason.MANUAL_REBUILD,
+        ).edition
+        _carrier, token = digest.claim_personal_digest_generation(session, pending.id, now=rebuild_at)
+        # 读者随后才改兴趣,意向却挂在第 1 版上
+        edited = rebuild_at + dt.timedelta(seconds=5)
+        _follow(session, "alice", tag_id, at=edited)
+        first = session.exec(
+            select(PersonalDigestEditionRecord).where(PersonalDigestEditionRecord.revision == 1)
+        ).one()
+        first.desired_generation_reason = "interest_changed"
+        first.desired_requested_at = edited.isoformat()
+        session.add(first)
+        session.commit()
+
+        tick = edited + dt.timedelta(minutes=1)
+        assert refresh.apply_preference_intents(storage.engine, now=tick) == {"waiting": 1}
+        assert _marker(storage, 1) == ("interest_changed", edited.isoformat())
+
+        digest.generate_personal_digest(
+            session, "alice", now=rebuild_at, pending_edition_id=pending.id, generation_token=token,
+        )
+    assert [row[:2] for row in _editions(storage)] == [(1, "superseded"), (2, "ready")]
+    assert refresh.apply_preference_intents(storage.engine, now=tick) == {"moved": 1}
+    assert _marker(storage, 2) == ("interest_changed", edited.isoformat())
+    assert refresh.apply_preference_intents(storage.engine, now=tick) == {"published": 1}
+    assert [row[:2] for row in _editions(storage)][-1] == (3, "ready")
+
+
+def _prepared_consumer(storage) -> None:
+    with Session(storage.engine) as session:
+        remote_sync.prepare_transaction_revision_consumer(
+            session,
+            base_url=UPSTREAM,
+            username="admin",
+            authority_id="producer-a",
+            schema_version=archive_sync_v2.SCHEMA_VERSION,
+            prepared_at=(NOW - dt.timedelta(days=1)).astimezone(dt.timezone.utc).isoformat(),
+            capabilities=list(archive_sync_v2.ADVERTISED_CAPABILITIES),
+        )
+        session.commit()
+
+
+def _record_stream(storage, stream: str, at: dt.datetime, **changes: int) -> None:
+    remote_sync.record_v2_stream_success(
+        storage.engine,
+        base_url=UPSTREAM,
+        username="admin",
+        stream=stream,
+        checkpoint={
+            "authority_id": "producer-a", "snapshot": "1", "cursor": "",
+            "inserted": 0, "updated": 0, "deleted": 0, **changes,
+        },
+        synced_at=at.astimezone(dt.timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+def test_landing_survives_a_later_round_without_changes_and_counts_events(storage):
+    """R1 #6 / #7:落地时刻随同步进度同一次提交记下、只增不减;事件流的变化同样算落地。"""
+
+    _alice_with_stale_edition(storage)
+    with Session(storage.engine) as session:
+        _seed_article(session, 2, score=9.0)
+        session.commit()
+    _prepared_consumer(storage)
+    first = NOW + dt.timedelta(minutes=35)
+    _record_stream(storage, "analyses", first, inserted=3)
+    # 还在静置,下一轮同步(没有任何变化)把 checkpoint 盖掉了
+    assert refresh.refresh_for_new_content(storage.engine, now=first + dt.timedelta(seconds=30)) == {}
+    _record_stream(storage, "analyses", first + dt.timedelta(minutes=1))
+    with Session(storage.engine) as session:
+        assert refresh.sync_landing_at(session) == first
+    counts = refresh.refresh_for_new_content(storage.engine, now=first + dt.timedelta(minutes=4))
+    assert counts["published"] == 1
+
+    # 事件流稍后把两篇归成同一事件:也是一次落地,已发布的那版要按新的归属再判一遍
+    later = first + dt.timedelta(minutes=20)
+    _record_stream(storage, "events", later, updated=2)
+    with Session(storage.engine) as session:
+        assert refresh.sync_landing_at(session) == later
+    again = refresh.refresh_for_new_content(storage.engine, now=later + dt.timedelta(minutes=4))
+    assert again["unchanged"] == 1  # 这里的归属没有改变版面;关键是这一批被处理了
+    # 没有变化的事件流不算
+    _record_stream(storage, "events", later + dt.timedelta(minutes=30))
+    with Session(storage.engine) as session:
+        assert refresh.sync_landing_at(session) == later
+
+
+def test_failed_edition_is_not_retried_over_one_that_was_just_published(storage):
+    """R1 #8:写锁内复核——读到失败版之后别的请求先发布了一版好的,就不再往上压一条重试版。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        session.commit()
+    _failed_edition(storage, failed_at=NOW)
+    when = NOW + dt.timedelta(seconds=refresh.FAILURE_RETRY_DELAYS[0])
+    started: list[int] = []
+    clone_sql, clone_params = _clone_edition_sql(2, "ready")
+    result = _run_while_holding_write_lock(
+        storage,
+        lambda: refresh.retry_failed_editions(
+            storage.engine, now=when, run=lambda _engine, edition_id: started.append(edition_id)
+        ),
+        [(clone_sql, clone_params)],
+    )
+    assert result == 0 and started == []
+    assert [row[:2] for row in _editions(storage)] == [(1, "failed"), (2, "ready")]
+
+
+def test_content_refresh_does_not_publish_after_crossing_noon(storage):
+    """R1 #9:11:59 开始的一轮,备完标题已过 12:00——写锁里再看一次时钟,不发布。"""
+
+    _alice_with_stale_edition(storage)
+    with Session(storage.engine) as session:
+        _seed_article(session, 2, score=9.0)
+        session.commit()
+    noon = dt.datetime.combine(NOW.date(), refresh.CONTENT_CUTOFF, tzinfo=SHANGHAI)
+    _sync_landed(storage, noon - dt.timedelta(minutes=10))
+    ticks = iter([noon - dt.timedelta(minutes=1), noon - dt.timedelta(minutes=1)])
+
+    def clock():
+        return next(ticks, noon + dt.timedelta(minutes=1))
+
+    counts = refresh.refresh_for_new_content(
+        storage.engine, now=noon - dt.timedelta(minutes=1), clock=clock
+    )
+    assert counts["published"] == 0 and counts["skipped"] == 1
+    assert _editions(storage) == [(1, "degraded", "scheduled")]
+    # 逐账号处理前也看时钟:已过截止的直接跳过,不再试算
+    _sync_landed(storage, noon - dt.timedelta(minutes=5))
+    late = refresh.refresh_for_new_content(
+        storage.engine, now=noon - dt.timedelta(seconds=30), clock=lambda: noon + dt.timedelta(minutes=2)
+    )
+    assert late["skipped"] == 1 and late["published"] == 0
+
+
+def test_sweep_recovers_preference_changes_whose_intent_was_never_recorded(storage):
+    """R1 #10:偏好已提交、意向没记上(进程停在两步之间、写锁超时、管理员侧改了范围)——补扫兜底。"""
+
+    with Session(storage.engine) as session:
+        session.add_all([_user("alice"), _user("bob"), _user("carol", active=False)])
+        for name in ("alice", "bob", "carol"):
+            session.add(_subscribe(name, "rss_a", token=name))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        for name in ("alice", "bob", "carol"):
+            _first_edition(session, name, stale=False)
+        edited = NOW + dt.timedelta(minutes=5)
+        _follow(session, "alice", tag_id, at=edited)   # 改了兴趣,意向没记上
+        _follow(session, "carol", tag_id, at=edited)   # 停用账号不管
+        session.commit()
+
+    swept = NOW + dt.timedelta(minutes=12)
+    assert refresh.sweep_stale_preferences(storage.engine, now=swept) == 1
+    assert _marker(storage, 1, "alice") == ("interest_changed", swept.isoformat())
+    assert _marker(storage, 1, "bob") == (None, None)      # 偏好没变
+    assert _marker(storage, 1, "carol") == (None, None)
+    # 已有意向的不动——不提前、不后推
+    assert refresh.sweep_stale_preferences(storage.engine, now=swept + dt.timedelta(minutes=10)) == 0
+    assert _marker(storage, 1, "alice")[1] == swept.isoformat()
+    assert refresh.apply_preference_intents(storage.engine, now=swept + dt.timedelta(minutes=1)) == {
+        "published": 1
+    }
+
+    # 失败后退避到未来的意向不能被补扫提前
+    with Session(storage.engine) as session:
+        row = session.exec(select(ReaderSubscriptionRecord).where(
+            ReaderSubscriptionRecord.owner_username == "bob"
+        )).one()
+        row.is_active = False
+        session.add(row)
+        session.add(_subscribe("bob", "rss_b", token="bob-b"))
+        future = (swept + dt.timedelta(minutes=30)).isoformat()
+        edition = digest._latest_edition(session, "bob", TODAY)  # noqa: SLF001
+        edition.desired_generation_reason = "subscription_changed"
+        edition.desired_requested_at = future
+        session.add(edition)
+        session.commit()
+    assert refresh.sweep_stale_preferences(storage.engine, now=swept + dt.timedelta(minutes=20)) == 0
+    assert _marker(storage, 1, "bob") == ("subscription_changed", future)
+
+
+def test_sweep_also_covers_a_failed_edition_whose_retries_are_used_up(storage):
+    """R1 #10:重试次数用尽之后读者再改偏好、意向又漏记——失败版同样被补扫;偏好没变的失败版不动。"""
+
+    with Session(storage.engine) as session:
+        session.add_all([_user("alice"), _user("bob")])
+        session.add(_subscribe("alice", "rss_a", token="alice"))
+        session.add(_subscribe("bob", "rss_a", token="bob"))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        for name in ("alice", "bob"):
+            for index in range(len(refresh.FAILURE_RETRY_DELAYS) + 1):
+                session.add(PersonalDigestEditionRecord(
+                    owner_username=name, report_date=TODAY, revision=index + 1, status="failed",
+                    check_after=NOW_ISO, cutoff_at=NOW_ISO,
+                    generation_reason="scheduled" if index == 0 else "recovery",
+                    expected_source_ids_json=json.dumps(["rss_a"]),
+                    error="generation_failed", created_at=NOW_ISO, updated_at=NOW_ISO,
+                ))
+        session.commit()
+        latest = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+        assert refresh.failure_retry_due_at(session, latest) is None  # 重试已用尽
+        _follow(session, "alice", tag_id, at=NOW + dt.timedelta(hours=2))
+        session.commit()
+
+    swept = NOW + dt.timedelta(hours=3)
+    assert refresh.sweep_stale_preferences(storage.engine, now=swept) == 1
+    last = len(refresh.FAILURE_RETRY_DELAYS) + 1
+    assert _marker(storage, last, "alice")[0] == "interest_changed"
+    assert _marker(storage, last, "bob") == (None, None)
+    done = refresh.apply_preference_intents(storage.engine, now=swept + dt.timedelta(minutes=1))
+    assert done == {"published": 1}
+    assert _editions(storage, "alice")[-1][1] == "ready"
+    assert all(row[1] == "superseded" for row in _editions(storage, "alice")[:-1])
+    assert all(row[1] == "failed" for row in _editions(storage, "bob"))
+
+
+def test_refresh_pending_is_soon_for_an_edition_that_lags_behind_the_preferences(storage):
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        session.commit()
+        edition = _first_edition(session, stale=False)
+        assert refresh.refresh_pending(session, edition, now=NOW) is None
+        # 偏好已变、意向还没记上(写入点稍后记,或等补扫):页面也该回来取
+        assert refresh.refresh_pending(session, edition, now=NOW, stale=True) == "soon"
+
+
+def test_sync_checkpoint_helpers_ignore_malformed_values():
+    assert remote_sync.checkpoint_changed({"inserted": "2"}) is True
+    assert remote_sync.checkpoint_changed({"inserted": 0, "updated": None, "deleted": "x"}) is False
+    assert remote_sync.checkpoint_changed(None) is False
+    assert remote_sync._later_stamp("2026-11-25T01:05:00+00:00", None) is True  # noqa: SLF001
+    assert remote_sync._later_stamp("2026-11-25T01:05:00+00:00", "not a time") is True  # noqa: SLF001
+    assert remote_sync._later_stamp("2026-11-25T01:05:00+00:00", "2026-11-25T01:05:00Z") is False  # noqa: SLF001
+    assert remote_sync._later_stamp("garbage", "2026-11-25T01:05:00Z") is False  # noqa: SLF001
+
+
+def test_sweep_style_request_never_touches_an_existing_intent(storage):
+    """补扫的写锁内复核(``only_if_absent``):已有意向——无论更早还是退避到未来——都不动;
+    读者自己的新改动则把更早的意向往后推、不把未来的提前。"""
+
+    with Session(storage.engine) as session:
+        session.add(_user())
+        session.add(_subscribe("alice", "rss_a"))
+        _seed_article(session, 1)
+        tag_id = _tag(session)
+        session.commit()
+        _first_edition(session, stale=False)
+        edited = NOW + dt.timedelta(minutes=5)
+        _follow(session, "alice", tag_id, at=edited)
+        session.commit()
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.INTEREST_CHANGED, now=edited
+        )
+        later = edited + dt.timedelta(minutes=3)
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.SUBSCRIPTION_CHANGED, now=later,
+            only_if_absent=True,
+        )
+        assert _marker(storage) == ("interest_changed", edited.isoformat())
+        digest.request_preference_rebuild(
+            session, "alice", reason=DigestGenerationReason.SUBSCRIPTION_CHANGED, now=later
+        )
+        assert _marker(storage) == ("subscription_changed", later.isoformat())
+
+        future = (later + dt.timedelta(minutes=30)).isoformat()
+        edition = digest._latest_edition(session, "alice", TODAY)  # noqa: SLF001
+        edition.desired_requested_at = future
+        session.add(edition)
+        session.commit()
+        for flag in (True, False):
+            digest.request_preference_rebuild(
+                session, "alice", reason=DigestGenerationReason.INTEREST_CHANGED,
+                now=later + dt.timedelta(minutes=1), only_if_absent=flag,
+            )
+            assert _marker(storage) == ("subscription_changed", future)

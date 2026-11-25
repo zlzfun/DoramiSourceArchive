@@ -417,6 +417,7 @@ def _add_guest_edition(engine, *, revision, status="failed", minutes_ago=11):
             generation_reason="scheduled", created_at=stamp, updated_at=stamp,
         ))
         session.commit()
+    return now  # 巡检用同一个时刻:造数与巡检各读一次墙钟会在零点前后落到不同的日期
 
 
 def _guest_revisions(engine):
@@ -438,15 +439,15 @@ def test_guest_failed_brief_is_retried_by_the_shared_refresh_pass(monkeypatch, t
     from services import personal_digest_refresh as digest_refresh
 
     engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1)  # 11 分钟前失败,已过首次重试间隔
+    now = _add_guest_edition(engine, revision=1)  # 11 分钟前失败,已过首次重试间隔
     started: list[int] = []
 
     def keep_pending(_engine, edition_id):
         started.append(edition_id)
 
-    assert digest_refresh.retry_failed_editions(engine, run=keep_pending) == 1
+    assert digest_refresh.retry_failed_editions(engine, now=now, run=keep_pending) == 1
     # 新的在途版本即认领:下一轮巡检看到的当前版本已不是失败版,不再重复发起
-    assert digest_refresh.retry_failed_editions(engine, run=keep_pending) == 0
+    assert digest_refresh.retry_failed_editions(engine, now=now, run=keep_pending) == 0
     assert len(started) == 1
     assert _guest_revisions(engine) == [(1, "failed", "scheduled"), (2, "pending", "recovery")]
 
@@ -456,9 +457,9 @@ def test_guest_failed_brief_waits_out_the_retry_delay(monkeypatch, tmp_path):
     from services import personal_digest_refresh as digest_refresh
 
     engine = _guest_brief_env(monkeypatch, tmp_path)
-    _add_guest_edition(engine, revision=1, minutes_ago=1)
+    now = _add_guest_edition(engine, revision=1, minutes_ago=1)
     assert digest_refresh.FAILURE_RETRY_DELAYS[0] > 60
-    assert digest_refresh.retry_failed_editions(engine, run=lambda *_: None) == 0
+    assert digest_refresh.retry_failed_editions(engine, now=now, run=lambda *_: None) == 0
     assert _guest_revisions(engine) == [(1, "failed", "scheduled")]
 
 

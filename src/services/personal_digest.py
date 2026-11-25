@@ -2027,19 +2027,35 @@ def _supersede_predecessors(
     )
 
 
+def begin_immediate(session: Session) -> None:
+    """先拿写锁再读(SQLite)。读完再升级成写,会撞上其间别的写者提交;换版、记意向、失败重试的
+    「复核 + 写入」都要求两步之间没有别人插进来。与 ``ensure_first_personal_digest_edition`` 同一手法。
+    """
+
+    session.rollback()
+    connection = session.connection()
+    if connection.dialect.name == "sqlite" and not connection.in_nested_transaction():
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def request_preference_rebuild(
     session: Session,
     username: str,
     *,
     reason: DigestGenerationReason | str,
     now: dt.datetime | None = None,
+    only_if_absent: bool = False,
 ) -> PersonalDigestEditionRecord | None:
-    """读者改了兴趣 / 订阅:在今日版本上记一条待落成的意向(issue #343)。
+    """读者改了兴趣 / 订阅:在今日的当前版本上记一条待落成的意向(issue #343)。
 
     不当场重编——连点几个标签、连订几个源,每次写入只把意向时刻往后推,停手后由巡检
     静置合并成一版(``personal_digest_refresh``)。今天还没有版本就什么都不记,首版本来
-    就按最新的偏好编;在途版本沿用既有合并(pending 就地刷新范围,generating 记意向);
-    当前偏好与这一版冻结的并无不同(原样重存、改了又改回)时不记。
+    就按最新的偏好编;当前偏好与这一版冻结的并无不同(原样重存、改了又改回)时不记。
+    在途版本(pending / generating)同样只记意向:它落成之后巡检再按当时的偏好判要不要换。
+
+    「读当前版 → 判是否落后 → 记意向」在同一个写事务里:换版也是持写锁发布的,两者互斥,
+    意向不会记到刚被换下的版本上。已有更晚的意向(失败后退避到未来的那种)不提前;
+    ``only_if_absent``(补扫用)时已有任何意向都不动。
     """
 
     current = _as_shanghai(now)
@@ -2047,43 +2063,40 @@ def request_preference_rebuild(
     if reason_value not in PREFERENCE_REASON_VALUES:
         raise ValueError("只接受兴趣 / 订阅变更")
     report_date = current.date().isoformat()
+    marker = current.isoformat()
+    begin_immediate(session)
     edition = _latest_edition(session, username, report_date)
     if edition is None or edition.id is None:
+        session.rollback()
         return None
-    if edition.status in {
+    in_flight = edition.status in {
         PersonalDigestStatus.PENDING.value,
         PersonalDigestStatus.GENERATING.value,
-    }:
-        return start_personal_digest_edition(
-            session,
-            username,
-            report_date=report_date,
-            now=current,
-            generation_reason=reason_value,
-        ).edition
-    freshness = edition_freshness(session, edition)
-    if not (freshness["interest_stale"] or freshness["scope_stale"]):
+    }
+    if not in_flight:
+        freshness = edition_freshness(session, edition)
+        if not (freshness["interest_stale"] or freshness["scope_stale"]):
+            session.rollback()
+            return edition
+    existing = edition.desired_requested_at
+    if existing and (only_if_absent or existing > marker):
+        session.rollback()
         return edition
-    marker = current.isoformat()
-    session.exec(
+    written = session.exec(
         update(PersonalDigestEditionRecord)
         .where(
             PersonalDigestEditionRecord.id == edition.id,
-            PersonalDigestEditionRecord.status.in_((
-                PersonalDigestStatus.READY.value,
-                PersonalDigestStatus.DEGRADED.value,
-                PersonalDigestStatus.FAILED.value,
-            )),
-            or_(
-                PersonalDigestEditionRecord.desired_requested_at.is_(None),
-                PersonalDigestEditionRecord.desired_requested_at <= marker,
-            ),
+            PersonalDigestEditionRecord.status == edition.status,
         )
         .values(
             desired_generation_reason=reason_value,
             desired_requested_at=marker,
         )
     )
+    if written.rowcount != 1:
+        # 持着写锁读到的行,更新不该落空;落空说明前提被破坏,别装作记上了。
+        session.rollback()
+        raise RuntimeError("个人早报偏好意向没有记上")
     session.commit()
     session.expire_all()
     return session.get(PersonalDigestEditionRecord, edition.id)
@@ -2261,6 +2274,7 @@ def generate_personal_digest(
     execution_clock: Callable[[], dt.datetime] | None = None,
     localize_before_publish: bool = False,
     dry_run: bool = False,
+    allow_empty: bool = False,
 ) -> PersonalDigestGenerationResult:
     """Generate and persist one immutable personal-digest edition.
 
@@ -2341,7 +2355,11 @@ def generate_personal_digest(
     followed_codes = _followed_codes(interests)
     # v3.54「订阅 ∪ 兴趣」:订阅为空但设了兴趣 → 只出兴趣半(interest_only);两者都空才空报
     interest_only = not scope.expected_source_ids
-    if interest_only and not followed_codes and pending_edition is None:
+    # 订阅与兴趣都空:这一版没有可编的东西。直接生成默认不出版;``allow_empty``(issue #343:偏好被
+    # 清空后的系统换版)与待生成版本(机器人接口的 allow_empty)照常落成一版——而且保证零条目:
+    # 连不看订阅的「重大事件」也不放,「无订阅不出报」的口径不因多了一行空版而变。
+    empty_prefs = interest_only and not followed_codes
+    if empty_prefs and pending_edition is None and not allow_empty:
         return PersonalDigestGenerationResult(status="empty_subscriptions", edition=None)
     if pending_edition is None and not force_new_revision and reason not in REBUILD_REASON_VALUES:
         existing = _latest_completed_edition(session, username, report_date)
@@ -2447,7 +2465,7 @@ def generate_personal_digest(
     breaking_selections: list = []
     breaking_candidates: list[DigestArticleCandidateDTO] = []
     breaking_policy_value = breaking_policy(session)
-    if breaking_policy_value.max_items > 0:
+    if breaking_policy_value.max_items > 0 and not empty_prefs:
         # 与订阅池同序:先按文章 id 排掉昨天用过的那篇,再做事件剔除(统计里昨天那篇不算「被事件抑制」)
         breaking_candidates = _without_previous_events(
             (
@@ -2525,7 +2543,7 @@ def generate_personal_digest(
                 cutoff_at=current,
                 policy=lane_policy,
             )
-            if lane_policy.max_items > 0 else []
+            if lane_policy.max_items > 0 and not empty_prefs else []
         )
         lane_names = _source_display_names(
             session, sorted({candidate.source_id for candidate in lane_pool})
@@ -2888,7 +2906,7 @@ def generate_personal_digest(
             )
             item_records.append(record)
     else:
-        latest = _load_latest_fallback(
+        latest = [] if empty_prefs else _load_latest_fallback(
             session,
             scope.expected_source_ids,
             interests,
@@ -3024,6 +3042,58 @@ def generate_personal_digest(
             items=tuple(item_records),
         )
     edition_id = edition.id
+
+    def _frozen_payload() -> str:
+        """机器人接口的投影,随发布一起固化(同 revision 输出恒定)。两条发布路径共用。"""
+
+        from services.briefs_contract import adapt_edition
+
+        return _json(adapt_edition({
+            "report_date": report_date,
+            "revision": revision,
+            "status": final_values["status"],
+            "generated_at": final_values["generated_at"],
+            "degraded_reason": final_values["degraded_reason"],
+            "sync_stale": final_values["sync_stale"],
+            "analysis_incomplete": final_values["analysis_incomplete"],
+            "selection_stats": selection_stats,
+            "items": [
+                {
+                    "article_id": r.article_id,
+                    "position": r.position,
+                    "section": r.section,
+                    "selection_lane": r.selection_lane,
+                    "quality_score": r.quality_score_snapshot,
+                    "selection_reason": r.selection_reason,
+                    "snapshot": json.loads(r.snapshot_json),
+                }
+                for r in item_records
+            ],
+        }))
+
+    if pending_edition is None and localize_before_publish:
+        # 直接生成路径的「发布即定稿」(issue #343 的系统换版):调用方已持写锁、标题译文已备进
+        # 文章缓存,这里只读缓存补标题(不调模型、不放锁),并把机器人投影写进同一行——终态、
+        # 最终条目、投影与旧版让位在同一个事务里提交,读者与机器人都看不到「标题还没补」的一瞬。
+        from services import personal_digest_titles as titles
+
+        title_stats = titles.localize_edition_titles(
+            session,
+            edition,
+            items=item_records,
+            persist=False,
+            include_failure_count=True,
+            cache_only=True,
+        )
+        if title_stats.get("translation_failed"):
+            final_values["degraded_reason"] = ";".join(
+                filter(None, [final_values["degraded_reason"], "title_localization_fallback"])
+            )
+            final_values["status"] = PersonalDigestStatus.DEGRADED.value
+            degraded = True
+            edition.degraded_reason = final_values["degraded_reason"]
+            edition.status = final_values["status"]
+        edition.briefs_payload_json = _frozen_payload()
     if fenced_publish:
         assert edition_id is not None and generation_token is not None
         if localize_before_publish:
@@ -3094,31 +3164,7 @@ def generate_personal_digest(
 
         final_values["generated_at"] = stamp
         final_values["updated_at"] = stamp
-        from services.briefs_contract import adapt_edition
-
-        frozen = adapt_edition({
-            "report_date": report_date,
-            "revision": revision,
-            "status": final_values["status"],
-            "generated_at": final_values["generated_at"],
-            "degraded_reason": final_values["degraded_reason"],
-            "sync_stale": final_values["sync_stale"],
-            "analysis_incomplete": final_values["analysis_incomplete"],
-            "selection_stats": selection_stats,
-            "items": [
-                {
-                    "article_id": r.article_id,
-                    "position": r.position,
-                    "section": r.section,
-                    "selection_lane": r.selection_lane,
-                    "quality_score": r.quality_score_snapshot,
-                    "selection_reason": r.selection_reason,
-                    "snapshot": json.loads(r.snapshot_json),
-                }
-                for r in item_records
-            ],
-        })
-        final_values["briefs_payload_json"] = _json(frozen)
+        final_values["briefs_payload_json"] = _frozen_payload()
         claimed = session.exec(
             update(PersonalDigestEditionRecord)
             .where(*cas_conditions)
@@ -3196,6 +3242,7 @@ __all__ = [
     "value_lane_policy",
     "PersonalDigestGenerationResult",
     "calculate_due_source_ids",
+    "begin_immediate",
     "request_preference_rebuild",
     "freeze_personal_digest_scope",
     "generate_personal_digest",

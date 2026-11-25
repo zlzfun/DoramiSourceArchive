@@ -650,7 +650,8 @@ def test_empty_subscription_never_broadens_and_article_analysis_filters_work(mon
         _login(client, "bob")
         empty = client.post("/api/reader/briefs/today/ensure")
         assert empty.status_code == 200
-        assert empty.json() == {"status": "empty_subscriptions", "edition": None}
+        # 顶层的 refresh_pending 随 issue #343 加入:没有任何版本时恒为 null
+        assert empty.json() == {"status": "empty_subscriptions", "edition": None, "refresh_pending": None}
 
         rows = client.get(
             f"/api/articles?min_score=9&tag_ids={tag_id}&sort=score&include_content=false"
@@ -1025,12 +1026,12 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
             row = session.get(PersonalDigestEditionRecord, edition_id)
             return row.desired_generation_reason, row.desired_requested_at
 
+    # 巡检按「距最后一次改动」静置;这里把静置时长打成 0、巡检时刻取当下——不用「墙钟 + 31 秒」,
+    # 那样在 23:59:29 之后会落到次日,扫不到今天的版本(检视 R1 #11)。
+    monkeypatch.setattr(digest_refresh, "PREFERENCE_QUIET_SECONDS", 0)
+
     def _settle(engine):
-        # 巡检按「距最后一次改动」静置;这里直接把时钟拨到静置之后
-        tick = dt.datetime.now(shanghai) + dt.timedelta(
-            seconds=digest_refresh.PREFERENCE_QUIET_SECONDS + 1
-        )
-        return digest_refresh.apply_preference_intents(engine, now=tick)
+        return digest_refresh.apply_preference_intents(engine, now=dt.datetime.now(shanghai))
 
     app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
@@ -1123,13 +1124,33 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
         assert all(item["snapshot"]["subscribed"] is False for item in edition_io["items"])
         assert edition_io["scope_stale"] is False
 
-        # 兴趣也清空 → 当日版本清成空订阅状态
+        # 兴趣也清空 → 落成一版零条目的空版;读者端仍是「空订阅」的引导(不是一版零条目的早报)
         cleared = client.put(
             "/api/reader/interests", json={"items": [], "complete_onboarding": True}
         )
         assert cleared.status_code == 200, cleared.text
         assert _settle(sink.engine) == {"empty": 1}
-        assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+        emptied = client.get("/api/reader/briefs/today").json()
+        assert emptied == {"status": "empty_subscriptions", "edition": None, "refresh_pending": None}
+        assert client.post("/api/reader/briefs/today/ensure").json() == emptied
+
+        # 重新订阅:空版继续承载意向,页面据顶层的 refresh_pending 知道稍后有新版;巡检自动恢复
+        with Session(sink.engine) as session:
+            row = session.exec(
+                select(ReaderSubscriptionRecord).where(ReaderSubscriptionRecord.owner_username == "alice")
+            ).first()
+            row.is_active = True
+            session.add(row)
+            session.commit()
+        # 意向还没记上(写入点稍后记,或等补扫)时,只要版面落后于当前偏好就告知页面回来取
+        assert client.get("/api/reader/briefs/today").json()["refresh_pending"] == "soon"
+        assert digest_refresh.sweep_stale_preferences(sink.engine) == 1
+        assert client.get("/api/reader/briefs/today").json()["refresh_pending"] == "soon"
+        assert _settle(sink.engine) == {"published": 1}
+        recovered = client.get("/api/reader/briefs/today").json()
+        assert recovered["status"] in {"ready", "degraded"}
+        assert recovered["edition"]["refresh_pending"] is None
+        assert recovered["edition"]["items"]
         with Session(sink.engine) as session:
             reasons = [
                 row.generation_reason
@@ -1139,7 +1160,10 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
                     .order_by(PersonalDigestEditionRecord.revision)
                 ).all()
             ]
-        assert reasons == ["first_open", "subscription_changed", "subscription_changed"]
+        assert reasons == [
+            "first_open", "subscription_changed", "subscription_changed",
+            "interest_changed", "subscription_changed",
+        ]
 
 
 def test_reader_subscription_write_paths_are_recognised():

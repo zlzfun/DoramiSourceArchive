@@ -163,14 +163,35 @@ def serialize_edition(
             else None
         ),
         "items": items,
-        **(
-            {
-                **digest_service.edition_freshness(session, edition),
-                "refresh_pending": digest_refresh.refresh_pending(session, edition),
-            }
-            if include_freshness
-            else {}
+        **(_freshness_fields(session, edition) if include_freshness else {}),
+    }
+
+
+def _freshness_fields(session: Session, edition: PersonalDigestEditionRecord) -> dict[str, Any]:
+    freshness = digest_service.edition_freshness(session, edition)
+    return {
+        **freshness,
+        "refresh_pending": digest_refresh.refresh_pending(
+            session,
+            edition,
+            stale=bool(freshness["interest_stale"] or freshness["scope_stale"]),
         ),
+    }
+
+
+def _today_payload(session: Session, edition: PersonalDigestEditionRecord) -> dict[str, Any]:
+    """今日端点的响应。订阅与兴趣都空时落成的空版(issue #343)对读者仍是「空订阅」的引导,
+    不是一版零条目的早报;顶层带 ``refresh_pending``,读者重新订阅后页面知道稍后会有新版。"""
+
+    if digest_refresh.is_empty_preferences_edition(session, edition):
+        return {
+            "status": "empty_subscriptions",
+            "edition": None,
+            "refresh_pending": _freshness_fields(session, edition)["refresh_pending"],
+        }
+    return {
+        "status": edition.status,
+        "edition": serialize_edition(session, edition, include_freshness=True),
     }
 
 
@@ -548,12 +569,9 @@ def _ensure(
         first_open_at=now if first_open else None,
     )
     if result.edition is None:
-        return {"status": "empty_subscriptions", "edition": None}
+        return {"status": "empty_subscriptions", "edition": None, "refresh_pending": None}
     edition = process_pending_edition(session, result.edition, now=now)
-    return {
-        "status": edition.status,
-        "edition": serialize_edition(session, edition, include_freshness=True),
-    }
+    return _today_payload(session, edition)
 
 
 @router.post("/today/ensure")
@@ -593,10 +611,7 @@ def get_today(
     edition = _latest_edition(session, _username(auth), today)
     if edition is None:
         return {"status": "not_started", "edition": None}
-    return {
-        "status": edition.status,
-        "edition": serialize_edition(session, edition, include_freshness=True),
-    }
+    return _today_payload(session, edition)
 
 
 @router.get("/{report_date}")
