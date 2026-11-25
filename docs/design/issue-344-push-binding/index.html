@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推送绑定 · 样页总览</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { color: var(--accent); text-decoration: none; margin-left: auto; }
+  .frame { position: relative; overflow: hidden; width: calc(var(--vw, 1440) * var(--s, 0.46) * 1px); height: calc(var(--vh, 1000) * var(--s, 0.46) * 1px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: calc(var(--y, 0) * var(--s, 0.46) * -1px); left: calc(var(--x, 0) * var(--s, 0.46) * -1px); width: 1440px; height: 1000px; border: 0; transform: scale(var(--s, 0.46)); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1100px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 14px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; }
+  td:first-child { white-space: nowrap; color: var(--faint); }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+  .lines { display: grid; grid-template-columns: max-content max-content max-content; gap: 8px 28px; margin-top: 14px; font-size: 14px; align-items: center; }
+  .lines .h { font-size: 13px; color: var(--faint); }
+  .repost { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: 13px; color: var(--ink-2); }
+  .repost svg { width: 13px; height: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>推送绑定 · 样页总览</h1>
+  <p class="lede">管理员在哪里登记一个推送的来源、把它交给哪个令牌,以及怎么一眼看出哪个源有 Agent 在推。</p>
+  <p>底页是主干(46cc0c5d)在隔离栈里的现网页面,数据是虚构账号。每个画框右上角可以打开可点的原型;原型底部的深色条是样页开关,不属于产品界面。</p>
+
+  <h2>1 · 收录令牌</h2>
+  <p>运维 → 自定源与收录。表里多一列「来源」;点一行,在抽屉里加、解这个令牌的来源。</p>
+  <div class="row">
+    <figure><figcaption><b>现网</b><a href="tokens.html?state=now" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 660"><iframe src="tokens.html?state=now&bare" loading="lazy" title="收录令牌 · 现网"></iframe></div></figure>
+    <figure><figcaption><b>样页</b><a href="tokens.html" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 660"><iframe src="tokens.html?bare" loading="lazy" title="收录令牌 · 样页"></iframe></div></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption><b>点一行</b>这个令牌的来源<a href="tokens.html?open=token" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 481; --x: 959; --vh: 480"><iframe src="tokens.html?open=token&bare" loading="lazy" title="令牌的来源"></iframe></div></figure>
+    <figure><figcaption><b>含自助登记</b>第二个 PR,待拍板<a href="tokens.html?open=token&self=1" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 481; --x: 959; --vh: 480"><iframe src="tokens.html?open=token&self=1&bare" loading="lazy" title="令牌的来源 · 含自助登记"></iframe></div></figure>
+    <figure><figcaption><b>暗色</b><a href="tokens.html?open=token&theme=dark" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 481; --x: 959; --vh: 480"><iframe src="tokens.html?open=token&theme=dark&bare" loading="lazy" title="令牌的来源 · 暗色"></iframe></div></figure>
+  </div>
+
+  <h2>2 · 源管理</h2>
+  <p>有推送绑定的源,行上的「无采集」换成「推送」,最后一列是最近一批推送的时间。右侧检视器多一区「推送」,列出在推它的令牌。页头多一个「登记来源」。</p>
+  <div class="row">
+    <figure><figcaption><b>现网</b><a href="sources.html?state=now" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="sources.html?state=now&bare" loading="lazy" title="源管理 · 现网"></iframe></div></figure>
+    <figure><figcaption><b>样页</b>选中一个只推送的源<a href="sources.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="sources.html?bare" loading="lazy" title="源管理 · 样页"></iframe></div></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption><b>只推送的源</b><a href="sources.html" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.9; --vw: 346; --x: 1067; --y: 188; --vh: 470"><iframe src="sources.html?bare" loading="lazy" title="检视器 · 只推送"></iframe></div></figure>
+    <figure><figcaption><b>又抓又推的源</b><a href="sources-x.html" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.9; --vw: 346; --x: 1067; --y: 188; --vh: 792"><iframe src="sources-x.html?bare" loading="lazy" title="检视器 · 又抓又推"></iframe></div></figure>
+    <figure><figcaption><b>暗色</b><a href="sources.html?theme=dark" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.9; --vw: 346; --x: 1067; --y: 188; --vh: 470"><iframe src="sources.html?theme=dark&bare" loading="lazy" title="检视器 · 暗色"></iframe></div></figure>
+  </div>
+
+  <h2>3 · 登记来源</h2>
+  <p>源管理页头的「登记来源」。给了账号或站点的是定向源,只收这一处的内容;选「不限」的是合集,一个源里可以有很多账号的推文。</p>
+  <div class="row">
+    <figure><figcaption><b>推文 · 不限</b><a href="sources.html?open=register" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 470; --x: 970; --vh: 640"><iframe src="sources.html?open=register&bare" loading="lazy" title="登记来源 · 不限"></iframe></div></figure>
+    <figure><figcaption><b>推文 · 一个账号</b><a href="sources.html?open=register&reg=one" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 470; --x: 970; --vh: 640"><iframe src="sources.html?open=register&reg=one&bare" loading="lazy" title="登记来源 · 一个账号"></iframe></div></figure>
+    <figure><figcaption><b>播客</b><a href="sources.html?open=register&kind=podcast" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.8; --vw: 470; --x: 970; --vh: 640"><iframe src="sources.html?open=register&kind=podcast&bare" loading="lazy" title="登记来源 · 播客"></iframe></div></figure>
+  </div>
+
+  <h2>4 · 读者面</h2>
+  <p>页面与逻辑不变。只有转推卡片顶上那一行的名字要改:现在取源的名字,在合集里会变成合集的名字。改为取转推者本人。下面是这一行的文字示意,不是卡片的截图。</p>
+  <div class="lines">
+    <span class="h">帖子所在的源</span><span class="h">现网</span><span class="h">改后</span>
+    <span>账号源「X · Sam Altman」</span>
+    <span class="repost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg>X · Sam Altman 转推</span>
+    <span class="repost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg>Sam Altman 转推</span>
+    <span>合集「Grok 推荐」</span>
+    <span class="repost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg>Grok 推荐 转推</span>
+    <span class="repost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg>Sam Altman 转推</span>
+  </div>
+
+  <h2>5 · 待拍板</h2>
+  <table>
+    <tr><th>#</th><th>问题</th><th>样页里的做法</th></tr>
+    <tr><td>1</td><td>绑定从哪边做</td><td>两边都能做:令牌抽屉里加来源,源检视器里加令牌。接口是同一个</td></tr>
+    <tr><td>2</td><td>「登记来源」放在哪</td><td>源管理页头。收录令牌那一页不放</td></tr>
+    <tr><td>3</td><td>有推送绑定的源在行上怎么标</td><td>「推送」徽标顶替「无采集」;又抓又推的源在原有徽标后面加一个</td></tr>
+    <tr><td>4</td><td>只推送的源算不算「未运行」</td><td>照旧计入(状态点是灰的),最后一列改成最近一批推送的时间</td></tr>
+    <tr><td>5</td><td>不限出处的源的 id</td><td>管理员填后缀,前面固定 <code>push_</code></td></tr>
+    <tr><td>6</td><td>读者面转推那一行</td><td>取转推者本人的名字;账号源的显示也会跟着从源名变成显示名</td></tr>
+    <tr><td>7</td><td>Agent 自助登记</td><td>令牌抽屉里一个开关,默认关。放第二个 PR</td></tr>
+  </table>
+
+  <h2>6 · 样页的边界</h2>
+  <p>来源、令牌、时间和条数都是示意。原型里能点的是:令牌表的行、抽屉的关闭、「登记来源」和它的类型与出处切换;「绑定」「解绑」「登记」不会改动任何数据。</p>
+  <p>没有画的:签发令牌的同时选来源(接口支持,界面先不加);未绑定令牌推送被拒收时的回执(见方案 §4);手机壳(管理面不在手机壳里)。</p>
+</main>
+</body>
+</html>
