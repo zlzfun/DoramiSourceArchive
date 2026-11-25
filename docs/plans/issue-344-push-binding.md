@@ -1,6 +1,6 @@
 # 推送绑定:登记过的推送是源的一种获取方式(issue #344)
 
-> 状态:进行中(2026-11-25 立项;方向已拍板,§9 的几项待拍板;尚未实现)。
+> 状态:进行中(2026-11-25 立项;方向已拍板,§9 的几项待拍板;后端已在分支上实现,界面待样页拍板,见 §12)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §11)。分支 `feat/issue-344-push-binding`。
 > 关联:[issue #344](https://github.com/zlzfun/DoramiSourceArchive/issues/344);前情是收录推送 [issue #262](./issue-262-agent-ingest-sources.md) 与三层源模型 [重构方案](./issue-262-source-model-refactor.md);上一波 [#341](../archive/issue-341-ingest-social-fidelity.md)。
 
@@ -65,9 +65,9 @@
 ### 3.2 定向源与不限出处的源
 
 - **定向源**:有身份的源。社交源有 X 账号(预设、配置行的 `handle` / `user_id`、身份键表),文章源有站点或 feed,播客源有 feed。定向的社交源只收这个账号的帖子(转推时顶层 `author` 是转推者,即这个账号)。
-- **不限出处的源**:没有身份的源,例如「某 Agent 的推荐」。一个源里可以有很多账号的推文。读者面的推文卡片本来就按帖子自己的作者画(`SocialFlow.jsx::postAuthorOf`),不取源的名字和头像。
+- **不限出处的源(合集)**:登记时没有给账号 / 站点的源,例如「某 Agent 的推荐」。一个源里可以有很多账号的推文。读者面的推文卡片本来就按帖子自己的作者画(`SocialFlow.jsx::postAuthorOf`),不取源的名字和头像。
 
-不加新列:有没有身份由已有的数据推出(X 身份索引 `source_identity.x_identity_index`、身份键表、源行的地址)。
+不加新列。合集的认法是结构性的:**id 以 `push_` 开头且没有身份键**(`ingest_push.source_is_open`),只有登记接口能建这样的 id。没有用「查不到身份」来推导:存量的旧导入行也可能没有身份键,它们仍是某个账号的源。账号源的作者核对看身份键(X 身份索引 `source_identity.x_identity_index` 与身份键表),旧导入行按「账号名派生的 id 与源 id 相同」认。
 
 这与「一个 X 账号一个源」不冲突:那条不变量说的是账号源;不限出处的源不是任何账号。
 
@@ -114,7 +114,7 @@
 
 - `POST /api/admin/ingest/tokens/{id}/bindings` `{source_id}`;`DELETE /api/admin/ingest/tokens/{id}/bindings/{source_id}`。
 - 签发令牌时可带 `source_ids`,一步绑好。
-- 可绑定的源:存在、不是读者自定源、不是抓取模板、不是公共日报、未退役、不是同步来的行。已下架的源可以绑(推送会被「已下架」拒收,恢复后生效)。
+- 可绑定的源:存在、不是读者自定源、不是抓取模板、不是公共日报、未退役。已下架的源可以绑(推送会被「已下架」拒收,恢复后生效)。带同步印记的源照常可以绑:印记只是「上游也有这个源」的簿记(issue #263),收录写进去的是本机版本。
 - 平台抓取的源也可以绑(一个源又抓又推):同一条两条路都到时按现有规则合流,推文以抓取版为准(#341)。
 
 ### 5.3 界面(运维 → 自定源与收录 → 收录;运维 → 源管理)
@@ -166,4 +166,18 @@
 
 ## 11. 检视
 
-待实现后填写。
+待界面实现后、开 PR 前做(Codex 交叉检视)。
+
+## 12. 实施记录
+
+**后端(2026-11-25,分支上,未推送)**:
+
+- 表与迁移:`IngestBindingRecord` / `alembic/versions/c7e2a94b5d18_ingest_bindings.py`(纯新增)。
+- `services/ingest_bindings.py`:绑定 / 解绑 / 最近一批、可否绑定的校验、登记不带抓取的源(定向源复用 `ingest_push.resolve_source` 的身份派生,已有源回 409)。
+- `services/ingest_push.py`:`resolve_bound_source`(令牌推送的出处解析:只认绑定的源、不建源、合集兜底、账号源核对作者);`resolve_source` 不动,管理员「单条收录」照旧。
+- `services/ingest_batch.py`:`IngestCaller.bound` 非空走绑定解析;一批结束后给有条目被接受的源记 `last_pushed_at`。
+- 路由:令牌带上绑定集合;`POST` / `DELETE …/tokens/{id}/bindings`、`POST /api/admin/ingest/sources`、签发时的 `source_ids`;`GET /api/admin/ingest/tokens` 带 `bindings`,`GET /api/fetchers` 带 `push_bindings`;三条审计摘要。
+- 测试:新增 `tests/test_ingest_bindings.py`(10 例)。现有收录用例里依赖「令牌推送自动建源」的 30 余条改走管理员「单条收录」(这部分行为现在只在那里),推到已有源的改成签发时绑定;断言里的通道与收录者相应从 `push` / 令牌名改成 `manual` / 管理员。
+- 契约 `docs/contracts/ingest_push.md` 与端点清单已同步。
+
+**还没做**:管理面界面与读者面那一行文字(等样页拍板)、Agent 自助登记(§8)、version-history / backlog / decisions 的同波记录、交叉检视。

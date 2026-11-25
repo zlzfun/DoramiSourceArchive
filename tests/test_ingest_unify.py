@@ -41,9 +41,11 @@ def _login(client, username="admin"):
     assert client.post("/api/auth/login", json={"username": username, "password": username}).status_code == 200
 
 
-def _issue_token(client, actor="research-agent"):
-    response = client.post("/api/admin/ingest/tokens", json={"actor": actor})
+def _issue_token(client, actor="research-agent", bind=()):
+    """签发令牌并绑定来源:令牌只能推它绑定的源(issue #344)。"""
+    response = client.post("/api/admin/ingest/tokens", json={"actor": actor, "source_ids": list(bind)})
     assert response.status_code == 200, response.text
+    assert [b["source_id"] for b in response.json()["bindings"]] == list(bind)
     return response.json()["token"]
 
 
@@ -79,7 +81,6 @@ def test_same_source_content_dedupe_only_on_push_and_only_within_one_source(monk
     near = body[:200] + "补一句" + body[200:]  # 小改动:SimHash 距离 ≤ 3、Jaccard ≥ 0.8
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
         results = _push(client, [
             # 同源换链接、正文相同 → duplicate_content,只记收录。
             {"kind": "article", "url": "https://anildash.com/mirror/a", "title": "换链接",
@@ -101,7 +102,7 @@ def test_same_source_content_dedupe_only_on_push_and_only_within_one_source(monk
             # 不同正文照常新建。
             {"kind": "article", "url": "https://anildash.com/2026/other", "title": "另一篇",
              "content": _text(2), "source": {"source_id": "rss_anil_dash"}},
-        ], token).json()["results"]
+        ]).json()["results"]
     statuses = [(r["status"], r.get("source_id")) for r in results]
     assert statuses[0] == ("duplicate_content", "rss_anil_dash")
     assert results[0]["id"] in {"rss_anil_dash_a", "rss_anil_dash_repost"}
@@ -132,7 +133,7 @@ def test_social_and_podcast_items_are_never_compared_by_content(monkeypatch, tmp
              body, content_type="social_post")
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
+        token = _issue_token(client, bind=["x_openai"])
         results = _push(client, [
             {"kind": "social_post", "post_id": "1990000000000000002", "content": body,
              "author": {"handle": "OpenAI"}},
@@ -149,7 +150,7 @@ def test_simhash_candidates_are_rechecked_with_jaccard(monkeypatch, tmp_path):
     _fetched(sink, "rss_anil_dash", "rss_anil_dash_a", "https://anildash.com/2026/a", _text(4))
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
+        token = _issue_token(client, bind=["rss_anil_dash"])
         results = _push(client, [
             {"kind": "article", "url": "https://anildash.com/2026/b", "title": "不同",
              "content": _text(5), "source": {"source_id": "rss_anil_dash"}},
@@ -290,7 +291,7 @@ def test_custom_source_bound_to_a_github_fetcher_is_not_compared(monkeypatch, tm
              body, content_type="github_release")
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
+        token = _issue_token(client, bind=["custom_release"])
         results = _push(client, [
             {"kind": "article", "url": "https://github.com/acme/tool/releases/tag/nightly", "title": "nightly",
              "content": body, "source": {"source_id": "custom_release"}},
@@ -324,7 +325,7 @@ def test_orphan_fingerprints_do_not_hide_a_live_duplicate(monkeypatch, tmp_path)
         _fetched(sink, "rss_anil_dash", f"rss_anil_dash_a{i:02d}", f"https://anildash.com/2026/a{i}", body)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
+        token = _issue_token(client, bind=["rss_anil_dash"])
         first = _push(client, [
             {"kind": "article", "url": "https://anildash.com/mirror/x", "title": "x", "content": body,
              "source": {"source_id": "rss_anil_dash"}},
@@ -352,6 +353,10 @@ def test_manual_ingest_does_not_spend_a_same_named_token_quota(monkeypatch, tmp_
         token = response.json()["token"]
         manual = _push(client, [{"kind": "article", "url": "https://blog.example.com/p/m", "title": "m", "content": "x"}])
         assert manual.json()["results"][0]["status"] == "created"
+        assert client.post(
+            f"/api/admin/ingest/tokens/{response.json()['id']}/bindings",
+            json={"source_id": manual.json()["results"][0]["source_id"]},
+        ).status_code == 200
         pushed = _push(client, [{"kind": "article", "url": "https://blog.example.com/p/t", "title": "t", "content": "x"}], token)
     assert pushed.json()["results"][0]["status"] == "created", pushed.json()
 
@@ -362,13 +367,13 @@ def test_ledger_exposes_provenance_as_filter_facet_and_fields(monkeypatch, tmp_p
     _fetched(sink, "rss_anil_dash", "rss_anil_dash_prov1", "https://anildash.com/p/1", _text(1))
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client, actor="research-agent")
-        pushed = _push(client, [
-            {"kind": "article", "url": "https://blog.example.com/p/pushed", "title": "推", "content": "正文"},
-        ], token).json()["results"][0]
         manual = _push(client, [
             {"kind": "article", "url": "https://blog.example.com/p/manual", "title": "手", "content": "正文"},
         ]).json()["results"][0]
+        token = _issue_token(client, actor="research-agent", bind=[manual["source_id"]])
+        pushed = _push(client, [
+            {"kind": "article", "url": "https://blog.example.com/p/pushed", "title": "推", "content": "正文"},
+        ], token).json()["results"][0]
         assert (pushed["status"], manual["status"]) == ("created", "created"), (pushed, manual)
         facets = client.get("/api/articles/facets").json()
         channels = {row["value"]: (row["count"], row["label"]) for row in facets["ingest_channels"]}

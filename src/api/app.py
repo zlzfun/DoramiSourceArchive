@@ -2374,6 +2374,13 @@ async def _require_admin_session_impl(request: Request, call_next):
         (normalized_method == "POST" and path == "/api/accounts")
         or (normalized_method == "POST" and path == "/api/accounts/batch")
         or (normalized_method == "POST" and path == "/api/admin/ingest/tokens")
+        # 推送绑定与登记来源(issue #344):摘要要写是哪个源
+        or (normalized_method == "POST" and path == "/api/admin/ingest/sources")
+        or (
+            normalized_method == "POST"
+            and path.startswith("/api/admin/ingest/tokens/")
+            and path.endswith("/bindings")
+        )
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")

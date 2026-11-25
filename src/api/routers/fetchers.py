@@ -19,7 +19,7 @@ from sqlmodel import Session
 
 from api import deps
 from api.collection_planning import test_run_overrides
-from services import jobs
+from services import ingest_bindings, jobs
 from services.collection_nodes import source_management_catalog
 
 router = APIRouter(tags=["fetchers"])
@@ -44,8 +44,13 @@ async def get_available_fetchers(
         include_retired: bool = False,
         session: Session = Depends(deps.get_session),
 ):
-    """源管理目录:全部公共源(issue #262 第三波),每条带 ``bound``(有采集绑定才能运行 / 编入任务)。"""
-    return source_management_catalog(session, include_retired=include_retired)
+    """源管理目录:全部公共源(issue #262 第三波),每条带 ``bound``(有采集绑定才能运行 / 编入任务)
+    与 ``push_bindings``(在往这个源推的收录令牌,issue #344;抓取与推送是并列的两种获取方式)。"""
+    items = source_management_catalog(session, include_retired=include_retired)
+    pushes = ingest_bindings.by_source(session)
+    for item in items:
+        item["push_bindings"] = pushes.get(str(item.get("id") or ""), [])
+    return items
 
 
 @router.post("/api/fetch/batch")

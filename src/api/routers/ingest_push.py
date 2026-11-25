@@ -3,8 +3,8 @@
 - ``POST /api/public/ingest/v1/items``:收录令牌(``Authorization: Bearer ding_…``)推送一批条目,
   或管理员会话做「单条收录」(通道 ``manual``);``/api/public/*`` 免会话、按令牌鉴权(与订阅 /
   聚合令牌同一门控),会话由本路由自己核对。批处理主循环在 ``services/ingest_batch.py``。
-- ``/api/admin/ingest/*``:令牌签发 / 吊销、收录源列表与「列入 / 下架 / 恢复 / 改名」;管理前缀,
-  仅管理员,写操作入审计。
+- ``/api/admin/ingest/*``:令牌签发 / 吊销、推送绑定(令牌 ↔ 源)、登记不带抓取的源、收录源列表与
+  「列入 / 下架 / 恢复 / 改名」;管理前缀,仅管理员,写操作入审计。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from api import deps
 from api.tokens import read_bearer_or_query_token
 from models.db import ArticlePickRecord, ArticleRecord, IngestTokenRecord, SourceConfigRecord
 from services import admin_audit as admin_audit_service
-from services import ingest_batch, ingest_push, social_ingest
+from services import ingest_batch, ingest_bindings, ingest_push, social_ingest
 from services import source_catalog, source_visibility
 
 
@@ -118,7 +118,11 @@ def _caller(request: Request, session: Session) -> tuple[ingest_batch.IngestCall
             # collector 门控一致(检视 R1 #3)。
             raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
         remaining = max(0, int(record.daily_limit or 0) - ingest_push.picks_today(session, record.actor))
-        return ingest_batch.IngestCaller(actor=record.actor, remaining=remaining), record
+        return ingest_batch.IngestCaller(
+            actor=record.actor, remaining=remaining,
+            # 令牌只能往它绑定的源推(issue #344);没有绑定就是空集,一条也推不进来。
+            token_id=record.id, bound=ingest_bindings.bound_source_ids(session, record.id),
+        ), record
     auth = _app().current_auth_session(request)
     if auth and auth.get("role") == "admin" and not _app().is_guest_session(auth):
         if not _app().collector_role_enabled(auth):
@@ -229,31 +233,73 @@ async def push_items(batch: IngestBatch, request: Request):
 class TokenCreate(BaseModel):
     actor: str
     daily_limit: int = ingest_push.DEFAULT_DAILY_LIMIT
+    source_ids: List[str] = PydanticField(default_factory=list, max_length=200)
+
+
+class BindingCreate(BaseModel):
+    source_id: str
 
 
 class IngestSourceUpdate(BaseModel):
     name: Optional[str] = None
 
 
+class IngestSourceRegister(BaseModel):
+    kind: str
+    name: str
+    handle: str = ""
+    user_id: str = ""
+    url: str = ""
+    feed_url: str = ""
+    source_id_suffix: str = ""
+    avatar_url: str = ""
+    homepage_url: str = ""
+    description: str = ""
+    listed: bool = True
+    token_id: Optional[int] = None
+
+
+def _binding_error(exc: ingest_bindings.BindingError) -> HTTPException:
+    detail: Any = str(exc)
+    if exc.existing_source_id:
+        detail = {"message": str(exc), "source_id": exc.existing_source_id}
+    return HTTPException(status_code=exc.status, detail=detail)
+
+
+def _token_payload(record: IngestTokenRecord, bindings: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
+    return {**ingest_push.serialize_token(record), "bindings": bindings.get(record.id, [])}
+
+
 @router.get("/api/admin/ingest/tokens")
 def list_tokens(session: Session = Depends(deps.get_session)):
     rows = session.exec(select(IngestTokenRecord).order_by(IngestTokenRecord.id.desc())).all()
-    return {"items": [ingest_push.serialize_token(row) for row in rows]}
+    bindings = ingest_bindings.by_token(session)
+    return {"items": [_token_payload(row, bindings) for row in rows]}
 
 
 @router.post("/api/admin/ingest/tokens")
 def create_token(params: TokenCreate, request: Request, session: Session = Depends(deps.get_session)):
+    created_by = _app().current_username(request) or ""
+    # 先核对要绑定的源,再签发:不留下「签发成功、绑定失败」的半截令牌。
+    source_ids = list(dict.fromkeys(sid.strip() for sid in params.source_ids if sid.strip()))
+    for source_id in source_ids:
+        reason = ingest_bindings.unbindable_reason(session, source_id)
+        if reason:
+            raise HTTPException(status_code=400, detail=f"{source_id}:{reason}")
     try:
         record, token = ingest_push.create_token(
             session,
             actor=params.actor,
-            created_by=_app().current_username(request) or "",
+            created_by=created_by,
             daily_limit=params.daily_limit,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    for source_id in source_ids:
+        ingest_bindings.bind(session, record.id, source_id, created_by=created_by)
+    session.commit()
     # 明文只在签发这一次回显;库里只有 hash。
-    return {**ingest_push.serialize_token(record), "token": token}
+    return {**_token_payload(record, ingest_bindings.by_token(session)), "token": token}
 
 
 @router.post("/api/admin/ingest/tokens/{token_id}/revoke")
@@ -261,7 +307,70 @@ def revoke_token(token_id: int, session: Session = Depends(deps.get_session)):
     record = ingest_push.revoke_token(session, token_id)
     if record is None:
         raise HTTPException(status_code=404, detail="令牌不存在")
-    return ingest_push.serialize_token(record)
+    return _token_payload(record, ingest_bindings.by_token(session))
+
+
+# ── 推送绑定(issue #344):令牌只能往它绑定的源推 ──
+
+
+@router.post("/api/admin/ingest/tokens/{token_id}/bindings")
+def bind_source(
+    token_id: int, params: BindingCreate, request: Request, session: Session = Depends(deps.get_session)
+):
+    try:
+        ingest_bindings.bind(
+            session, token_id, params.source_id, created_by=_app().current_username(request) or ""
+        )
+    except ingest_bindings.BindingError as exc:
+        raise _binding_error(exc)
+    session.commit()
+    return _token_payload(session.get(IngestTokenRecord, token_id), ingest_bindings.by_token(session))
+
+
+@router.delete("/api/admin/ingest/tokens/{token_id}/bindings/{source_id}")
+def unbind_source(token_id: int, source_id: str, session: Session = Depends(deps.get_session)):
+    record = session.get(IngestTokenRecord, token_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="令牌不存在")
+    if not ingest_bindings.unbind(session, token_id, source_id):
+        raise HTTPException(status_code=404, detail="这个令牌没有绑定该来源")
+    session.commit()
+    return _token_payload(record, ingest_bindings.by_token(session))
+
+
+@router.post("/api/admin/ingest/sources")
+def register_ingest_source(
+    params: IngestSourceRegister, request: Request, session: Session = Depends(deps.get_session)
+):
+    """登记一个不带抓取的源:给了账号 / 站点 / feed 的是定向源,不给的是合集源(``push_<后缀>``)。"""
+    try:
+        row = ingest_bindings.register_source(
+            session,
+            kind=params.kind, name=params.name,
+            handle=params.handle, user_id=params.user_id, url=params.url, feed_url=params.feed_url,
+            source_id_suffix=params.source_id_suffix,
+            avatar_url=params.avatar_url, homepage_url=params.homepage_url, description=params.description,
+            listed=params.listed,
+        )
+        if row is None:
+            raise ingest_bindings.BindingError("登记失败:这个 id 不能用作来源")
+        if params.token_id is not None:
+            ingest_bindings.bind(
+                session, params.token_id, row.source_id, created_by=_app().current_username(request) or ""
+            )
+    except ingest_bindings.BindingError as exc:
+        session.rollback()
+        raise _binding_error(exc)
+    session.commit()
+    view = source_catalog.get(session, row.source_id)
+    return {
+        "status": "success",
+        "source_id": row.source_id,
+        "name": view.name,
+        "shape": view.shape,
+        "admission_status": view.admission_status,
+        "open": row.source_id.startswith(ingest_push.OPEN_SOURCE_PREFIX),
+    }
 
 
 def _ingest_source_rows(session: Session) -> list[SourceConfigRecord]:

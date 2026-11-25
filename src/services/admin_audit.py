@@ -414,6 +414,31 @@ AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
         re.compile(r"^/api/admin/ingest/tokens/(?P<target>[^/]+)/revoke$"),
         lambda match, body: _id_target(match, body, noun="收录令牌", action="吊销"),
     ),
+    # issue #344:推送绑定(令牌 ↔ 源)与登记不带抓取的源。
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/tokens/(?P<token>[^/]+)/bindings$"),
+        lambda match, body: (
+            f"绑定来源 {str((body or {}).get('source_id') or '')[:80]}(收录令牌 {match.group('token')})",
+            str((body or {}).get("source_id") or "") or None,
+        ),
+    ),
+    (
+        "DELETE",
+        re.compile(r"^/api/admin/ingest/tokens/(?P<token>[^/]+)/bindings/(?P<target>[^/]+)$"),
+        lambda match, _body: (
+            f"解绑来源 {match.group('target')[:80]}(收录令牌 {match.group('token')})",
+            match.group("target"),
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/admin/ingest/sources$"),
+        lambda _m, body: (
+            f"登记来源 {str((body or {}).get('name') or '')[:60]}".rstrip(),
+            str((body or {}).get("name") or "") or None,
+        ),
+    ),
     (
         "POST",
         re.compile(r"^/api/admin/ingest/sources/(?P<target>[^/]+)/admit$"),
