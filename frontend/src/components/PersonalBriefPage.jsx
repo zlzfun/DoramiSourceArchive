@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, ChevronDown, ChevronRight, Clock3, Loader2, RefreshCw, Star, Undo2, Zap } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUpRight, CalendarDays, ChevronDown, ChevronRight, Loader2, Star, Undo2, Zap } from 'lucide-react';
 import {
   completeInterestOnboarding,
   ensurePersonalBrief,
   fetchPersonalBrief,
   fetchPersonalBriefs,
   fetchTodayPersonalBrief,
-  rebuildPersonalBrief,
 } from '../api';
 import { flushPendingInterestSaves } from '../utils/interestSaveQueue';
 import { rebuildToast } from '../utils/briefRebuild';
+import { briefPollInterval, isBriefPreparing, isBriefSwap } from '../utils/briefRefresh';
 import { guestEdition } from '../utils/guestCopy';
 import LogoMark from './LogoMark';
 import BriefPodcastGuide from './BriefPodcastGuide';
 import BriefHistoryCalendar, { BriefHistorySheet } from './BriefHistoryCalendar';
-import { GlassBtn, HeadTitle, MobileHeader } from './mobile/MobileHeader';
+import { HeadTitle, MobileHeader } from './mobile/MobileHeader';
 import { useLongPress } from '../hooks/useLongPress';
 import { compactLayoutMatches } from '../hooks/useCompactLayout';
 import { briefSelectionCounts, VALUE_LANES } from '../utils/briefStats';
@@ -41,13 +41,16 @@ import { enterBrief } from '../utils/spatialMotion';
 //   ③ 本期编排 = 编排时刻与版次 / 入选事实句 + 调整兴趣 / 头条规则 / 往期日期。
 // 头条:有「重大事件」取第一条,否则取新闻通道里新闻价值最高的一条;降级版面(订阅源最新更新)不设头条——
 // 没达到入选标准的内容不该被印成头版,海报位改为一句如实说明。编排中 / 失败 / 没有早报等状态替换海报的头条位,
-// 眉头与「往期」照常可用。状态提示(重编排队 / 来源或分析未完成 / 兴趣或订阅已更新)是眉头下的一行,带就地动作。
+// 眉头与「往期」照常可用。
+// 没有重编入口(issue #343):今天的早报由系统自动换版——新内容落地、读者改了兴趣或订阅、生成失败后重试——页面按后端给的
+// refresh_pending 隔一会儿再取一次;取到新的一版时,读者停在页首或刚切回页面就直接换,正往下读就先不换(回到页首再换),
+// 不出提示。被换下的版本不进往期;带着旧版本号从正文返回时照旧落回原位,回到页首时换成当前这一版。
 // 沿用的行为(issue #23 / #33 / #56 / #74 / #178 历次):外出返回(点条目进原文时交出 {日期, 版次, 卷动位置,
 // 条目序列},阅读窗出返回带,回来时落回原位并短暂高亮刚读过的那条)、社交条目点开即原链、订阅外条目「+ 订阅」、
 // 首登兴趣引导横幅、空态 / 失败态的「先去看文章」出口、深度阅读 / 播客精选两个按内容价值入选的板块。
 // 桌面占「源栏 + 条目列 + 阅读窗」整幅(grid-column 2 / -1);移动壳同一张页面,单列。
-// 游客(issue #213):看的是按默认订阅编排的共享游客版——眉头下恒为「游客版」说明行 + 登录入口,不出
-// 「重新编排」「立即重编」「重试生成」(游客不能重编;失败的游客版由后端过一阵自动重试),选篇理由改说「默认订阅的」。
+// 游客(issue #213):看的是按默认订阅编排的共享游客版——眉头下恒为「游客版」说明行 + 登录入口,选篇理由改说「默认订阅的」;
+// 自动换版对游客版同样生效。
 // 手机档(issue #230 批 3b,样页 docs/design/issue-230-mobile/ 早报屏):头条整块可点(按下压暗、缩 0.99,摘要下文字级「全文 ›」,
 // 没有实底「阅读全文」与收藏钮)、板块条目是夜航卡(不带英文原标题与收藏星,头条保留原标题)、收藏等动作走长按动作单
 // (onItemMenu,MobileReader 复用文章动作单;动作单上方是抬起的预览卡)、板块名吸在页头之下、往期是底页月历(BriefHistorySheet)。
@@ -55,7 +58,8 @@ import { enterBrief } from '../utils/spatialMotion';
 const TERMINAL = new Set(['ready', 'degraded', 'failed', 'superseded']);
 const LIVE = new Set(['pending', 'generating']);
 const HISTORY_LIMIT = 100;
-const POLL_MS = 8000;
+// 「停在页首」的容差:卷动不超过它,取到新的一版就直接换(issue #343)
+const TOP_SLOP = 24;
 const PAST_CHIPS = 7;
 
 const tagName = (tag) => tag?.name_zh || tag?.name_en || tag?.label || tag?.code || '';
@@ -457,7 +461,6 @@ export default function PersonalBriefPage({
   const [today, setToday] = useState(null); // {status, edition}
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [working, setWorking] = useState(false);
   const [sel, setSel] = useState(() => (
     restore ? { date: restore.date, revision: restore.revision ?? null } : { date: null, revision: null }
   )); // date=null → 今天
@@ -501,18 +504,34 @@ export default function PersonalBriefPage({
       .catch(() => { /* 历史是辅助信息,失败不覆盖今日主状态 */ })
   ), []);
 
-  const loadToday = useCallback(async ({ ensure = false } = {}) => {
-    setError('');
+  // 今天的早报由系统自动换版(issue #343:新内容落地 / 读者改了兴趣或订阅 / 失败后重试),读者不操作。
+  // 取到新的一版时:读者正往下读今天这版 → 先留着(heldTodayRef),回到页首或切回页面再换;其余情况直接放上版面。
+  const todayRef = useRef(null);
+  const heldTodayRef = useRef(null);
+  const readingRef = useRef(false);
+  const showToday = useCallback((data) => {
+    heldTodayRef.current = null;
+    todayRef.current = data;
+    setToday(data);
+    if (TERMINAL.has(data?.status)) loadHistory();
+  }, [loadHistory]);
+  const releaseHeldToday = useCallback(() => {
+    if (heldTodayRef.current) showToday(heldTodayRef.current);
+  }, [showToday]);
+
+  // quiet:后台再取(轮询 / 切回页面)——失败不盖掉眼前的版面;force:不管读到哪都换(首次载入、读者自己触发的)
+  const loadToday = useCallback(async ({ ensure = false, quiet = false, force = false } = {}) => {
+    if (!quiet) setError('');
     try {
       const data = ensure ? await ensurePersonalBrief() : await fetchTodayPersonalBrief();
-      setToday(data);
-      if (TERMINAL.has(data?.status)) loadHistory();
+      if (!force && readingRef.current && isBriefSwap(todayRef.current, data)) heldTodayRef.current = data;
+      else showToday(data);
       return data;
     } catch (err) {
-      setError(err.message || '加载今日早报失败，请重试');
+      if (!quiet) setError(err.message || '加载今日早报失败，请重试');
       return null;
     }
-  }, [loadHistory]);
+  }, [showToday]);
 
   // 挂载时取走另一种版式交过来的位置。它比外出上下文(restore)新:交接器只在真跨 1024 卸载时存、下一次挂载即取走,
   // 而父级的 restore 是从正文返回那次留下的、之后没清——正文返回 → 换日期 / 版次 → 跨版式时,以交接的这份为准
@@ -528,16 +547,28 @@ export default function PersonalBriefPage({
     const r = restoreRef.current;
     setSel(r ? { date: r.date, revision: r.revision ?? null } : { date: null, revision: null });
     setHistOpen(false);
-    loadToday({ ensure: true }).finally(() => setLoading(false));
+    loadToday({ ensure: true, force: true }).finally(() => setLoading(false));
     loadHistory();
   }, [interestVersion, loadToday, loadHistory]);
 
   const todayStatus = today?.status;
+  // 后端说今天这版还会被换(refresh_pending)或正在编:隔一会儿再取一次
+  const pollMs = briefPollInterval(today);
   useEffect(() => {
-    if (!LIVE.has(todayStatus)) return undefined;
-    const timer = window.setInterval(() => loadToday(), POLL_MS);
+    if (!pollMs) return undefined;
+    const timer = window.setInterval(() => loadToday({ quiet: true }), pollMs);
     return () => window.clearInterval(timer);
-  }, [todayStatus, loadToday]);
+  }, [pollMs, loadToday]);
+  // 切回这个页面:留着没换的那一版现在换上,顺带再取一次(后台标签页的定时器会被浏览器压慢)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      releaseHeldToday();
+      loadToday({ quiet: true, force: true });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadToday, releaseHeldToday]);
 
   const todayEdition = today?.edition || null;
   const todayKey = todayEdition?.report_date || fmtDayKey(new Date());
@@ -596,6 +627,14 @@ export default function PersonalBriefPage({
   useEffect(() => {
     if (sheetRef.current) sheetRef.current.scrollTop = 0;
   }, [viewKey]);
+
+  // 「正往下读今天这版」:只有这时取到的新版才先留着。看往期、停在页首都不算
+  const usesTodayRef = useRef(usesToday);
+  useEffect(() => {
+    usesTodayRef.current = usesToday;
+    readingRef.current = usesToday && (sheetRef.current?.scrollTop || 0) > TOP_SLOP;
+    if (!readingRef.current) releaseHeldToday();
+  }, [usesToday, viewKey, releaseHeldToday]);
 
   const shownEdition = usesToday ? todayEdition : (detail.key === viewKey ? detail.edition : null);
   const edition = useMemo(() => (guest ? guestEdition(shownEdition) : shownEdition), [guest, shownEdition]);
@@ -656,21 +695,6 @@ export default function PersonalBriefPage({
     setHistOpen(false);
   };
 
-  const handleRebuild = async () => {
-    setWorking(true);
-    try {
-      const data = await rebuildPersonalBrief();
-      setToday(data);
-      setSel({ date: null, revision: null });
-      showToast?.('已开始重新编排今日早报', 'success');
-      loadHistory();
-    } catch (err) {
-      showToast?.(err.message || '重新编排失败，请重试', 'error');
-    } finally {
-      setWorking(false);
-    }
-  };
-
   // 首登引导「稍后再说」:专用端点只做引导完成的条件迁移、不碰兴趣集合(此前 GET+整集 PUT 会把另一
   // 标签页刚保存的兴趣整集覆盖——codex 检视 P2);发出前先等本标签页排队中的兴趣保存落定,否则先于
   // 卸载时排入的 PUT 完成引导会永久错过首次兴趣重编。读者若已自动保存过兴趣,后端会就地重编,
@@ -687,7 +711,7 @@ export default function PersonalBriefPage({
         const toast = rebuildToast(rebuildStatus);
         if (toast) showToast?.(toast.text, toast.kind);
         setSel({ date: null, revision: null });
-        await Promise.all([loadToday(), loadHistory()]);
+        await Promise.all([loadToday({ force: true }), loadHistory()]);
       }
     } catch (err) {
       showToast?.(err.message || '操作失败，请重试', 'error');
@@ -798,10 +822,22 @@ export default function PersonalBriefPage({
     items, ownItems, readCount, listenCount, valueCount, interestCount, externalHits,
     stats, scopeCount, interestOnly, followedCount, mergedCount, ratioUnfillable,
   } = useMemo(() => briefSelectionCounts(edition), [edition]);
-  const live = isToday && LIVE.has(status);
+  // 失败了但系统还会自己重试时也照「编排中」画(issue #343:失败后的重试是自动的,读者面没有重试钮)
+  const live = isToday && (LIVE.has(status) || (usesToday && isBriefPreparing(today)));
   const showEdition = !loading && !detailLoading && !live && !(error && isToday)
     && !(isToday && todayStatus === 'empty_subscriptions') && !(!usesToday && detail.error)
     && status !== 'failed' && !!edition;
+  // 带着旧版本号回到今天(从正文返回时留的位置),而那一版已经被换下:读者回到页首时换成当前这一版
+  const replacedView = isToday && !usesToday && edition?.status === 'superseded' && !!todayEdition;
+  const replacedViewRef = useRef(replacedView);
+  useEffect(() => { replacedViewRef.current = replacedView; });
+  const noteScroll = (event) => {
+    const top = event.currentTarget.scrollTop;
+    readingRef.current = usesTodayRef.current && top > TOP_SLOP;
+    if (top > TOP_SLOP) return;
+    releaseHeldToday();
+    if (replacedViewRef.current) setSel({ date: null, revision: null });
+  };
   // 目录不等第一次滚动:板块真的画出来了(showEdition)、换期(viewKey)、板块变化时先同步一次——
   // 短海报下第一个板块一开始就在视口里;往期详情先到而今天那份还在加载时,板块要等 loading 结束才出现
   const actKeys = acts.map((group) => group.key).join('|');
@@ -861,6 +897,7 @@ export default function PersonalBriefPage({
   }
 
   // ── 眉头下的状态提示(原编排说明行尾句,一次只显一条:排队 > 未完成 > 已更新) ──
+  // 眉头下的一行只剩游客的登录引导:未就绪 / 兴趣或订阅已更新 / 排队重编那三种提示随重编入口一起取消(issue #343)
   let notice = null;
   if (showEdition && guest) {
     notice = {
@@ -872,38 +909,6 @@ export default function PersonalBriefPage({
         </>
       ),
     };
-  } else if (showEdition) {
-    const deadlineIncomplete = edition.sync_stale || edition.analysis_incomplete;
-    const stale = usesToday && (edition.interest_stale || edition.scope_stale);
-    const rebuildAct = (text) => (
-      <button type="button" className="bp-notice-act" onClick={handleRebuild} disabled={working}>{working ? '编排中…' : text}</button>
-    );
-    if (edition.rebuild_queued) {
-      notice = { cls: '', body: <><RefreshCw aria-hidden="true" />新的编排请求已记录，本版完成后会生成下一版</> };
-    } else if (deadlineIncomplete) {
-      notice = {
-        cls: 'is-partial',
-        body: (
-          <>
-            <Clock3 aria-hidden="true" />
-            {edition.sync_stale && edition.analysis_incomplete ? '部分来源更新和文章分析' : edition.sync_stale ? '部分来源更新' : '部分文章分析'}尚未完成，按当时已有内容编排
-            {usesToday && rebuildAct('重新编排')}
-          </>
-        ),
-      };
-    } else if (stale) {
-      // v3.51.1(issue #33 §5):改兴趣/订阅不再自动重编,今日版面落后时把主动权交给读者
-      notice = {
-        cls: '',
-        body: (
-          <>
-            <RefreshCw aria-hidden="true" />
-            {edition.interest_stale && edition.scope_stale ? '你的兴趣和订阅' : edition.interest_stale ? '你的兴趣' : '你的订阅'}已更新，下次编排生效
-            {rebuildAct('立即重编')}
-          </>
-        ),
-      };
-    }
   }
 
   const act = interestOnly
@@ -944,7 +949,6 @@ export default function PersonalBriefPage({
     posterBody = stateBlock('早报编排中…', {
       role: 'status',
       icon: <Loader2 className="animate-spin" aria-hidden="true" />,
-      meta: edition?.rebuild_queued ? '期间的新变更已合并，本版完成后再编排一次' : null,
     });
   } else if (detailLoading) {
     posterBody = <PosterSkeleton />;
@@ -954,12 +958,7 @@ export default function PersonalBriefPage({
     posterBody = stateBlock(isToday ? '今日早报没有完成' : '这一版没有完成', {
       tone: 'is-error',
       meta: edition?.error || '生成过程遇到问题',
-      actions: (
-        <>
-          {isToday && !guest && <button type="button" className="bp-btn is-primary" onClick={handleRebuild} disabled={working}>{working ? '重试中…' : '重试生成'}</button>}
-          {browseBtn}
-        </>
-      ),
+      actions: browseBtn || null,
     });
   } else if (!edition) {
     posterBody = stateBlock('这一天没有早报');
@@ -1075,19 +1074,6 @@ export default function PersonalBriefPage({
                 <span className="bp-lbtn-label">回到今天</span>
               </button>
             )}
-            {isToday && !guest && (
-              <button
-                type="button"
-                className="bp-lbtn"
-                onClick={handleRebuild}
-                disabled={working || loading || live}
-                title={live ? '今日早报正在准备' : '重新编排今日早报'}
-                aria-label={live ? '今日早报正在准备' : '重新编排今日早报'}
-              >
-                <RefreshCw className={working || live ? 'animate-spin' : ''} aria-hidden="true" />
-                <span className="bp-lbtn-label">重新编排</span>
-              </button>
-            )}
             {histOpen && (
               <BriefHistoryCalendar
                 days={days}
@@ -1158,7 +1144,7 @@ export default function PersonalBriefPage({
     </section>
   );
 
-  // 手机页头(issue #230 第 2 批,拍板 31 B):一行 = 头像 ·「早报」· 日期钮(就是往期入口,点开月历)· 重新编排 / 回到今天;
+  // 手机页头(issue #230 第 2 批,拍板 31 B):一行 = 头像 ·「早报」· 日期钮(就是往期入口,点开月历)· 看往期时的「回到今天」(重编钮随 issue #343 取消);
   // 原眉头「早报 — 日期」与「· 今天」去掉;看往期时日期钮写那一天,右侧换「回到今天」。「第 N 版」只在月历与文末「本期编排」。
   // 往期 = 底页月历(批 3b,拍板 12;BriefHistorySheet,portal 到 body)。
   const dayText = `${dateTextOf(selDate)} ${weekdayOf(selDate)}`;
@@ -1179,15 +1165,7 @@ export default function PersonalBriefPage({
           >
             <span className="m-pill-in"><CalendarDays aria-hidden="true" />{dayText}</span>
           </button>
-          {isToday ? (!guest && (
-            <GlassBtn
-              label={live ? '今日早报正在准备' : '重新编排今日早报'}
-              onClick={handleRebuild}
-              disabled={working || loading || live}
-            >
-              <RefreshCw className={working || live ? 'animate-spin' : ''} aria-hidden="true" />
-            </GlassBtn>
-          )) : (
+          {!isToday && (
             <button type="button" className="m-pill m-today" onClick={() => pickDay(todayKey)}>
               <span className="m-pill-in"><Undo2 aria-hidden="true" />回到今天</span>
             </button>
@@ -1217,7 +1195,9 @@ export default function PersonalBriefPage({
       className={`bp-sheet ${mobile ? 'is-mobile' : ''}`}
       aria-label="我的早报"
       ref={sheetRef}
-      onScroll={mobile ? recordProgress : (event) => { recordProgress(event); syncToc(); }}
+      onScroll={mobile
+        ? (event) => { recordProgress(event); noteScroll(event); }
+        : (event) => { recordProgress(event); noteScroll(event); syncToc(); }}
     >
       {poster}
       <div className="bp-wrap">
