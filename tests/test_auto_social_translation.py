@@ -11,10 +11,11 @@ from sqlmodel import Session, select
 
 from config import LLMConfig
 from models.db import (
-    AiUsageRecord, AppSettingRecord, ArticleRecord, SourceConfigRecord, TranslationJobRecord,
+    AiUsageRecord, AppSettingRecord, ArchiveSyncEntityStateRecord, ArticleRecord, SourceConfigRecord,
+    TranslationJobRecord,
     SocialTranslationCallRecord as Call, SocialTranslationJobRecord as Job,
 )
-from services import reader_ai
+from services import archive_sync_v2, reader_ai
 from services import social_translation as service
 from services.title_translation import SUPPRESS_ENQUEUE_KEY
 from storage.impl.db_storage import DatabaseStorage
@@ -275,6 +276,75 @@ def test_synced_credentialed_and_imported_posts_are_fenced(store, monkeypatch):
     assert run(store) and not calls
     assert job_of(store).status == "skipped"
     assert not run(store)
+
+
+def test_translation_made_upstream_reaches_the_downstream_node_through_archive_sync(tmp_path, monkeypatch):
+    """节点间同步:译文只在收进这条推文的节点上产出,随 articles 流到下游;下游不替上游的条目翻译。
+    第一轮同步时还没译好的,译文写入让这条推文的修订前进,下一轮带到。"""
+    from api.articles_view import serialize_article_list_item
+
+    monkeypatch.setattr(service.daily_brief, "resolve_llm_config", lambda _session: CONFIG)
+    upstream = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'upstream.db'}")
+    downstream = DatabaseStorage(db_url=f"sqlite:///{tmp_path / 'downstream.db'}")
+    calls = []
+    fake_provider(monkeypatch, calls)
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    with Session(upstream.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id="x_lab", name="Lab", source_type="rss", url="https://x.com/lab", fetcher_id="generic_rss",
+            created_at=now, updated_at=now,
+        ))
+        session.add(post(ext={"quoted": QUOTED}))
+        session.commit()
+
+    def sync(*streams):
+        return {
+            stream: archive_sync_v2.import_page(
+                downstream.engine, archive_sync_v2.export_page(upstream.engine, stream), expected_stream=stream,
+            ) for stream in streams
+        }
+
+    def revision():
+        with Session(upstream.engine) as session:
+            return session.exec(select(ArchiveSyncEntityStateRecord.revision).where(
+                ArchiveSyncEntityStateRecord.stream == "articles", ArchiveSyncEntityStateRecord.identity == "p",
+            )).one()
+
+    try:
+        # 第一轮:上游还没译。下游拿到原文,不建待办,它的 worker 也不替上游翻译。
+        assert sync("sources", "articles")["articles"]["inserted"] == 1
+        assert zh_of(downstream) is None and job_of(downstream) is None
+        assert not run(downstream) and not calls
+
+        # 这期间下游的读者自己点了「译为中文」:缓存只留在下游,等上游的版本到了由上游的覆盖,不会并存两份。
+        with Session(downstream.engine) as session:
+            row = session.get(ArticleRecord, "p")
+            ext = json.loads(row.extensions_json)
+            ext[reader_ai.SOCIAL_TRANSLATION_KEY] = {
+                "text": "下游读者的译文", "quoted": "下游读者的引用译文", "v": reader_ai.SOCIAL_TRANSLATION_VERSION,
+                "fp": reader_ai._social_fingerprint(reader_ai.social_translation_sources(row.content, ext)),
+            }
+            row.extensions_json = json.dumps(ext, ensure_ascii=False)
+            session.commit()
+        assert zh_of(downstream)["text"] == "下游读者的译文" and job_of(downstream) is None
+
+        # 上游译好:只付一次,这条推文的修订前进。
+        before = revision()
+        assert run(upstream) and len(calls) == 1
+        assert revision() > before
+        expected = {"text": f"译：{TEXT}", "quoted": f"译：{QUOTED['text']}"}
+        assert zh_of(upstream) == expected
+
+        # 第二轮:译文随同一条流到下游,列表载荷直接带上;下游仍然没有待办、没有调用。
+        assert sync("articles")["articles"]["updated"] == 1
+        assert zh_of(downstream) == expected
+        with Session(downstream.engine) as session:
+            assert serialize_article_list_item(session.get(ArticleRecord, "p"))["social_zh"] == expected
+        assert job_of(downstream) is None
+        assert not run(downstream) and len(calls) == 1
+    finally:
+        upstream.engine.dispose()
+        downstream.engine.dispose()
 
 
 def test_failure_cap_holds_unknown_cost_and_stops_after_three_attempts(store, monkeypatch):

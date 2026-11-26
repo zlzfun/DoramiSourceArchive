@@ -161,7 +161,7 @@
 时进订阅推入页,卡片与换语言开关判定相反(开关改为只认调用方给的视图);回滚说明更正(带迁移的版本不能只切代码);读侧与同步共用
 一个缓存校验;手册措辞。
 
-**自测**:`tests/test_auto_social_translation.py` 33 条 + 十四处反向对照;复检结论可合入、无新引入 P1;后端全量 4287 passed / 1 skipped;前端 lint / 485 条单测 / build;
+**自测**:`tests/test_auto_social_translation.py` 34 条(含一条两节点同步的端到端用例)+ 十五处反向对照;复检结论可合入、无新引入 P1;后端全量 4287 passed / 1 skipped;前端 lint / 485 条单测 / build;
 沙箱 Playwright 42 条断言(桌面亮暗 + 手机壳)。沙箱里的译文缓存由脚本按线上格式写入,不是 worker 调模型产出;真实模型下的
 译文质量与每日条数未测。实现方 Claude Code(`claude-fable-5-2`);检视记录见[方案](plans/issue-349-prefer-chinese.md) §9。
 
