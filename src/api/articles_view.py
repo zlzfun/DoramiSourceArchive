@@ -482,6 +482,12 @@ def serialize_article_list_item(
         record.content_type != "podcast_episode" or include_podcast_diagnostics
     ):
         item["extensions_json"] = record.extensions_json or "{}"
+    if record.content_type == "social_post" and (include_content or include_extensions):
+        # 推文译文(issue #349):与 title_zh 同一做法——只在缓存的指纹仍对得上当前原文时才给,
+        # 前端不自己校验缓存。只随带正文的推文载荷给(卡片要同时拿到原文与译文才切得动)。
+        from services.reader_ai import cached_social_translation
+
+        item["social_zh"] = cached_social_translation(content, ext)
     return item
 
 

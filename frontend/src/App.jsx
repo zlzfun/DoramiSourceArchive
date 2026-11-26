@@ -769,7 +769,7 @@ export default function App() {
     ));
   }, []);
 
-  // 「默认显示中文标题」(issue #218):账号存服务端(乐观切换、失败回滚),游客只存本机;下发给阅读器与设置
+  // 「优先显示中文」(issue #218):账号存服务端(乐观切换、失败回滚),游客只存本机;下发给阅读器与设置
   const titlePreference = useTitlePreferenceState({
     isGuest, user: authState.user, onUserUpdated: handleUserUpdated, showToast,
   });

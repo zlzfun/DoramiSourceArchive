@@ -1088,6 +1088,8 @@
 .m-shell .social-tr-btn,
 .m-shell .social-tr-hide,
 .m-shell .social-tr-retry { padding-block: 6px; margin-block: -6px; }
+/* 「原文」只有两个字(issue #349 起每张有译文的卡上都有它):横向再各扩 10px,命中区 44 宽 */
+.m-shell .social-tr-hide { padding-inline: 10px; margin-inline: -10px; }
 
 /* ── 条目卡窄屏微调:时间/星标不再为桌面浮层滚动条让位 ── */
 .m-list .reader-entry-time { margin-right: 0; }
@@ -1681,8 +1683,7 @@
 /* ── 社交卡(审计 M-07 / M-38):字号收进刻度(样页 c-post:作者 14 · 正文 15),卡上收藏 / 标读看得见 32、命中 44,
       时间戳(原推链接)命中扩到 44 高;长按出动作单(SocialFlow press = useLongPress,审计 M-04) ── */
 .m-shell .social-name { font-size: var(--m-fs-md); }
-.m-shell .social-text,
-.m-shell .social-tr-text { font-size: var(--m-fs-base); }
+.m-shell .social-text { font-size: var(--m-fs-base); }
 .m-shell .social-quote-name { font-size: var(--m-fs-sm); }
 .m-shell .social-quote-text { font-size: var(--m-fs-md); }
 .m-shell :is(.social-tr-btn, .social-tr-note, .social-tr-retry) { font-size: var(--m-fs-sm); }

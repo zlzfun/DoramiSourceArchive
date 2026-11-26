@@ -663,11 +663,13 @@ async def lifespan(app: FastAPI):
     # issue #343:读者改完兴趣 / 订阅后静置一满就编——记意向的地方把到点时刻交给调度器;随 lifespan 登记与撤销。
     personal_digest_refresh_service.set_preference_due_hook(schedule_preference_refresh)
 
-    from services import translation_jobs, title_translation
+    from services import social_translation, translation_jobs, title_translation
     from services.briefs_runtime import BriefRuntime
 
     app.state.briefs_runtime = BriefRuntime(db_sink.engine)
     title_worker = asyncio.create_task(title_translation.worker_loop(db_sink.engine))
+    # 推文预译(issue #349):与标题 worker 一样不分运行角色,只处理本机权威的新推文
+    social_worker = asyncio.create_task(social_translation.worker_loop(db_sink))
     translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
                           if runtime_reader_enabled() else None)
     try:
@@ -679,7 +681,8 @@ async def lifespan(app: FastAPI):
     finally:
         await app.state.briefs_runtime.close()
         title_worker.cancel()
-        await asyncio.gather(title_worker, return_exceptions=True)
+        social_worker.cancel()
+        await asyncio.gather(title_worker, social_worker, return_exceptions=True)
         if translation_worker is not None:
             translation_worker.cancel()
             await asyncio.gather(translation_worker, return_exceptions=True)

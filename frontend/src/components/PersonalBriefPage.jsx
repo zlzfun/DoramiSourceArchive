@@ -135,7 +135,7 @@ function viewOf(item, source, preferChinese) {
   const interest = interestLabelOf(item, snapshot);
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
   // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字;
-  // 「默认显示中文标题」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
+  // 「优先显示中文」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
   const titles = titleView(snapshot, preferChinese);
   return {
     snapshot,

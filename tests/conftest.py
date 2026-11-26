@@ -112,6 +112,17 @@ def idle_automatic_title_worker(monkeypatch):
     monkeypatch.setattr(title_translation, "worker_loop", idle)
 
 
+@pytest.fixture(autouse=True)
+def idle_automatic_social_worker(monkeypatch):
+    import asyncio
+    from services import social_translation
+
+    async def idle(_db_sink):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(social_translation, "worker_loop", idle)
+
+
 # 测试里的密码哈希(issue #289):生产是 PBKDF2 20 万轮(单次约 25~70 ms),而 unit 套件一轮要哈希 / 校验约 2400 次,
 # 占 worker 时间约 7%。测试只关心「能登录 / 口令对不对」,不关心轮数——整个会话把缺省轮数调到 1000;
 # 需要真轮数的用例显式传 `iterations=`。夹具顺带钉住生产缺省不被调低。

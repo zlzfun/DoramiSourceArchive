@@ -240,7 +240,7 @@ function NarrowQuestion({ turn, onPick, disabled }) {
 }
 
 function AnswerBlock({ turn, onOpenRef, onNarrow, disabled }) {
-  // 引用标题随「默认显示中文标题」(issue #218):出处带 title_zh 时按偏好选,缺字段即原题
+  // 引用标题随「优先显示中文」(issue #218):出处带 title_zh 时按偏好选,缺字段即原题
   const { preferChinese } = useTitlePreference();
   const sources = useMemo(() => turn.sources || [], [turn.sources]);
   const markdown = useMemo(() => withCitationLinks(turn.a, sources.length), [turn.a, sources.length]);

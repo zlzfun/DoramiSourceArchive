@@ -19,9 +19,15 @@
 
 `title_translation` 在新增/原标题变更事务内写轻量待办，只在内容的本地权威节点调用已配置辅助模型（明确关闭思考），不扫描历史、不自动翻正文。标题专用缓存严格匹配原标题指纹；自动任务、早报补题、手动标题共享短租约，发布时重读扩展以免擦正文缓存。独立 `auto_title_translate` 计量与预留，默认每日 200,000 token、自动并发 1、最多 3 次尝试；`auto_title_translation_enabled` 与 `auto_title_translation_daily_tokens` 为 AppSetting 控制项。手动正文队列优先；未知调用用量保留当日预留，超预算排队。除全局 AI 总闸、模型配置外，自动任务还遵守来源外送与 authority/consumer 门控。
 
-账户 `prefer_chinese_titles` 默认 true，仅影响站内标题显示，读取合法缓存不要求账号开启 AI；游客偏好在浏览器保存。普通文章载荷 `title_zh` 只含当前指纹合法的译名，缺失回退原标题。正文继续手动；论文摘要/全文、播客简介/独立逐字稿、社交逐卡翻译的触发边界不扩大。
+账户 `prefer_chinese_titles` 默认 true（设置里叫「优先显示中文」），影响站内标题与推文的显示语言（推文见下节），读取合法缓存不要求账号开启 AI；游客偏好在浏览器保存。普通文章载荷 `title_zh` 只含当前指纹合法的译名，缺失回退原标题。正文继续手动；论文摘要/全文、播客简介/独立逐字稿的触发边界不扩大。
 
 `translation_preview` 还原源文后解析完整 Markdown 块并映射检查点依赖，全部依赖有效才原位显示对应译文。`preview` 首次返回布局、后续按任务/完成位图增量；不写最终缓存。`translation_updates` 在检查点提交后唤醒 SSE `snapshot`，2 秒持久状态轮询兜底；流内每次重验 cookie、权限和输入。前端未完成块各有骨架、正常状态只保留中文圈圈；没有取消入口，旧 cancel API 保留兼容。最终整篇校验、任务保留/清理规则不变。
+
+### 推文入库即译（issue #349）
+
+`social_translation` 与标题自动翻译同构：`before_flush` 钩子给新的、或正文 / 扩展字段有改动的 `social_post` 在同一事务里写待办 `social_translation_jobs`，按「需要翻译的那几段原文」（主推——转推取原推全文——与引用推）的指纹去重，与缓存 `translation_zh_social.fp` 同口径；钩子挂在写入层，抓取、推送、手工收录、同一条再次到达时的补全与换成抓取版都覆盖。不回填存量（水位 `auto_social_translation_started_at`）；同步来的条目、导入事务、不可外送的来源不建待办。worker 逐条派发，调用复用 `reader_ai.translate_social_post`，辅助模型并关闭思考；独立用途 `auto_social_translate`、预留表 `social_translation_calls`、每日上限 `auto_social_translation_daily_tokens`（默认 300,000，`0` 暂停）与总闸 `auto_social_translation_enabled`，不扣读者额度、不占标题预算；每条最多 3 次。待办带占用期与占用者 token（180 秒、在途每 30 秒续租），多进程只放行一个自动请求；请求带着领取时的原文指纹（对不上不调模型），落缓存前再复核一次占用与门控；核销按实际发出的请求数，自动路径不让客户端内部重试。读者手动翻译（`POST /api/reader/ai/social/{id}/translate`）仍在，写的是同一份缓存。
+
+带正文的推文条目带 `social_zh: {text, quoted} | null`（`reader_ai.cached_social_translation`）：只在缓存指纹对得上当前原文时才给，前端不自己校验。推文卡译文原位替换原文、一次只显示一种语言；显示哪种由 `utils/socialTranslate.socialCardView` 一处判定（偏好、读者在这张卡上的选择、有没有译文、AI 是否可用）。
 
 ## Reader-facing AI Beta (用户面翻译 + 问答助手)
 
