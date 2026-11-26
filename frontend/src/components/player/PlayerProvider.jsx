@@ -44,7 +44,7 @@ function initPlayer(username) {
 export default function PlayerProvider({ username = '', active = true, children }) {
   const [state, dispatch] = useReducer(playerReducer, username, initPlayer);
   const [announcement, setAnnouncement] = useState('');
-  // 播报与系统媒体控件的标题随「默认显示中文标题」(issue #218)
+  // 播报与系统媒体控件的标题随「优先显示中文」(issue #218)
   const { preferChinese } = useTitlePreference();
   const audioRef = useRef(null);
   const stateRef = useRef(state);

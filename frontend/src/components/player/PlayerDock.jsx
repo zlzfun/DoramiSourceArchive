@@ -126,7 +126,7 @@ export default function PlayerDock({ mobile = false, hostRef, mobilePage = 'tabs
   const form = mobile ? mobileForm(state.form) : state.form;   // 手机退役迷你:mini 按坞画
   const playing = isPlayingIntent(state);
   const itemKey = item?.key || '';
-  // 标题随「默认显示中文标题」(issue #218):条目带中文译名且偏好开时显示译名
+  // 标题随「优先显示中文」(issue #218):条目带中文译名且偏好开时显示译名
   const { preferChinese } = useTitlePreference();
   const shownTitle = playerItemTitle(item, preferChinese);
 

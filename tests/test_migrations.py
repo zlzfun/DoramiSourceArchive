@@ -1372,7 +1372,7 @@ def test_parallel_release_heads_converge_without_replay(tmp_path):
             engine.dispose()
 
 
-@pytest.mark.parametrize("parent", ["c298d4100001", "c3e5a91f7d24"])
+@pytest.mark.parametrize("parent", ["c298d4100001", "c3e5a91f7d24", "c298e5100001", "e349b6d2a8c1"])
 def test_interest_and_brief_refresh_heads_converge(tmp_path, parent):
     """Both existing interest databases and newer main databases can upgrade."""
     cfg = make_alembic_config(f"sqlite:///{tmp_path / 'interest-refresh.db'}")
@@ -1382,7 +1382,7 @@ def test_interest_and_brief_refresh_heads_converge(tmp_path, parent):
     try:
         with engine.connect() as conn:
             assert _db_heads(conn) == _script_heads()
-        assert "user_interest_conditions" in inspect(engine).get_table_names()
+        assert {"user_interest_conditions", "social_translation_jobs", "social_translation_calls"} <= set(inspect(engine).get_table_names())
         constraints = inspect(engine).get_check_constraints("personal_digest_editions")
         assert any("content_arrived" in item["sqltext"] for item in constraints)
     finally:

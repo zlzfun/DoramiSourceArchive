@@ -34,8 +34,8 @@ def preserve_local_translations(
     # lazily to avoid coupling module initialization to the reader AI services.
     from services.reader_ai import (
         TRANSLATION_KEY, TRANSLATION_FP_KEY, TRANSLATION_VERSION_KEY,
-        TRANSLATION_VERSION, SOCIAL_TRANSLATION_KEY, SOCIAL_TRANSLATION_VERSION,
-        _body_fingerprint, _social_fingerprint, social_translation_sources,
+        TRANSLATION_VERSION, SOCIAL_TRANSLATION_KEY,
+        _body_fingerprint, _social_fingerprint, social_translation_entry_valid, social_translation_sources,
     )
 
     local = extensions(existing)
@@ -64,19 +64,10 @@ def preserve_local_translations(
     incoming_sources = social_translation_sources(incoming.content or "", remote)
 
     def valid_social(ext: dict, fp: str) -> bool:
-        entry = ext.get(SOCIAL_TRANSLATION_KEY)
-        if not isinstance(entry, dict):
-            return False
-        # A source containing only protected literals can have no translated
+        # One rule for the reader projection and this merge (issue #349): a
+        # source containing only protected literals can have no translated
         # value; the other side must still contain a usable translated result.
-        values = (entry.get("text"), entry.get("quoted"))
-        return (
-            entry.get("fp") == fp
-            and type(entry.get("v")) is int
-            and entry.get("v") == SOCIAL_TRANSLATION_VERSION
-            and all(value is None or isinstance(value, str) for value in values)
-            and any(isinstance(value, str) and value.strip() for value in values)
-        )
+        return social_translation_entry_valid(ext.get(SOCIAL_TRANSLATION_KEY), fp)
 
     if local_sources and local_sources == incoming_sources:
         social_fp = _social_fingerprint(incoming_sources)

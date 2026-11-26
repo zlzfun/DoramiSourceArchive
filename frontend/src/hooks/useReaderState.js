@@ -19,9 +19,12 @@ import {
 import { copyText } from '../utils/clipboard';
 import {
   currentSocialTranslation,
+  socialCachedZh,
+  socialCardView,
+  socialOriginalTexts,
+  socialToggledEntry,
   nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
-  socialQuotaActive,
   socialQuotaUntil,
   socialTranslationSignature,
 } from '../utils/socialTranslate';
@@ -45,6 +48,7 @@ import { createListRegistry, markReadMatcher } from '../utils/articleList';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useTitlePreference } from './useTitlePreference';
 import { useListLoader, useListWindow } from './useArticleList';
 import {
   fetchReaderSources,
@@ -1211,19 +1215,21 @@ export function useReaderState({
     }
   };
 
-  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试 / 原文已变才发请求。服务端有缓存,
-  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)当天留在 quota 态,不给重试。
-  const toggleSocialTranslation = useCallback((article) => {
+  // 推文换语言。view 是调用方(那张卡 / 它的菜单)按自己所在列表算好的翻译视图(utils/socialTranslate.socialCardView)——
+  // 这里不重新推导:同一条推文在搜索结果与订阅推入页里的默认语言可以不同,开关替谁推导都会和另一处对不上。
+  // 有译文(随列表带回的,或本次会话翻出来的)只在本地切,不发请求;没有译文才向 AI 要——首次 / 失败后重试 /
+  // 原文已变。额度用尽(429)当天留在 quota 态,不给重试。
+  const toggleSocialTranslation = useCallback((article, view) => {
     const id = article?.id;
+    if (!id || !view) return;
     const sig = socialTranslationSignature(article);
-    if (!id || !sig) return;
-    let entry = currentSocialTranslation(socialTranslationsRef.current[id], sig);
-    if (entry?.status === 'quota' && !socialQuotaActive(entry)) entry = null;
-    if (entry?.status === 'loading' || entry?.status === 'quota') return;
-    if (entry?.status === 'done') {
-      setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
+    const toggled = socialToggledEntry(view, sig);
+    if (toggled) {
+      // 记下这张卡的选择:之后它不再跟偏好走,直到原文变了(签名对不上)或页面重载
+      setSocialTranslations((prev) => ({ ...prev, [id]: toggled }));
       return;
     }
+    if (view.action !== 'request') return;
     // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02);
     // next 为 null 表示回到可点状态(移除该卡条目)
     const settle = (next) => setSocialTranslations((prev) => {
@@ -1315,19 +1321,35 @@ export function useReaderState({
     return items;
   };
 
-  const buildSocialMenuItems = (article) => {
+  // 菜单里的翻译视图与那张卡同一口径。context.searchQuery = 这条推文所在列表实例的搜索词:
+  // 主列表不传(用主列表的),订阅推入页是另一个列表实例、没有搜索,要显式传空串。
+  const { preferChinese } = useTitlePreference();
+  const socialViewFor = (article, context = {}) => {
+    const sig = socialTranslationSignature(article);
+    return socialCardView({
+      cached: socialCachedZh(article),
+      entry: currentSocialTranslation(socialTranslations[article?.id], sig),
+      preferChinese,
+      aiEnabled,
+      translatable: Boolean(sig),
+      searchQuery: context.searchQuery ?? searchQuery,
+      original: socialOriginalTexts(article),
+    });
+  };
+
+  const buildSocialMenuItems = (article, context = {}) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
-    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」;状态按原文签名取,原文变了视为未翻译
-    const trSig = aiEnabled ? socialTranslationSignature(article) : '';
-    const tr = currentSocialTranslation(socialTranslations[article.id], trSig);
-    const translateItems = trSig
+    // 语言项与卡片底栏同一个开关(issue #84 / #349):显示中文时是「显示原文」,否则「译为中文」;
+    // 没有译文、也要不到(AI 不可用 / 这条不需要翻译)时不出这一项
+    const view = socialViewFor(article, context);
+    const translateItems = view.action || view.status
       ? [{
         key: 'translate',
-        label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
+        label: view.action === 'original' ? '显示原文' : '译为中文',
         icon: Sparkles,
-        disabled: tr?.status === 'loading' || socialQuotaActive(tr),
-        onClick: () => toggleSocialTranslation(article),
+        disabled: view.status === 'loading' || view.status === 'quota',
+        onClick: () => toggleSocialTranslation(article, view),
       }]
       : [];
     return [

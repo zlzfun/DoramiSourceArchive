@@ -12,6 +12,7 @@ export const PURPOSE_LABELS = {
   image_insight: '图片理解',
   personal_digest_title: '早报标题',
   auto_title_translate: '自动标题', // issue #218:新入库文章的标题自动翻译
+  auto_social_translate: '自动推文', // issue #349:新入库推文的自动翻译(系统用途,不扣读者额度)
   daily_brief_editorial: '日报·点评',
   daily_brief_dedup: '日报·去重',
   daily_brief_reduce: '日报·汇编',

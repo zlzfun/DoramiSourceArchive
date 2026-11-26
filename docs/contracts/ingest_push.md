@@ -89,7 +89,7 @@
 | `media_urls` | 这条帖子自己的配图(http(s) 链接,至多 20 张;视频给封面图)。放在 `extensions.media_urls` 也认 |
 | `quoted` | 被引用的帖子 |
 | `reposted` | 被转推的原帖。顶层 `author` 始终是时间线账号(转推者),原作者写在 `reposted.author` |
-| `lang` | 帖子语言(决定卡片要不要给「译为中文」) |
+| `lang` | 帖子语言(决定这条要不要翻译:中文与无文字内容不译,其余入库后自动译成中文) |
 
 `quoted` / `reposted` 用与外层帖子同名的字段描述:`post_id`、`url`、`content`、`lang`、
 `author`(`handle` / `name` / `avatar_url`)、`media_urls`。给了 `x.com/<账号>/status/<id>` 形式的 `url`

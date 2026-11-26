@@ -148,7 +148,7 @@ export default function MobileArticlePage({
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
-  // 标题语言(issue #218):只看「默认显示中文标题」偏好,不随正文的译文 / 原文切换
+  // 标题语言(issue #218):只看「优先显示中文」偏好,不随正文的译文 / 原文切换
   const paneTitle = titleView(activeArticle, preferChinese);
   const tags = displayAnalysisTags(activeArticle);
 
