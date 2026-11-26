@@ -437,6 +437,19 @@ def test_released_hold_when_nothing_was_sent(store):
         assert session.get(Call, call_id).status == "released"
 
 
+@pytest.mark.parametrize("sent,rejected,expected", [
+    (1, True, "released"),   # 唯一的请求被服务商明确拒绝
+    (1, False, "unknown"),   # 发出去了、没有回执
+    (2, True, "unknown"),    # 一个被拒、另一个没有回执:后者的费用不明(检视复检)
+])
+def test_hold_without_any_receipt_follows_what_was_actually_sent(store, sent, rejected, expected):
+    seed(store, post())
+    call_id, _token = service._reserve(store.engine, "p", job_of(store).source_fp, 1000)
+    service._settle(store.engine, call_id, [], sent=sent, rejected=rejected)
+    with Session(store.engine) as session:
+        assert session.get(Call, call_id).status == expected
+
+
 def test_a_done_job_is_requeued_when_its_translation_disappears(store, monkeypatch):
     calls = []
     fake_provider(monkeypatch, calls)

@@ -336,8 +336,9 @@ def _settle(engine, call_id: str, receipts: list, *, sent: int, rejected: bool) 
             # 有请求发出去却没有回执(另一批超时),或回执里没有 token 数:那部分费用不明,整笔预留留到当天结束。
             call.recorded, call.status = True, "settled" if known else "unknown"
         else:
-            # 一个请求都没发(缓存命中、原文已变、结构不可译),或服务商明确拒绝:释放预留。
-            call.status = "released" if (sent == 0 or rejected) else "unknown"
+            # 一个请求都没发(缓存命中、原文已变、结构不可译),或唯一的那个请求被服务商明确拒绝:释放预留。
+            # 发了不止一个时,一个被拒不说明另一个没花钱(它可能是超时、没有回执):留到当天结束。
+            call.status = "released" if (sent == 0 or (rejected and sent == 1)) else "unknown"
 
 
 def _complete(engine, article_id: str, source_fp: str, token: str | None, *, error=None) -> None:
