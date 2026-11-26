@@ -423,12 +423,7 @@ def cached_social_translation(content: str, ext: dict) -> Optional[dict]:
     if not sources:
         return None
     entry = ext.get(SOCIAL_TRANSLATION_KEY) if isinstance(ext, dict) else None
-    if (
-        not isinstance(entry, dict)
-        or entry.get("fp") != _social_fingerprint(sources)
-        or type(entry.get("v")) is not int
-        or entry.get("v") != SOCIAL_TRANSLATION_VERSION
-    ):
+    if not social_translation_entry_valid(entry, _social_fingerprint(sources)):
         return None
     result = {}
     for name in ("text", "quoted"):
@@ -437,7 +432,26 @@ def cached_social_translation(content: str, ext: dict) -> Optional[dict]:
     return result if any(result.values()) else None
 
 
-async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http_client) -> dict:
+def social_translation_entry_valid(entry: Any, fingerprint: str) -> bool:
+    """一组推文译文缓存是否是这份原文(指纹)的可用结果。读侧投影与归档同步的本机缓存保留共用这一处,
+    两边对「哪份缓存算数」不会各说各话:指纹与流程版本须一致,两段的值只能是 None 或字符串,且至少一段非空
+    (只含受保护字面量的一侧可以没有译文)。"""
+    if not isinstance(entry, dict):
+        return False
+    values = (entry.get("text"), entry.get("quoted"))
+    return (
+        entry.get("fp") == fingerprint
+        and type(entry.get("v")) is int
+        and entry.get("v") == SOCIAL_TRANSLATION_VERSION
+        and all(value is None or isinstance(value, str) for value in values)
+        and any(isinstance(value, str) and value.strip() for value in values)
+    )
+
+
+async def _translate_social_batch(
+    batch, llm_config: LLMConfig, usage_meta, http_client,
+    on_llm_request: Optional[Callable[[], None]] = None, max_retries: Optional[int] = None,
+) -> dict:
     """一批片段一次调用,沿用 #206 的逐行单元协议:各片段的行单元编成全局 id 混进同一个 units 列表
     (主推与引用推同一请求),回包按 id 拆回各片段,交给 restore_translation_units 逐行校验与还原——
     与文章翻译同一套结构校验,模型多吐 / 少吐一个换行不会让整条失败。"""
@@ -447,6 +461,8 @@ async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http
         for unit in translation_units(chunk.text):
             owners[len(request_units)] = (key, unit["id"])
             request_units.append({"id": len(request_units), "text": unit["text"]})
+    if on_llm_request is not None:
+        on_llm_request()  # 预译按「发出的请求数」核销:每个真正发出去的请求报一次
     raw = await chat_completion(
         messages=[
             ChatMessage(role="system", content=prompts.SOCIAL_TRANSLATE_SYSTEM_PROMPT),
@@ -457,6 +473,7 @@ async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http
         usage_meta=usage_meta,
         http_client=http_client,
         require_complete=True,
+        **({} if max_retries is None else {"max_retries": max_retries}),
     )
     per_chunk: dict = {key: [] for key, _ in batch}
     try:
@@ -482,6 +499,11 @@ async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http
 async def translate_social_post(
     db_sink, article_id: str, llm_config: LLMConfig, usage_meta: Optional[UsageMeta] = None,
     pre_llm_check: Optional[Callable[[], None]] = None,
+    *,
+    expected_fingerprint: Optional[str] = None,
+    on_llm_request: Optional[Callable[[], None]] = None,
+    max_retries: Optional[int] = None,
+    pre_save_check: Optional[Callable[[], None]] = None,
 ) -> dict:
     """把一条推文的主推与引用推译为中文;返回 {"text", "quoted", "cached"},不需要翻译的一侧为 None。
 
@@ -489,6 +511,11 @@ async def translate_social_post(
     (#206 单元协议;超长推文才按 _TRANSLATE_SEGMENT_CHARS 拆多批)。缓存 extensions_json.translation_zh_social,
     指纹取两段原文,任一变化即重译。pre_llm_check 同 translate_article:只在缓存未命中、
     即将发起真实调用时执行。
+
+    后四个参数只给入库预译用(issue #349,``services/social_translation``),读者路径都不传:
+    expected_fingerprint = 领取待办时的原文指纹,读到的记录对不上即 409、不查缓存也不调模型——一次领取只为
+    它领的那份原文付费;on_llm_request 在每个真正发出的请求前调用一次;max_retries 透传给客户端;
+    pre_save_check 在落缓存前调用,抛错即不落。
     """
     record = await db_sink.get(article_id)
     if record is None:
@@ -503,6 +530,8 @@ async def translate_social_post(
     if not sources:
         raise ReaderAIError("这条推文没有需要翻译的内容", status_code=400)
     fingerprint = _social_fingerprint(sources)
+    if expected_fingerprint is not None and fingerprint != expected_fingerprint:
+        raise ReaderAIError("原文已更新，请重新翻译", status_code=409)
     cached = ext.get(SOCIAL_TRANSLATION_KEY)
     if (
         isinstance(cached, dict)
@@ -552,7 +581,9 @@ async def translate_social_post(
         async with client_session(llm_config) as http_client:
             async def _guarded(batch) -> dict:
                 async with semaphore:
-                    return await _translate_social_batch(batch, llm_config, usage_meta, http_client)
+                    return await _translate_social_batch(
+                        batch, llm_config, usage_meta, http_client, on_llm_request, max_retries,
+                    )
 
             jobs = [asyncio.create_task(_guarded(batch)) for batch in batches]
             try:
@@ -578,6 +609,8 @@ async def translate_social_post(
     def _sources_unchanged(latest_ext: dict) -> bool:
         return _social_fingerprint(social_translation_sources(content, latest_ext)) == fingerprint
 
+    if pre_save_check is not None:
+        pre_save_check()
     await _save_translation(
         db_sink, article_id, content, (record.title or "").strip(),
         {SOCIAL_TRANSLATION_KEY: entry}, verify_ext=_sources_unchanged,

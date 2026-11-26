@@ -124,6 +124,14 @@ export function socialCardView({
   return { zh: null, showZh: false, status, action: translatable && aiEnabled && !busy ? 'request' : null };
 }
 
+// 读者在一张有译文的卡上换语言之后,这张卡的逐卡条目:记下它的选择(之后不再跟偏好走),译文一并带上。
+// view 必须是调用方(那张卡、它的菜单)自己算好的——同一条推文可以同时出现在搜索结果与订阅推入页里,
+// 两处的搜索词不同、默认语言也可能不同,开关不能替调用方重新推导(issue #349 检视)。
+export function socialToggledEntry(view, signature) {
+  if (!view?.zh) return null;
+  return { status: 'done', open: !view.showZh, sig: signature, text: view.zh.text, quoted: view.zh.quoted };
+}
+
 // 额度用尽(429)的恢复时刻(毫秒):按服务端 Retry-After(距服务端下一个零点的秒数)算,不猜服务端时区;
 // 缺失时退回本地零点(检视 R1-03 / 复检)
 export function socialQuotaUntil(retryAfterSeconds, now = Date.now()) {

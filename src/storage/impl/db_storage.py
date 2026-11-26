@@ -301,6 +301,18 @@ class DatabaseStorage(BaseStorage):
         返回 None = 没有可补的,调用方按原有路径继续。
         """
 
+        def keep_social_translation(merged: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+            """正文变了要去掉与正文绑定的缓存,但推文译文认的是「需要翻译的原文」(转推看原帖全文、另加引用帖),
+            不是顶层正文:换成抓取版时常常只是顶层的 RT 包装文字不同。仍对得上新原文的译文放回去——否则卡片
+            丢了中文,而预译待办的指纹没变、不会再译(issue #349 检视)。对不上的照旧丢弃,由预译按新原文重排。"""
+            from services.reader_ai import SOCIAL_TRANSLATION_KEY, cached_social_translation
+
+            entry = current.get(SOCIAL_TRANSLATION_KEY)
+            if entry is None or SOCIAL_TRANSLATION_KEY in merged:
+                return merged
+            candidate = {**merged, SOCIAL_TRANSLATION_KEY: entry}
+            return candidate if cached_social_translation(item.content or "", candidate) is not None else merged
+
         def plan() -> Optional[tuple[Dict[str, Any], bool, bool]]:
             """→(新的扩展字段, 是否换成抓取版, 正文是否变化);没有可改的返回 None。"""
             if (existing.ingest_channel or "") not in item_url_identity.INGEST_CHANNELS:
@@ -321,13 +333,15 @@ class DatabaseStorage(BaseStorage):
                 merged = dict(current) if merged is None else merged
                 if fills_text:
                     merged = preserve_title_receipt(
-                        existing, social_merge.drop_content_caches(merged), title=item.title or existing.title,
+                        existing,
+                        keep_social_translation(social_merge.drop_content_caches(merged), current),
+                        title=item.title or existing.title,
                     )
                 return merged, False, fills_text
             text_changes = has_text and item.content != (existing.content or "")
             merged = social_merge.adopt_fetched(current, incoming)
             if text_changes:
-                merged = social_merge.drop_content_caches(merged)
+                merged = keep_social_translation(social_merge.drop_content_caches(merged), current)
             merged = preserve_title_receipt(existing, merged, title=item.title or existing.title)
             changed = (
                 merged != current

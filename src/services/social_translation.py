@@ -45,8 +45,9 @@ DEFAULT_DAILY_TOKENS = 300_000
 MAX_SOURCE_CHARS = 6000
 MAX_ATTEMPTS = 3
 POLL_SECONDS = 10
-# 一次派发的占用期:单条推文一次(超长的两次)模型调用,远小于它;进程中途退出时到期自动回到可领取。
-LEASE_SECONDS = 300
+# 一次派发的占用期与续租间隔:在途期间持有者定时续租,进程中途退出时到期自动回到可领取。
+LEASE_SECONDS = 180
+RENEW_SECONDS = 30
 USAGE_PURPOSE = "auto_social_translate"
 CONTENT_TYPE = "social_post"
 _hooks_installed = False
@@ -152,7 +153,10 @@ def enqueue(session, article, *, is_new: bool) -> None:
     sources = _sources(article)
     fp = _fingerprint(sources)
     if row is not None and row.source_fp == fp:
-        return  # 原文没变:译文缓存、标题回执、阅读数等无关写入都走到这里
+        # 原文没变:译文缓存、标题回执、配图等无关写入都走到这里。唯一的例外是「记着已完成、译文却没了」
+        # (别的写入方把缓存冲掉了)——不重排的话这一条永远没有中文。
+        if not (row.status == "succeeded" and sources and not _translated(article)):
+            return
     if row is None and not is_new:
         # 启用前入库的存量推文没有待办。只有需要翻译的原文确实变了(补上引用帖、换成抓取版)才入队;
         # 旧值读不到时按没变处理——一次无关写入不能变成对存量的隐性回填。
@@ -160,23 +164,25 @@ def enqueue(session, article, *, is_new: bool) -> None:
         if before is None or before == sources:
             return
     now = time.time()
+    # 重排一条正在派发的待办时不动它的占用(lease_until / lease_token):在途请求结束前别人领不到这一条,
+    # 在途方收尾时发现指纹已变、占用还是自己的,再把占用交还(见 _complete)。
     if session.info.get(SUPPRESS_ENQUEUE_KEY):
         # 归档导入:可以让本机一条过期的待办作废,但决不新建本机的自动派发。
         if row is not None:
             row.source_fp, row.status = fp, "succeeded" if _translated(article) else "skipped"
-            row.attempts, row.retry_at, row.lease_until, row.error, row.updated_at = 0, 0, 0, "", now
+            row.attempts, row.retry_at, row.error, row.updated_at = 0, 0, "", now
         return
     # 同步来的公共条目由它的权威节点翻译;不可外送的来源不入队——来源政策日后放开也不该把存量变成回填。
     if not _local_article(session, article) or not _source_allowed(session, article):
         if row is not None:
-            row.source_fp, row.status, row.lease_until, row.updated_at = fp, "skipped", 0, now
+            row.source_fp, row.status, row.updated_at = fp, "skipped", now
         return
     status = _initial_status(article, sources)
     if row is None:
         session.add(Job(article_id=article.id, source_fp=fp, status=status, updated_at=now))
     else:
         row.source_fp, row.status, row.attempts, row.retry_at = fp, status, 0, 0
-        row.lease_until, row.error, row.updated_at = 0, "", now
+        row.error, row.updated_at = "", now
 
 
 def install_hooks() -> None:
@@ -235,9 +241,11 @@ def _pick(engine):
         if _reader_jobs_active(session):
             return None
         now = time.time()
+        # 已有一个自动请求在途(可能在另一个应用进程):这一拍不领,也不去把别的待办一条条推迟。
+        if session.exec(select(Job.article_id).where(Job.lease_until > now).limit(1)).first():
+            return None
         job = session.exec(select(Job).where(
-            Job.status.in_(("pending", "running")), Job.retry_at <= now,
-            Job.lease_until <= now, Job.attempts < MAX_ATTEMPTS,
+            Job.status.in_(("pending", "running")), Job.retry_at <= now, Job.attempts < MAX_ATTEMPTS,
         ).order_by(Job.updated_at).limit(1)).first()
         if job is None:
             return None
@@ -252,28 +260,34 @@ def _pick(engine):
         return article.id, job.source_fp, hold, replace(config.for_aux(), thinking_mode="disabled")
 
 
+def _gates_open(session, article) -> bool:
+    return (
+        _enabled(session) and accounts.ai_beta_global_enabled(session)
+        and _local_article(session, article) and _source_allowed(session, article)
+    )
+
+
 def _reserve(engine, article_id: str, source_fp: str, hold: int):
-    """占用这条待办并预留预算;返回预留 id。译文已经有了(读者刚手动译过)返回 None,不必调用。"""
+    """占用这条待办并预留预算,返回 (预留 id, 占用 token)。译文已经有了(读者刚手动译过)返回 None,不必调用。"""
     with _write(engine) as session:
-        if not _enabled(session) or not accounts.ai_beta_global_enabled(session):
-            raise SocialPending("automatic social translation is switched off")
         job = session.get(Job, article_id)
         article = session.get(ArticleRecord, article_id)
         if job is None or article is None or job.source_fp != source_fp or job.attempts >= MAX_ATTEMPTS:
             raise SocialPending("automatic social job changed")
         if _fingerprint(_sources(article)) != source_fp:
             raise SocialPending("social post changed")
-        if not _local_article(session, article) or not _source_allowed(session, article):
+        if not _gates_open(session, article):
             raise SocialPending("automatic social translation is not allowed")
         now = time.time()
-        if job.status == "running" and job.lease_until > now:
+        if job.lease_until > now:
             raise SocialPending("this social job is already dispatched")
         if _translated(article):
             return None
         if _reader_jobs_active(session):
             raise SocialPending("reader translations have priority")
+        # 看占用期而不是状态:被钩子重排成 pending 的在途条目同样算「有一个自动请求在途」。
         if session.exec(select(Job.article_id).where(
-            Job.status == "running", Job.lease_until > now, Job.article_id != article_id,
+            Job.lease_until > now, Job.article_id != article_id,
         ).limit(1)).first():
             raise SocialPending("another automatic social request is active")
         day = dt.date.today().isoformat()
@@ -282,40 +296,67 @@ def _reserve(engine, article_id: str, source_fp: str, hold: int):
         call = Call(id=uuid.uuid4().hex, article_id=article_id, day=day,
                     reserved_tokens=hold, created_at=now)
         session.add(call)
+        token = uuid.uuid4().hex
         job.attempts += 1
-        job.status, job.lease_until, job.updated_at = "running", now + LEASE_SECONDS, now
-        return call.id
+        job.status, job.lease_until, job.lease_token, job.updated_at = "running", now + LEASE_SECONDS, token, now
+        return call.id, token
 
 
-def _settle(engine, call_id: str, receipts: list, *, dispatched: bool, rejected: bool) -> None:
+def _renew(engine, article_id: str, token: str) -> None:
+    with _write(engine) as session:
+        job = session.get(Job, article_id)
+        if job is None or job.lease_token != token or job.lease_until <= time.time():
+            raise SocialPending("social lease lost")
+        job.lease_until = time.time() + LEASE_SECONDS
+
+
+def _guard_publication(engine, article_id: str, token: str) -> None:
+    """落缓存前的复核:占用还是自己的,开关 / 总闸还开着,条目仍属本机、来源仍可外送;否则这次结果不发布。"""
+    with Session(engine) as session:
+        job = session.get(Job, article_id)
+        article = session.get(ArticleRecord, article_id)
+        if job is None or article is None or job.lease_token != token or job.lease_until <= time.time():
+            raise SocialPending("social lease lost")
+        if not _gates_open(session, article):
+            raise SocialPending("automatic social translation is not allowed")
+
+
+def _settle(engine, call_id: str, receipts: list, *, sent: int, rejected: bool) -> None:
+    """按实际发出的请求核销:sent = 发出的请求数,receipts = 收到的用量回执。"""
     with _write(engine) as session:
         call = session.get(Call, call_id)
         if call is None or call.recorded:
             return
         if receipts:
-            known = True
+            known = len(receipts) >= sent
             for usage, model in receipts:
                 ai_usage.record_usage(session, username=None, purpose=USAGE_PURPOSE, model=model,
                                       usage=usage, day=call.day, commit=False)
                 known = known and bool(usage) and any(key in usage for key in ("total_tokens", "prompt_tokens"))
+            # 有请求发出去却没有回执(另一批超时),或回执里没有 token 数:那部分费用不明,整笔预留留到当天结束。
             call.recorded, call.status = True, "settled" if known else "unknown"
         else:
-            # 没到调用模型那一步(缓存命中、原文已变、结构不可译),或服务商明确拒绝:释放预留。
-            # 已经发出却没有回执的,费用不明,预留留到当天结束。
-            call.status = "released" if (not dispatched or rejected) else "unknown"
+            # 一个请求都没发(缓存命中、原文已变、结构不可译),或服务商明确拒绝:释放预留。
+            call.status = "released" if (sent == 0 or rejected) else "unknown"
 
 
-def _complete(engine, article_id: str, source_fp: str, *, error=None) -> None:
+def _complete(engine, article_id: str, source_fp: str, token: str | None, *, error=None) -> None:
     from services.reader_ai import ReaderAIError
     with _write(engine) as session:
         job = session.get(Job, article_id)
-        if job is None or job.source_fp != source_fp:
-            return  # 原文中途变了:钩子已按新指纹重排,不动它
-        article = session.get(ArticleRecord, article_id)
+        if job is None:
+            return
         now = time.time()
-        if isinstance(error, SocialPending) and job.status == "running" and job.lease_until > now:
-            return  # 没占到:另一进程正派发着这条,不动它的状态
-        job.lease_until, job.error = 0, ""
+        owns = bool(token) and job.lease_token == token
+        if job.source_fp != source_fp:
+            # 原文中途变了:钩子已按新指纹重排、占用没动。交还占用,新指纹的待办立刻可领。
+            if owns:
+                job.lease_until, job.lease_token = 0, ""
+            return
+        if not owns and job.lease_until > now:
+            return  # 别人正占着这条(没占到的一方 / 占用过期后才回来的旧持有者):不动它的状态
+        article = session.get(ArticleRecord, article_id)
+        job.lease_until, job.lease_token, job.error = 0, "", ""
         if article is not None and _translated(article):
             job.status = "succeeded"
         elif article is None or not _sources(article) or not _local_article(session, article) \
@@ -333,36 +374,63 @@ def _complete(engine, article_id: str, source_fp: str, *, error=None) -> None:
         job.updated_at = now
 
 
+async def _dispatch(db_sink, article_id: str, source_fp: str, config, call_id: str, token: str) -> None:
+    """发请求、续租、核销。原文对不上领取时的指纹就不调模型;失去占用即取消在途调用。"""
+    from services.reader_ai import translate_social_post
+    engine = db_sink.engine
+    receipts: list = []
+    state = {"sent": 0, "rejected": False}
+    meta = UsageMeta(USAGE_PURPOSE, None, recorder=lambda _meta, usage, model: receipts.append((usage, model)))
+
+    async def renew():
+        while True:
+            await asyncio.sleep(RENEW_SECONDS)
+            await asyncio.to_thread(_renew, engine, article_id, token)
+
+    async def execute():
+        await translate_social_post(
+            db_sink, article_id, config, meta,
+            expected_fingerprint=source_fp,
+            on_llm_request=lambda: state.__setitem__("sent", state["sent"] + 1),
+            max_retries=1,  # 客户端内部重试会让「首次超时、后次成功」漏掉前一次的不明费用
+            pre_save_check=lambda: _guard_publication(engine, article_id, token),
+        )
+
+    work, keeper = asyncio.create_task(execute()), asyncio.create_task(renew())
+    try:
+        done, _ = await asyncio.wait((work, keeper), return_when=asyncio.FIRST_COMPLETED)
+        if keeper in done:
+            await keeper  # 续租失败:抛出,下面取消在途调用
+        await work
+    except LLMHTTPError as exc:
+        state["rejected"] = 400 <= exc.status_code < 500 and exc.status_code != 408
+        raise
+    finally:
+        for task in (work, keeper):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(work, keeper, return_exceptions=True)
+        await asyncio.to_thread(_settle, engine, call_id, receipts, **state)
+
+
 async def run_once(db_sink) -> bool:
     engine = db_sink.engine
     picked = await asyncio.to_thread(_pick, engine)
     if picked is None:
         return False
     article_id, source_fp, hold, config = picked
-    error = None
+    error, token = None, None
     try:
-        call_id = await asyncio.to_thread(_reserve, engine, article_id, source_fp, hold)
-        if call_id is not None:
-            from services.reader_ai import translate_social_post
-            receipts: list = []
-            state = {"dispatched": False, "rejected": False}
-            meta = UsageMeta(USAGE_PURPOSE, None, recorder=lambda _meta, usage, model: receipts.append((usage, model)))
-            try:
-                await translate_social_post(
-                    db_sink, article_id, config, meta,
-                    pre_llm_check=lambda: state.__setitem__("dispatched", True),
-                )
-            except LLMHTTPError as exc:
-                state["rejected"] = 400 <= exc.status_code < 500 and exc.status_code != 408
-                raise
-            finally:
-                await asyncio.to_thread(_settle, engine, call_id, receipts, **state)
+        claim = await asyncio.to_thread(_reserve, engine, article_id, source_fp, hold)
+        if claim is not None:
+            call_id, token = claim
+            await _dispatch(db_sink, article_id, source_fp, config, call_id, token)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # 服务商故障不该让 worker 停下
         error = exc
         logger.info("Automatic social translation deferred article=%s reason=%s", article_id, type(exc).__name__)
-    await asyncio.to_thread(_complete, engine, article_id, source_fp, error=error)
+    await asyncio.to_thread(_complete, engine, article_id, source_fp, token, error=error)
     return True
 
 
@@ -388,7 +456,7 @@ def _maintenance(engine) -> None:
             article = session.get(ArticleRecord, job.article_id)
             job.status = "succeeded" if article is not None and _translated(article) else "failed"
             job.error = "推文翻译暂未完成" if job.status == "failed" else ""
-            job.lease_until, job.updated_at = 0, now
+            job.lease_until, job.lease_token, job.updated_at = 0, "", now
         # 中途终止的请求费用不明:预留留在它发出的那一天。
         for call in session.exec(select(Call).where(Call.status == "reserved", Call.created_at < now - 600)).all():
             call.status = "unknown"

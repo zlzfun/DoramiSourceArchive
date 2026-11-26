@@ -72,13 +72,17 @@ def set_ext(store, pid, **changes):
         session.commit()
 
 
-def fake_provider(monkeypatch, calls, *, usage=True, fails=False, on_call=None):
-    """JSON 进、JSON 出的桩:逐单元回「译：原文」,并像真客户端一样把用量交给本次调用自带的回调。"""
+def fake_provider(monkeypatch, calls, *, usage=True, fails=False, on_call=None, fails_when=None):
+    """JSON 进、JSON 出的桩:逐单元回「译：原文」,并像真客户端一样把用量交给本次调用自带的回调。
+    fails_when(texts) 为真的那一次请求在别的请求回来之后才超时(没有回执)。"""
     async def chat(*, messages, config, usage_meta=None, **kwargs):
         units = json.loads(messages[-1].content)["units"]
-        calls.append({"texts": [u["text"] for u in units], "config": config, "meta": usage_meta})
+        calls.append({"texts": [u["text"] for u in units], "config": config, "meta": usage_meta, "kwargs": kwargs})
         if on_call is not None:
             on_call(len(calls))
+        if fails_when is not None and fails_when([u["text"] for u in units]):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("provider timeout")
         if fails:
             raise RuntimeError("provider timeout")
         usage_meta.recorder(
@@ -181,6 +185,7 @@ def test_automatic_call_uses_aux_without_thinking_and_only_the_system_budget(sto
     assert len(calls) == 1, "主推与引用推一次调用"
     assert calls[0]["texts"][0] == TEXT and calls[0]["texts"][1].startswith("the original post")
     assert calls[0]["config"].model == "aux" and calls[0]["config"].thinking_mode == "disabled"
+    assert calls[0]["kwargs"].get("max_retries") == 1, "自动路径不让客户端内部重试(否则前一次的不明费用会漏记)"
     translated = zh_of(store)
     assert translated["text"] == f"译：{TEXT}" and translated["quoted"].startswith("译：the original post")
     assert job_of(store).status == "succeeded"
@@ -280,7 +285,7 @@ def test_failure_cap_holds_unknown_cost_and_stops_after_three_attempts(store, mo
         assert run(store)
         with Session(store.engine) as session:
             row = session.get(Job, "p")
-            assert row.attempts == attempt + 1 and row.lease_until == 0
+            assert row.attempts == attempt + 1 and row.lease_until == 0 and row.lease_token == ""
             row.retry_at = 0
             session.commit()
     assert not run(store)
@@ -325,15 +330,23 @@ def test_reader_translated_first_costs_the_system_nothing(store, monkeypatch):
 def test_one_automatic_request_at_a_time_and_expired_lease_is_reclaimed(store):
     seed(store, post("a"), post("b"))
     fp = job_of(store, "a").source_fp
-    call_id = service._reserve(store.engine, "a", fp, 1000)
-    assert job_of(store, "a").status == "running"
+    call_id, token = service._reserve(store.engine, "a", fp, 1000)
+    assert job_of(store, "a").status == "running" and job_of(store, "a").lease_token == token
+    assert service._pick(store.engine) is None, "已有请求在途:这一拍不领,也不去推迟别的待办"
     with pytest.raises(service.SocialPending, match="another automatic"):
         service._reserve(store.engine, "b", fp, 1000)
     with pytest.raises(service.SocialPending, match="already dispatched"):
         service._reserve(store.engine, "a", fp, 1000)
     # 没占到的一方收尾时不动占用者的状态
-    service._complete(store.engine, "a", fp, error=service.SocialPending("lost the race"))
+    service._complete(store.engine, "a", fp, None, error=service.SocialPending("lost the race"))
     assert job_of(store, "a").status == "running"
+    # 续租认 token
+    with pytest.raises(service.SocialPending, match="lease lost"):
+        service._renew(store.engine, "a", "someone-else")
+    before = job_of(store, "a").lease_until
+    time.sleep(0.01)
+    service._renew(store.engine, "a", token)
+    assert job_of(store, "a").lease_until > before
     # 进程中途退出:占用到期后同一条可以重新领取,旧预留转为费用不明
     with Session(store.engine) as session:
         session.get(Job, "a").lease_until = time.time() - 1
@@ -342,17 +355,116 @@ def test_one_automatic_request_at_a_time_and_expired_lease_is_reclaimed(store):
     service._maintenance(store.engine)
     with Session(store.engine) as session:
         assert session.get(Call, call_id).status == "unknown"
-    assert service._reserve(store.engine, "a", fp, 1000)
-    assert job_of(store, "a").attempts == 2
+    _, new_token = service._reserve(store.engine, "a", fp, 1000)
+    assert new_token != token and job_of(store, "a").attempts == 2
+    # 占用过期后才回来的旧持有者:续租失败、不能发布、收尾不动新持有者的状态
+    with pytest.raises(service.SocialPending):
+        service._renew(store.engine, "a", token)
+    with pytest.raises(service.SocialPending):
+        service._guard_publication(store.engine, "a", token)
+    service._complete(store.engine, "a", fp, token, error=RuntimeError("late"))
+    job = job_of(store, "a")
+    assert (job.status, job.lease_token, job.attempts) == ("running", new_token, 2)
+
+
+def test_a_claim_only_pays_for_the_original_it_claimed(store, monkeypatch):
+    """领取之后、读取之前原文变了:这次领取不为新原文调模型(否则另一个进程领新待办时会为同一份原文再付一次)。"""
+    calls = []
+    fake_provider(monkeypatch, calls)
+    seed(store, post(), post("other"))
+    old_fp = job_of(store).source_fp
+    call_id, token = service._reserve(store.engine, "p", old_fp, 1000)
+    set_ext(store, "p", quoted=QUOTED)  # 钩子按新指纹重排
+    job = job_of(store)
+    assert (job.status, job.attempts) == ("pending", 0) and job.source_fp != old_fp
+    assert job.lease_token == token and job.lease_until > time.time(), "重排不清在途请求的占用"
+    assert service._pick(store.engine) is None
+    with pytest.raises(service.SocialPending, match="another automatic"):
+        service._reserve(store.engine, "other", job_of(store, "other").source_fp, 1000)
+    with pytest.raises(reader_ai.ReaderAIError):
+        asyncio.run(service._dispatch(store, "p", old_fp, CONFIG, call_id, token))
+    assert calls == [], "没有为新原文发请求"
+    with Session(store.engine) as session:
+        assert session.get(Call, call_id).status == "released"
+    service._complete(store.engine, "p", old_fp, token, error=reader_ai.ReaderAIError("原文已更新", 409))
+    job = job_of(store)
+    assert (job.status, job.lease_until, job.lease_token) == ("pending", 0, ""), "占用交还,新指纹的待办立刻可领"
+    # 两条待办(另一条排在前面)各派发一次:新原文只付了一次
+    assert run(store) and run(store) and not run(store)
+    assert sorted(len(call["texts"]) for call in calls) == [1, 2]
+    assert zh_of(store)["quoted"].startswith("译：the original post")
+
+
+def test_partial_receipts_keep_the_hold_for_the_request_without_one(store, monkeypatch):
+    """两批请求,一批有回执、另一批发出去后超时:到的回执照记,整笔预留留到当天结束。"""
+    calls = []
+    long_quote = {**QUOTED, "text": "quoted " * 400}
+    fake_provider(monkeypatch, calls, fails_when=lambda texts: any(text.startswith("quoted") for text in texts))
+    seed(store, post(text="main " * 400, ext={"quoted": long_quote}))
+    assert run(store)
+    assert len(calls) == 2, "超过一批的长推文"
+    with Session(store.engine) as session:
+        call = session.exec(select(Call)).one()
+        assert (call.status, call.recorded) == ("unknown", True)
+        assert [row.total_tokens for row in session.exec(select(AiUsageRecord)).all()] == [120]
+    assert job_of(store).status == "pending" and zh_of(store) is None
+
+
+def test_result_is_not_published_once_the_gate_closes_mid_flight(store, monkeypatch):
+    calls = []
+
+    def close_gate(_count):
+        with Session(store.engine) as session:
+            session.add(AppSettingRecord(key=service.ENABLED_KEY, value="false"))
+            session.commit()
+
+    fake_provider(monkeypatch, calls, on_call=close_gate)
+    seed(store, post())
+    assert run(store) and len(calls) == 1
+    assert zh_of(store) is None, "开关在途中被关掉:结果不落缓存"
+    job = job_of(store)
+    assert (job.status, job.lease_until, job.attempts) == ("pending", 0, 1)
+    with Session(store.engine) as session:
+        assert session.exec(select(Call)).one().status == "settled", "已发生的用量照记"
 
 
 def test_released_hold_when_nothing_was_sent(store):
     seed(store, post())
     fp = job_of(store).source_fp
-    call_id = service._reserve(store.engine, "p", fp, 1000)
-    service._settle(store.engine, call_id, [], dispatched=False, rejected=False)
+    call_id, _token = service._reserve(store.engine, "p", fp, 1000)
+    service._settle(store.engine, call_id, [], sent=0, rejected=False)
     with Session(store.engine) as session:
         assert session.get(Call, call_id).status == "released"
+
+
+def test_a_done_job_is_requeued_when_its_translation_disappears(store, monkeypatch):
+    calls = []
+    fake_provider(monkeypatch, calls)
+    seed(store, post())
+    assert run(store) and job_of(store).status == "succeeded"
+    with Session(store.engine) as session:
+        row = session.get(ArticleRecord, "p")
+        ext = json.loads(row.extensions_json)
+        ext.pop("translation_zh_social")
+        row.extensions_json = json.dumps(ext, ensure_ascii=False)
+        session.commit()
+    assert (job_of(store).status, job_of(store).attempts) == ("pending", 0)
+    assert run(store) and zh_of(store) is not None and len(calls) == 2
+
+
+@pytest.mark.parametrize("entry", [
+    {"text": [], "quoted": "引用译文"},
+    {"text": "正文译文", "quoted": 3},
+    {"text": "", "quoted": "  "},
+    {"text": "正文译文", "quoted": "引用译文", "v": "1"},
+])
+def test_malformed_cache_groups_are_rejected_by_reader_and_sync_alike(entry):
+    ext = {"lang": "en", "quoted": QUOTED}
+    sources = reader_ai.social_translation_sources(TEXT, ext)
+    fp = reader_ai._social_fingerprint(sources)
+    group = {"fp": fp, "v": reader_ai.SOCIAL_TRANSLATION_VERSION, **entry}
+    assert reader_ai.social_translation_entry_valid(group, fp) is False
+    assert reader_ai.cached_social_translation(TEXT, {**ext, "translation_zh_social": group}) is None
 
 
 # ── 列表带回译文 ─────────────────────────────────────────────
@@ -448,3 +560,29 @@ def test_fetched_posts_are_queued_and_adopting_a_pushed_post_follows_the_fetched
     assert (job.status, job.source_fp) == ("pending", fetched_fp)
     assert run(sink) and run(sink)
     assert zh_of(sink, "x_new_lab_3001") and zh_of(sink, "x_new_lab_2001")
+
+
+def test_adopting_the_fetched_copy_keeps_a_translation_that_still_matches(monkeypatch, tmp_path):
+    """推送的转推已有译文;抓取版只是顶层「RT @…」包装文字不同,原帖全文没变:译文留着,不重译也不丢。"""
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.daily_brief, "resolve_llm_config", lambda _session: CONFIG)
+    calls = []
+    fake_provider(monkeypatch, calls)
+    with TestClient(app_module.app) as client:
+        _login(client)
+        token = _issue_token(client)
+        pushed = _push(client, token, [_structured("reposted", post_id="2002")]).json()["results"]
+        assert pushed[0]["status"] == "created", pushed
+    assert run(sink) and job_of(sink, "x_new_lab_2002").status == "succeeded"
+    before = zh_of(sink, "x_new_lab_2002")
+    with Session(sink.engine) as session:
+        pushed_content = session.get(ArticleRecord, "x_new_lab_2002").content
+    _, pushed_fp = _fp_of(sink, "x_new_lab_2002")
+    _run_pipeline(sink, "x_new_lab", [_fetched(sink, _x_payload("retweeted", post_id="2002"), "x_new_lab")])
+    with Session(sink.engine) as session:
+        assert session.get(ArticleRecord, "x_new_lab_2002").content != pushed_content, "顶层正文确实换成了抓取版"
+    _, fetched_fp = _fp_of(sink, "x_new_lab_2002")
+    assert fetched_fp == pushed_fp
+    assert zh_of(sink, "x_new_lab_2002") == before
+    assert job_of(sink, "x_new_lab_2002").status == "succeeded"
+    assert not run(sink) and len(calls) == 1

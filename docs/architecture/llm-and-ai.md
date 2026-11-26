@@ -25,7 +25,7 @@
 
 ### 推文入库即译（issue #349）
 
-`social_translation` 与标题自动翻译同构：`before_flush` 钩子给新的、或正文 / 扩展字段有改动的 `social_post` 在同一事务里写待办 `social_translation_jobs`，按「需要翻译的那几段原文」（主推——转推取原推全文——与引用推）的指纹去重，与缓存 `translation_zh_social.fp` 同口径；钩子挂在写入层，抓取、推送、手工收录、同一条再次到达时的补全与换成抓取版都覆盖。不回填存量（水位 `auto_social_translation_started_at`）；同步来的条目、导入事务、不可外送的来源不建待办。worker 逐条派发，调用复用 `reader_ai.translate_social_post`，辅助模型并关闭思考；独立用途 `auto_social_translate`、预留表 `social_translation_calls`、每日上限 `auto_social_translation_daily_tokens`（默认 300,000，`0` 暂停）与总闸 `auto_social_translation_enabled`，不扣读者额度、不占标题预算；每条最多 3 次，待办的占用期保证多进程只放行一个自动请求。读者手动翻译（`POST /api/reader/ai/social/{id}/translate`）仍在，写的是同一份缓存。
+`social_translation` 与标题自动翻译同构：`before_flush` 钩子给新的、或正文 / 扩展字段有改动的 `social_post` 在同一事务里写待办 `social_translation_jobs`，按「需要翻译的那几段原文」（主推——转推取原推全文——与引用推）的指纹去重，与缓存 `translation_zh_social.fp` 同口径；钩子挂在写入层，抓取、推送、手工收录、同一条再次到达时的补全与换成抓取版都覆盖。不回填存量（水位 `auto_social_translation_started_at`）；同步来的条目、导入事务、不可外送的来源不建待办。worker 逐条派发，调用复用 `reader_ai.translate_social_post`，辅助模型并关闭思考；独立用途 `auto_social_translate`、预留表 `social_translation_calls`、每日上限 `auto_social_translation_daily_tokens`（默认 300,000，`0` 暂停）与总闸 `auto_social_translation_enabled`，不扣读者额度、不占标题预算；每条最多 3 次。待办带占用期与占用者 token（180 秒、在途每 30 秒续租），多进程只放行一个自动请求；请求带着领取时的原文指纹（对不上不调模型），落缓存前再复核一次占用与门控；核销按实际发出的请求数，自动路径不让客户端内部重试。读者手动翻译（`POST /api/reader/ai/social/{id}/translate`）仍在，写的是同一份缓存。
 
 带正文的推文条目带 `social_zh: {text, quoted} | null`（`reader_ai.cached_social_translation`）：只在缓存指纹对得上当前原文时才给，前端不自己校验。推文卡译文原位替换原文、一次只显示一种语言；显示哪种由 `utils/socialTranslate.socialCardView` 一处判定（偏好、读者在这张卡上的选择、有没有译文、AI 是否可用）。
 

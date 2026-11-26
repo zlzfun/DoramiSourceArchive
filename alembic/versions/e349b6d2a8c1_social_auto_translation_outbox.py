@@ -32,6 +32,7 @@ def upgrade() -> None:
             sa.Column("attempts", sa.Integer(), nullable=False),
             sa.Column("retry_at", sa.Float(), nullable=False),
             sa.Column("lease_until", sa.Float(), nullable=False),
+            sa.Column("lease_token", S(), nullable=False),
             sa.Column("updated_at", sa.Float(), nullable=False),
             sa.Column("error", S(), nullable=False),
             sa.CheckConstraint(

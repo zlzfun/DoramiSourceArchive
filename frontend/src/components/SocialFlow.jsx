@@ -158,7 +158,8 @@ function SocialCardsSkeleton({ count = 3 }) {
    view 见 utils/socialTranslate.socialCardView:显示中文时是「✦ 已译为中文 · 原文」,显示原文而有译文可看 /
    可向 AI 要时是「✦ 译为中文」;额度用尽只给说明,不给重试。 */
 function SocialTranslateRow({ article, view, message = '', withQuote, onToggle }) {
-  const toggle = () => onToggle?.(article);
+  // 把这张卡自己的视图交给开关:开关不重新推导(同一条推文在别的列表里默认语言可能不同)
+  const toggle = () => onToggle?.(article, view);
   let body;
   if (view.status === 'loading') {
     body = (
@@ -219,8 +220,9 @@ function postAuthorOf(article, ext, source, sourceName) {
 
 // 长按预览卡(issue #230 批 4a;样页拍板 5「长按写清对象 = 抬起预览卡」、拍板 22「长按扩到播客卡与社交卡」):
 // 只读小卡——头像 · 作者 · @handle · 时间 / 正文前几行;没有动作钮与配图(动作就在下面的动作单里)。
-// 正文的语言与下面那张卡一致(issue #349):translation 是这张卡的逐卡状态,读者在卡上切回过原文就显示原文
-export function SocialPeek({ article, source = null, sourceName = '', translation = null }) {
+// 正文的语言与下面那张卡一致(issue #349):translation 是这张卡的逐卡状态(读者在卡上切回过原文就显示原文),
+// searchQuery 是那张卡所在列表的搜索词(搜的词只在原文里时卡片显示原文,预览卡跟着)
+export function SocialPeek({ article, source = null, sourceName = '', translation = null, searchQuery = '' }) {
   const ext = parseExt(article);
   const { preferChinese } = useTitlePreference();
   const { reposted, authorName, authorHandle, avatarUrl, text: originalText } = postAuthorOf(article, ext, source, sourceName);
@@ -228,6 +230,8 @@ export function SocialPeek({ article, source = null, sourceName = '', translatio
     cached: socialCachedZh(article),
     entry: currentSocialTranslation(translation, socialSignatureOf(socialTranslationSources(article, ext))),
     preferChinese,
+    searchQuery,
+    original: socialOriginalTexts(article, ext),
   });
   const text = (view.showZh && view.zh.text) || originalText;
   const stamp = article.publish_date || article.fetched_date;

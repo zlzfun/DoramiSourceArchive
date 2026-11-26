@@ -20,6 +20,7 @@ import {
   socialCachedZh,
   socialCardView,
   socialOriginalTexts,
+  socialToggledEntry,
   nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
   socialQuotaUntil,
@@ -1121,37 +1122,18 @@ export function useReaderState({
     }
   };
 
-  // 一张推文卡的翻译视图(issue #349):卡片、长按预览卡、菜单与下面的开关都从这一处推导,口径不会走样。
-  // 判定在 utils/socialTranslate.socialCardView;最新的偏好 / 搜索词 / AI 开关经 ref 取,开关本身引用稳定。
-  const { preferChinese } = useTitlePreference();
-  const socialViewInputs = useRef({ preferChinese, aiEnabled, searchQuery });
-  useEffect(() => { socialViewInputs.current = { preferChinese, aiEnabled, searchQuery }; }, [preferChinese, aiEnabled, searchQuery]);
-  const socialViewOf = (article, translations, inputs) => {
-    const sig = socialTranslationSignature(article);
-    return socialCardView({
-      cached: socialCachedZh(article),
-      entry: currentSocialTranslation(translations[article?.id], sig),
-      preferChinese: inputs.preferChinese,
-      aiEnabled: inputs.aiEnabled,
-      translatable: Boolean(sig),
-      searchQuery: inputs.searchQuery,
-      original: socialOriginalTexts(article),
-    });
-  };
-
-  // 推文换语言:有译文(随列表带回的,或本次会话翻出来的)只在本地切,不发请求;没有译文才向 AI 要——
-  // 首次 / 失败后重试 / 原文已变。额度用尽(429)当天留在 quota 态,不给重试。
-  const toggleSocialTranslation = useCallback((article) => {
+  // 推文换语言。view 是调用方(那张卡 / 它的菜单)按自己所在列表算好的翻译视图(utils/socialTranslate.socialCardView)——
+  // 这里不重新推导:同一条推文在搜索结果与订阅推入页里的默认语言可以不同,开关替谁推导都会和另一处对不上。
+  // 有译文(随列表带回的,或本次会话翻出来的)只在本地切,不发请求;没有译文才向 AI 要——首次 / 失败后重试 /
+  // 原文已变。额度用尽(429)当天留在 quota 态,不给重试。
+  const toggleSocialTranslation = useCallback((article, view) => {
     const id = article?.id;
-    if (!id) return;
+    if (!id || !view) return;
     const sig = socialTranslationSignature(article);
-    const view = socialViewOf(article, socialTranslationsRef.current, socialViewInputs.current);
-    if (view.zh) {
+    const toggled = socialToggledEntry(view, sig);
+    if (toggled) {
       // 记下这张卡的选择:之后它不再跟偏好走,直到原文变了(签名对不上)或页面重载
-      setSocialTranslations((prev) => ({
-        ...prev,
-        [id]: { status: 'done', open: !view.showZh, sig, text: view.zh.text, quoted: view.zh.quoted },
-      }));
+      setSocialTranslations((prev) => ({ ...prev, [id]: toggled }));
       return;
     }
     if (view.action !== 'request') return;
@@ -1246,19 +1228,35 @@ export function useReaderState({
     return items;
   };
 
-  const buildSocialMenuItems = (article) => {
+  // 菜单里的翻译视图与那张卡同一口径。context.searchQuery = 这条推文所在列表实例的搜索词:
+  // 主列表不传(用主列表的),订阅推入页是另一个列表实例、没有搜索,要显式传空串。
+  const { preferChinese } = useTitlePreference();
+  const socialViewFor = (article, context = {}) => {
+    const sig = socialTranslationSignature(article);
+    return socialCardView({
+      cached: socialCachedZh(article),
+      entry: currentSocialTranslation(socialTranslations[article?.id], sig),
+      preferChinese,
+      aiEnabled,
+      translatable: Boolean(sig),
+      searchQuery: context.searchQuery ?? searchQuery,
+      original: socialOriginalTexts(article),
+    });
+  };
+
+  const buildSocialMenuItems = (article, context = {}) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
     // 语言项与卡片底栏同一个开关(issue #84 / #349):显示中文时是「显示原文」,否则「译为中文」;
     // 没有译文、也要不到(AI 不可用 / 这条不需要翻译)时不出这一项
-    const view = socialViewOf(article, socialTranslations, { preferChinese, aiEnabled, searchQuery });
+    const view = socialViewFor(article, context);
     const translateItems = view.action || view.status
       ? [{
         key: 'translate',
         label: view.action === 'original' ? '显示原文' : '译为中文',
         icon: Sparkles,
         disabled: view.status === 'loading' || view.status === 'quota',
-        onClick: () => toggleSocialTranslation(article),
+        onClick: () => toggleSocialTranslation(article, view),
       }]
       : [];
     return [

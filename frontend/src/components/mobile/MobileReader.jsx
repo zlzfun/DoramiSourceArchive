@@ -329,16 +329,27 @@ export default function MobileReader({
     items: buildSourceMenuItems(source),
     anchorKey: `source:${source.source_id}`,
   });
-  const openSocialSheet = (article) => setSheet({
+  // flowSearch = 这张卡所在列表实例的搜索词:内容 Tab 用主列表的;订阅推入页是另一个列表实例、没有搜索。
+  // 动作单的语言项与预览卡要和那张卡同一口径(issue #349:搜的词只在原文里时卡片显示原文)
+  const openSocialSheet = (article, flowSearch = searchQuery) => setSheet({
     title: article.title || '推文',
-    items: buildSocialMenuItems(article),
+    items: buildSocialMenuItems(article, { searchQuery: flowSearch }),
     anchorKey: `social:${article.id}`,
-    preview: <SocialPeek article={article} source={sourceMap[article.source_id]} sourceName={sourceNameMap[article.source_id]} translation={socialTranslations[article.id] || null} />,
+    preview: (
+      <SocialPeek
+        article={article}
+        source={sourceMap[article.source_id]}
+        sourceName={sourceNameMap[article.source_id]}
+        translation={socialTranslations[article.id] || null}
+        searchQuery={flowSearch}
+      />
+    ),
   });
 
   const pressBind = useLongPress(openArticleSheet);
   // 社交卡长按(审计 M-04;批 4a):与文章行同一条路径——iOS 不派发 contextmenu,靠触摸计时
-  const socialPressBind = useLongPress(openSocialSheet);
+  const socialPressBind = useLongPress((article) => openSocialSheet(article));
+  const flowSocialPressBind = useLongPress((article) => openSocialSheet(article, ''));
 
   const listView = contentTab && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页。
@@ -900,7 +911,7 @@ export default function MobileReader({
           onBack={closeFlow}
           aiEnabled={aiEnabled}
           pressBind={pressBind}
-          socialPressBind={socialPressBind}
+          socialPressBind={flowSocialPressBind}
           sheetAnchorKey={sheet?.anchorKey || null}
           playingId={playingId}
           playingState={playingState}

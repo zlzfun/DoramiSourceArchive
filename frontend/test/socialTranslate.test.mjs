@@ -11,6 +11,7 @@ import {
   socialQuotaActive,
   socialQuotaUntil,
   socialTextNeedsTranslation,
+  socialToggledEntry,
   socialTranslatable,
   socialTranslationParts,
   socialTranslationSignature,
@@ -196,4 +197,24 @@ test('卡片上的两段原文:转推取原推全文,没有引用推给空串', 
     socialOriginalTexts(article(' main ', { quoted: { text: ' quoted ' } })),
     { text: 'main', quoted: 'quoted' },
   );
+});
+
+test('换语言的开关只认调用方给的视图:同一条推文在两个列表里默认语言不同,各自一点就翻', () => {
+  const original = { text: 'We shipped a new agents SDK.', quoted: '' };
+  const zh = { text: '我们发布了新的智能体 SDK。', quoted: null };
+  // 搜索结果里这张卡显示原文,订阅推入页(没有搜索)里显示中文
+  const inSearch = socialCardView({ cached: zh, preferChinese: true, original, searchQuery: 'agents' });
+  const inFlow = socialCardView({ cached: zh, preferChinese: true, original, searchQuery: '' });
+  assert.equal(inSearch.showZh, false);
+  assert.equal(inFlow.showZh, true);
+  // 各自点一下:搜索结果里换成中文,推入页里换成原文——开关不替调用方重新推导
+  assert.deepEqual(socialToggledEntry(inSearch, 'sig'), { status: 'done', open: true, sig: 'sig', text: zh.text, quoted: null });
+  assert.deepEqual(socialToggledEntry(inFlow, 'sig'), { status: 'done', open: false, sig: 'sig', text: zh.text, quoted: null });
+  // 点过之后两处都听这张卡的
+  const entry = socialToggledEntry(inFlow, 'sig');
+  assert.equal(socialCardView({ cached: zh, entry, preferChinese: true, original, searchQuery: 'agents' }).showZh, false);
+  assert.equal(socialCardView({ cached: zh, entry, preferChinese: true, original, searchQuery: '' }).showZh, false);
+  // 没有译文的视图不产生本地条目(要走请求)
+  assert.equal(socialToggledEntry(socialCardView({ aiEnabled: true, translatable: true }), 'sig'), null);
+  assert.equal(socialToggledEntry(null, 'sig'), null);
 });
