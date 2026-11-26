@@ -6,6 +6,8 @@ import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { highlightMatch } from '../utils/highlight';
 import { currentSocialTranslation, socialSignatureOf, socialTranslationSources } from '../utils/socialTranslate';
+import { socialClampCandidate, socialMoreVisible } from '../utils/socialClamp';
+import { useClampCut } from '../hooks/useClampCut';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
 import { mediaProxyUrl } from '../api';
 
@@ -143,8 +145,6 @@ function SocialCardsSkeleton({ count = 3 }) {
   );
 }
 
-const CLAMP_CHARS = 360; // 超过此长度折叠(约样页的 7 行)
-
 /* 推文翻译底栏(issue #84,样页 docs/design/social-translate):卡片最后一行——翻译管整张卡片
    (主推 + 引用推),入口就放在整张卡片末尾;「显示更多」仍紧贴正文,只管正文折叠。
    开合都在这一行,位置不随状态移动。额度用尽只给说明,不给重试。 */
@@ -214,6 +214,8 @@ export function SocialPeek({ article, source = null, sourceName = '' }) {
   const ext = parseExt(article);
   const { reposted, authorName, authorHandle, avatarUrl, text } = postAuthorOf(article, ext, source, sourceName);
   const stamp = article.publish_date || article.fetched_date;
+  // 末行渐隐只在三行确实装不下时出现(issue #346):一两行的短推文不能被淡掉
+  const [textRef, cut] = useClampCut(Boolean(text), text);
   return (
     <div className="m-peek-card m-peek-social">
       <div className="social-body">
@@ -227,7 +229,7 @@ export function SocialPeek({ article, source = null, sourceName = '' }) {
             <span className="social-dot">·</span>
             <span className="social-handle">{formatRelativeTime(stamp, '')}</span>
           </div>
-          {text && <p className="social-text m-peek-text">{text}</p>}
+          {text && <p ref={textRef} className={`social-text m-peek-text${cut ? ' is-cut' : ''}`}>{text}</p>}
         </div>
       </div>
     </div>
@@ -275,7 +277,11 @@ const SocialPost = memo(function SocialPost({
   const quoted = ext.quoted && typeof ext.quoted === 'object' ? ext.quoted : null;
   const mediaUrls = reposted?.media_urls?.length ? reposted.media_urls : ext.media_urls;
 
-  const clamped = !expanded && text.length > CLAMP_CHARS;
+  // 折叠(issue #346):字数只决定进不进折叠态;「显示更多」看折叠态是否真的截掉了内容(量出来的 cut),
+  // 排得下的长推文不出按钮。判定口径在 utils/socialClamp
+  const candidate = socialClampCandidate(text);
+  const clamped = candidate && !expanded;
+  const [textRef, cut] = useClampCut(clamped, text);
   const stamp = article.publish_date || article.fetched_date;
 
   return (
@@ -357,8 +363,12 @@ const SocialPost = memo(function SocialPost({
             </span>
           </div>
 
-          {text && <p className={`social-text ${clamped ? 'is-clamped' : ''}`}>{searchQuery ? highlightMatch(text, searchQuery) : text}</p>}
-          {text.length > CLAMP_CHARS && (
+          {text && (
+            <p ref={textRef} className={`social-text${clamped ? ' is-clamped' : ''}${clamped && cut ? ' is-cut' : ''}`}>
+              {searchQuery ? highlightMatch(text, searchQuery) : text}
+            </p>
+          )}
+          {socialMoreVisible({ candidate, expanded, cut }) && (
             <button type="button" className="social-more" onClick={() => setExpanded((v) => !v)}>
               {expanded ? '收起' : '显示更多'}
             </button>
