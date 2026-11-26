@@ -1029,10 +1029,6 @@ export function ensurePersonalBrief() {
   return request('/reader/briefs/today/ensure', { method: 'POST', errorMsg: '准备今日早报失败' });
 }
 
-export function rebuildPersonalBrief() {
-  return request('/reader/briefs/today/rebuild', { method: 'POST', errorMsg: '重新编排今日早报失败' });
-}
-
 export function fetchTodayPersonalBrief(options = {}) {
   return request('/reader/briefs/today', { ...options, errorMsg: '获取今日早报失败' });
 }

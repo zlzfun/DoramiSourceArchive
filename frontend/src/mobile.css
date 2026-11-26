@@ -210,7 +210,6 @@
 .bp-sheet.is-mobile .bp-light { top: calc(-1 * var(--m-head-clear)); }
 /* 状态提示行:图标与首行文字同行(审计 M-23:flex 换行时图标独占一行),就地动作的命中扩到 44 高 */
 .bp-sheet.is-mobile .bp-notice { display: block; margin: 0 0 14px; font-size: var(--m-fs-sm); line-height: 1.6; }
-.bp-sheet.is-mobile .bp-notice svg { display: inline-block; margin-right: 6px; vertical-align: -2px; }
 .bp-sheet.is-mobile .bp-notice-act { position: relative; margin-left: 6px; }
 .bp-sheet.is-mobile .bp-notice-act::after { content: ""; position: absolute; inset: -14px -6px; }
 /* 头条:整块可点(标题按钮的 ::after 铺满 .bp-mhead),按下压暗一档、缩到 0.99;摘要下文字级「全文 ›」 */
