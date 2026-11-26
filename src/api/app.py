@@ -133,6 +133,7 @@ from services import reader_ondemand as reader_ondemand_service
 from services import rankings as rankings_service
 from services import event_board as event_board_service
 from services import article_analysis as article_analysis_service
+from services import personal_digest_refresh as personal_digest_refresh_service
 from services import taxonomy as taxonomy_service
 from services import podcast_catalog as podcast_catalog_service
 from services import aliyun_isi_config as aliyun_isi_config_service
@@ -457,6 +458,26 @@ READER_API_PREFIXES = (
 
 def _path_matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
+def _reader_subscription_write(method: str, path: str) -> bool:
+    """这次写操作会不会改变读者的订阅范围(个人早报据此跟进,issue #343)。
+
+    宁宽勿漏:多匹配的写操作只多做一次「范围变没变」的核对,不会平白换版。
+    """
+
+    if method not in {"POST", "PUT", "DELETE"}:
+        return False
+    if _path_matches(path, ("/api/subscriptions",)):
+        return not path.endswith("/rotate-token")
+    if path.startswith("/api/reader/sources/"):
+        # 订阅 / 退订 / 批量订阅 / OPML 导入;「全部已读」不改范围
+        return path.endswith(("/subscribe", "/subscribe-batch", "/import"))
+    if path.startswith("/api/reader/collections/"):
+        return path.endswith("/subscribe")
+    if path == "/api/reader/custom-sources":
+        return True
+    return method == "DELETE" and path.startswith("/api/reader/custom-sources/")
 
 
 def disabled_runtime_surface(path: str, session: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -2439,12 +2460,19 @@ async def _require_admin_session_impl(request: Request, call_next):
             body=audit_body,
         )
     if response.status_code < 400 and auth_session is not None:
-        # v3.51.1(issue #33 §5):读者自己的订阅/自定源变更不再触发当日早报重编排——
-        # 范围变化与兴趣变化同口径「下次编排生效」(手动重编或次日定时),今日版面
-        # 落后于当前订阅时由 /api/reader/briefs/today 的 scope_stale 提示。
+        # issue #343:读者自己的订阅 / 自定源变更在今日早报上记一条意向,由巡检静置合并后
+        # 自动换版(连订几个源只算一次;订阅范围其实没变时不记)。此前(v3.51.1)是只标
+        # scope_stale、等读者点「立即重编」。兴趣变更的同一步在 routers/interests.py。
         # 管理员下架来源仍即时重编全员当日版:那是内容交付层的止损动作,不是读者偏好。
         # Historical editions remain immutable snapshots either way.
         try:
+            if _reader_subscription_write(normalized_method, path):
+                schedule_personal_digest_trigger(
+                    personal_briefs_router.note_preference_change,
+                    db_sink.engine,
+                    str(auth_session.get("sub") or ""),
+                    "subscription_changed",
+                )
             if (
                 normalized_method == "POST"
                 and path.startswith("/api/admin/source-visibility/")
@@ -3168,11 +3196,17 @@ async def execute_article_analysis_job():
         llm_config = await asyncio.to_thread(_resolve_config)
         if not llm_config.configured:
             return
-        await article_analysis_service.run_analysis_cycle(
+        results = await article_analysis_service.run_analysis_cycle(
             db_sink.engine,
             worker_id="runtime-all",
             llm_config=llm_config,
         )
+        # issue #343:本机分析跑完一批公共源的文章 = 一次内容落地,个人早报据此补编。
+        analyzed = [item.article_id for item in results or () if item.status == "succeeded"]
+        if analyzed:
+            await asyncio.to_thread(
+                personal_digest_refresh_service.note_local_analysis, db_sink.engine, analyzed
+            )
         # Podcast 全文处理自动入队已拆成独立的 podcast_landing 增量轮次
         # (issue #68),不再在这里全表重放。
         # Candidate aggregation commits with each article.  Automatic promotion
@@ -3238,6 +3272,8 @@ def execute_personal_digest_pending_job():
         personal_briefs_router.process_pending_editions(db_sink.engine, recovery=True)
     except Exception as exc:  # noqa: BLE001
         _dorami_logger.warning("个人早报就绪巡检失败: %s", exc)
+    # issue #343:读者面不留重编入口——偏好改动、生成失败、新内容落地都在这里自动换版。
+    personal_digest_refresh_service.run_refresh_cycle(db_sink.engine)
 
 
 async def execute_daily_brief_job():

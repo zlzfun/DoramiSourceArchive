@@ -26,6 +26,7 @@ POST /api/admin/reader/briefs/today/ensure?employee_number=l00976966
 - **只读与首版原子创建（DEV04 / D01–D10 / C11）**：
   - `GET` 仅查询 `(owner, report_date)` 下最大 `revision`，缺版返回 `200 / missing`（`edition: null`），无任何生成副作用。
   - `POST /today/ensure` 在已有任意状态版本时原样返回最大 `revision`，不重新生成、不接管既有 `pending`；仅在缺版时经共享创建门 `ensure_first_personal_digest_edition`（进程内互斥 + SQLite `BEGIN IMMEDIATE` + 唯一约束兜底）原子创建 `revision=1, status=pending`，交由 `BriefRuntime` 受监督执行并同步等待本次创建的 `edition` 返回（正常响应不返回 `missing`）。
+- **同一天内最大 `revision` 会增大（issue #343，字段与取值不变）**：新内容落地、读者改了兴趣或订阅、生成失败后，系统会自动换版。前两种只在新版落成终态时出现一个更大的 `revision`，没有 `pending` / `processing` 中间态，标题与投影随发布一次到位；读者把订阅与兴趣都清空时，落成的是一版零条目的版本（顶层 `empty`）；失败后的重试走既有生成通道，期间可见 `pending` / `processing`。在从上游同步内容的节点上，08:30 的首版用的是前一天同步进来的内容，当天同步的内容落地后几分钟内换成新版——每天只投递一次的调用方应把取数放在同步之后，或按 `revision` 记水位、见到更大的再投。
 
 ## 2. 鉴权、响应头与错误契约（R02 / A01 / A04 / A05）
 

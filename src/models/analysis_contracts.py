@@ -166,7 +166,10 @@ class DigestGenerationReason(StringEnum):
     SUBSCRIPTION_CHANGED = "subscription_changed"
     MANUAL_REBUILD = "manual_rebuild"
     DAILY_BRIEF_READY = "daily_brief_ready"
+    # 生成失败后的系统重试(issue #343);此前只占位、没有写入方。
     RECOVERY = "recovery"
+    # 新内容落地后的系统补编(issue #343)。
+    CONTENT_ARRIVED = "content_arrived"
 
 
 class SourceReadinessStatus(StringEnum):

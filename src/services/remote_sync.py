@@ -95,6 +95,47 @@ V2_STREAM_ORDER = (
 )
 
 
+# 会改变个人早报选篇的流:分析(分数、摘要、标签)与事件(同事件去重)。见 record_v2_stream_success。
+CONTENT_LANDING_STREAMS = ("analyses", "events")
+CONTENT_LANDED_AT_KEY = "v2_content_landed_at"
+
+
+def checkpoint_changed(checkpoint: Any) -> bool:
+    """这一轮的这条流有没有真的带来变化(每轮都会写 checkpoint,无变化的轮次不算落地)。"""
+
+    if not isinstance(checkpoint, dict):
+        return False
+    total = 0
+    for key in ("inserted", "updated", "deleted"):
+        try:
+            total += int(checkpoint.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total > 0
+
+
+def _later_stamp(candidate: Any, existing: Any) -> bool:
+    """``candidate`` 是否晚于 ``existing``(ISO 时间;解析不了的旧值一律让位)。"""
+
+    def _parse(value: Any) -> Optional[dt.datetime]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text = value.strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = dt.datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+    new = _parse(candidate)
+    if new is None:
+        return False
+    old = _parse(existing)
+    return old is None or new > old
+
+
 def negotiated_v2_stream_order(capabilities: Sequence[str]) -> tuple[str, ...]:
     """Return the pull order negotiated from a producer manifest."""
 
@@ -1580,6 +1621,12 @@ def record_v2_stream_success(
     target.update(
         {"username": username, "last_synced_at": synced_at, "v2_streams": streams}
     )
+    if stream in CONTENT_LANDING_STREAMS and checkpoint_changed(checkpoint):
+        # 个人早报的「新内容落地」信号(issue #343):分析 / 事件流这一轮确有新增、更新或删除时,记下
+        # 本机的完成时刻。只增不减,与 checkpoint 写在同一行、同一次提交——后面无变化的轮次会刷新
+        # completed_at,但盖不掉还没被早报巡检处理的这一次。
+        if _later_stamp(synced_at, target.get(CONTENT_LANDED_AT_KEY)):
+            target[CONTENT_LANDED_AT_KEY] = synced_at
     if stream == "sources" and checkpoint.get("source_projection") != archive_sync_v2.SOURCE_PROJECTION_CATALOG:
         # 这一轮实际按 legacy 完成(外网中途回滚等):撤销就绪,下轮准备必然重放(检视复检 #2)。
         target.pop("v2_source_catalog_ready_at", None)

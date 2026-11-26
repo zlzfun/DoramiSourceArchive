@@ -2010,6 +2010,9 @@ body:has(> .m-sheet-layer:not(.is-leaving)) .m-root .toast-pop { top: calc(var(-
   -webkit-line-clamp: unset;
   max-height: calc(1.65em * 6);
   overflow: hidden;
+}
+/* 末行渐隐只在限高确实截掉了内容时出现(.is-cut 是量出来的,issue #346):排得下的正文不能被淡掉最后一行 */
+:is(.m-shell .social-text.is-clamped, .m-peek-social .social-text.m-peek-text).is-cut {
   -webkit-mask: linear-gradient(black calc(100% - 1.65em), transparent);
   mask: linear-gradient(black calc(100% - 1.65em), transparent);
 }
