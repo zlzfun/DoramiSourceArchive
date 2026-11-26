@@ -1,4 +1,5 @@
 import CurrentInterestMatches from '../CurrentInterestMatches';
+import { normalizeInterestMatches } from '../../utils/interestMatches';
 import { useLayoutEffect, useRef, useState } from 'react';
 import {
   CheckCheck,
@@ -309,20 +310,32 @@ export default function MobileArticlePage({
               />
             </div>
           )}
-          <CurrentInterestMatches article={activeArticle} guest={rs.isGuest} mobile capabilities={rs.interestCapabilities} onOpenInterest={onOpenInterest} />
-          {tags.length > 0 && (
-            <div className="reader-pane-foot"><div className="reader-pane-tags">
-              {tags.map((tag, index) => (
-                <AnalysisTagChip
-                  key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                  tag={tag}
-                  onSearch={(selectedTag) => {
-                    searchForTag(selectedTag);
-                    (onLeaveForSearch || onBack)();
-                  }}
-                />
-              ))}
-            </div></div>
+          {(tags.length > 0 || (!rs.isGuest && normalizeInterestMatches(activeArticle, { basis: 'current' }).length > 0)) && (
+            <div className="reader-pane-foot reader-tag-groups">
+              {tags.length > 0 && <section className="reader-side-blk" aria-label="文章标签">
+                <div className="reader-side-k">文章标签</div>
+                <div className="reader-pane-tags">
+                  {tags.map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onSearch={(selectedTag) => {
+                        searchForTag(selectedTag);
+                        (onLeaveForSearch || onBack)();
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>}
+              {!rs.isGuest && normalizeInterestMatches(activeArticle, { basis: 'current' }).length > 0 && (
+                <section className="reader-side-blk" aria-label="我的兴趣点">
+                  <div className="reader-side-k">我的兴趣点</div>
+                  <div className="reader-pane-tags">
+                    <CurrentInterestMatches article={activeArticle} mobile capabilities={rs.interestCapabilities} onOpenInterest={onOpenInterest} />
+                  </div>
+                </section>
+              )}
+            </div>
           )}
         </header>
         <div className="m-read-body">

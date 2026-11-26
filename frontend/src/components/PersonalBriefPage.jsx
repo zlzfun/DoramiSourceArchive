@@ -173,7 +173,7 @@ function BriefInterestMark({ view, guest = false }) {
   if (guest) return null;
   const names = [...new Set(view.interests.map((match) => match.name))];
   if (!names.length) return null;
-  return <p className="bp-interest-topics text-sm">有你感兴趣的话题：{names.join('、')}</p>;
+  return <p className="bp-interest-topics text-sm">有你感兴趣的内容</p>;
 }
 
 // issue #103「另见 N 篇」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);

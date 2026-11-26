@@ -131,3 +131,14 @@ test('both layer panels stop chrome/content long-press bubbling without intercep
     assert.equal(body.props.onTouchStart, undefined);
   }
 });
+
+test('named detail label opens only its own reason and quotes', () => {
+  const { tree, changes } = mount({ matches: [rows[1]], triggerLabel: '兴趣：同名兴趣' }, false);
+  const trigger = nodes(tree).find((node) => node.type === 'button');
+  assert.equal(trigger.props.children, '兴趣：同名兴趣');
+  trigger.props.onClick({ stopPropagation() {} });
+  assert.deepEqual(changes, [true]);
+  const html = renderToStaticMarkup(mount({ matches: [rows[1]], triggerLabel: '兴趣：同名兴趣' }).tree);
+  assert.match(html, /正文证据2/);
+  assert.doesNotMatch(html, /正文证据1/);
+});

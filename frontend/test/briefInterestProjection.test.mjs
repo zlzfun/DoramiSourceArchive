@@ -21,14 +21,14 @@ const item = { selection_lane: 'interest', selection_reason: '冻结时选篇理
   interest_matches: [{ ref: { kind: 'custom', id: '7' }, revision: 2, name: '冻结兴趣名称', basis: 'edition_snapshot',
     outcome: 'core', method: 'semantic', selection_role: 'selected_by_interest', evidence: {} }] };
 
-test('brief shows frozen topic names without matching diagnostics or the edition summary', () => {
+test('brief indicates interest without exposing names or matching diagnostics', () => {
   const view = viewOf(item, null, true);
   assert.equal(view.interests.length, 1);
   assert.equal(view.why.text, '因「冻结兴趣名称」入选');
   assert.equal(view.why.title, '冻结时选篇理由');
   const html = renderToStaticMarkup(BriefInterestMark({ view }));
-  assert.match(html, /有你感兴趣的话题：冻结兴趣名称/);
-  assert.doesNotMatch(html, /命中|仅标题|正文依据|本期收录|冻结时选篇理由|button/);
+  assert.match(html, /有你感兴趣的内容/);
+  assert.doesNotMatch(html, /冻结兴趣名称|命中|仅标题|正文依据|本期收录|冻结时选篇理由|button/);
   assert.doesNotMatch(source, /BriefCustomInterests|InterestMatchDisclosure|custom_interest_summary/);
 });
 
@@ -76,12 +76,12 @@ test('guest legacy codes and refs do not expose personal interest marks', () => 
   assert.equal(BriefInterestMark({ view, guest: true, showBreaking: true }), null);
 });
 
-test('topic line includes all related names once and hides when no frozen matches exist', () => {
+test('topic indicator hides names and hides when no frozen matches exist', () => {
   const first = { ...item.interest_matches[0], name: 'AI 科研与医疗', method: 'deterministic_title' };
   const second = { ...first, ref: { kind: 'custom', id: '8' }, name: '开源模型与生态' };
   const view = viewOf({ ...item, interest_matches: [first, second, { ...first, ref: { kind: 'tag', id: 'medical' } }] }, null, true);
   const html = renderToStaticMarkup(BriefInterestMark({ view }));
-  assert.equal(html, '<p class="bp-interest-topics text-sm">有你感兴趣的话题：AI 科研与医疗、开源模型与生态</p>');
+  assert.equal(html, '<p class="bp-interest-topics text-sm">有你感兴趣的内容</p>');
   assert.equal(BriefInterestMark({ view: { interests: [] } }), null);
   assert.equal(BriefInterestMark({ view, guest: true }), null);
 });

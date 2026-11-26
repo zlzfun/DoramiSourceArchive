@@ -1,5 +1,6 @@
 import CustomInterestFilter from './CustomInterestFilter';
 import CurrentInterestMatches from './CurrentInterestMatches';
+import { normalizeInterestMatches } from '../utils/interestMatches';
 import { canFilterCustomInterests } from '../utils/readerInterestQuery';
 import PodcastGuideFilter from './PodcastGuideFilter';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -270,7 +271,7 @@ export const ArticleRow = memo(function ArticleRow({
   source, sourceName, onSelect, onPrefetchEnter, onPrefetchLeave, onToggleFavorite,
   onContextMenu, ctxAnchor,
   // issue #27 兴趣即透镜:命中的兴趣标签名(顶行一枚胶囊)/ 订阅外标记(悬停翻「+ 订阅」)
-  interestCapabilities = null, onOpenInterest = null, guest = false,
+  guest = false,
   interestHit = '', unsubscribed = false, onSubscribeSource = null,
   // issue #199 全局播放条:这一期正在播 / 已暂停('playing' | 'paused' | '');AI 音轨的律动条走渐变两端色
   nowPlaying = '', nowPlayingAi = false,
@@ -414,7 +415,7 @@ export const ArticleRow = memo(function ArticleRow({
               {unsubscribed && <span className="sr-only">，未订阅</span>}
               {kindTag}
               {/* 命中兴趣:写命中的那个兴趣标签(命中多个取第一个);它是透镜的产物,与开关无关 */}
-              {!guest && !Object.hasOwn(article, 'interest_matches') && interestHit && <span className="reader-entry-hit">{interestHit}</span>}
+              {!guest && !Object.hasOwn(article, 'interest_matches') && interestHit && <span className="reader-entry-hit">有你感兴趣的内容</span>}
               <span
                 className="reader-entry-time"
                 title={card ? formatPublishDateTime(article.publish_date || article.fetched_date) : formatReaderDate(article.publish_date || article.fetched_date, { withYear: true })}
@@ -436,8 +437,8 @@ export const ArticleRow = memo(function ArticleRow({
             {excerpt && rowTier !== 'low' && <span className="reader-entry-excerpt">{searchQuery ? highlightMatch(excerpt, searchQuery) : excerpt}</span>}
           </>
         )}
+        <CurrentInterestMatches article={article} guest={guest} compact />
       </button>
-      <CurrentInterestMatches article={article} guest={guest} mobile={Boolean(card)} capabilities={interestCapabilities} onOpenInterest={onOpenInterest} />
     </>
   );
 });
@@ -608,16 +609,28 @@ export default function ReaderTab({
   const activeAnalysisStatus = podcastView ? null : analysisStatusMeta(activeArticle);
   // 标签(AI 打的,归到 AI 那一边):窄窗在速读卡脚,宽窗在页边(issue #279 第三批;此前在标题区尾行)
   const paneTags = activeArticle ? displayAnalysisTags(activeArticle) : [];
-  const paneTagsEl = paneTags.length > 0 ? (
-    <div className="reader-pane-tags">
-      {paneTags.map((tag, index) => (
-        <AnalysisTagChip
-          key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-          tag={tag}
-          onSearch={searchForTag}
-        />
-      ))}
-    </div>
+  const hasCurrentInterests = !rs.isGuest && normalizeInterestMatches(activeArticle, { basis: 'current' }).length > 0;
+  const paneTagsEl = paneTags.length > 0 || hasCurrentInterests ? (
+    <>
+      {paneTags.length > 0 && <section className="reader-side-blk" aria-label="文章标签">
+        <div className="reader-side-k">文章标签</div>
+        <div className="reader-pane-tags">
+          {paneTags.map((tag, index) => (
+            <AnalysisTagChip
+              key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+              tag={tag}
+              onSearch={searchForTag}
+            />
+          ))}
+        </div>
+      </section>}
+      {hasCurrentInterests && <section className="reader-side-blk" aria-label="我的兴趣点">
+        <div className="reader-side-k">我的兴趣点</div>
+        <div className="reader-pane-tags">
+          <CurrentInterestMatches article={activeArticle} guest={rs.isGuest} capabilities={interestCapabilities} onOpenInterest={openMatchedInterest} />
+        </div>
+      </section>}
+    </>
   ) : null;
   // 吸顶栏的正文动作(issue #279 第三批;此前在标题区尾行,读到一半想看原文要滚回顶上):语言二段 + 查看原文,
   // 排在收藏 / 标读 / 分享之前。
@@ -1920,7 +1933,6 @@ export default function ReaderTab({
                   podcast={podcastView}
                 />
               ) : paneTagsEl && <div className="reader-pane-tags-solo">{paneTagsEl}</div>}
-              <CurrentInterestMatches article={activeArticle} guest={rs.isGuest} capabilities={interestCapabilities} onOpenInterest={openMatchedInterest} />
               {!podcastView && (
                 <PaperContentNote article={activeArticle} />
               )}

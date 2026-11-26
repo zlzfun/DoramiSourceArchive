@@ -12,7 +12,7 @@ const STATUS = { updated: '已更新', paused: '已停用', deleted: '已移除'
 // outside the card; stop touch/context-menu bubbling into its long-press action.
 export default function InterestMatchDisclosure({
   matches = [], selectionLabel = '', selectionReason = '', mobile = false,
-  capabilities = null, onOpenInterest = null, expandedNames = false,
+  capabilities = null, onOpenInterest = null, expandedNames = false, triggerLabel = '', triggerClassName = 'interest-match-trigger',
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -76,11 +76,11 @@ export default function InterestMatchDisclosure({
           自定义兴趣 · {match.name} · {interestEvidenceLabel(match)}
         </button>
       ))}
-      {compact.length > 0 && <button type="button" className="interest-match-trigger" aria-haspopup="dialog" aria-expanded={open}
-        aria-label={`查看 ${matches.length} 个兴趣的匹配依据`}
+      {compact.length > 0 && <button type="button" className={triggerClassName} aria-haspopup="dialog" aria-expanded={open}
+        aria-label={triggerLabel ? `${triggerLabel}，查看匹配原因` : `查看 ${matches.length} 个兴趣的匹配依据`}
         onTouchStart={stop} onContextMenu={stop}
         onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
-        {interestMatchLabel(compact)}
+        {triggerLabel || interestMatchLabel(compact)}
       </button>}
       {mobile ? (
         <Sheet open={open} onClose={close} label="兴趣依据" grabLabel="关闭兴趣依据" className="interest-match-sheet"

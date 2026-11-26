@@ -16182,3 +16182,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .reader-shell .reader-col-read .reader-pane-bar::after { animation: reader-bar-shade linear both; animation-timeline: --reader-scroll; animation-range: 0px 72px; }
 }
 @keyframes reader-bar-shade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Reader tag groups share tag styling; headings distinguish article and personal topics. */
+.reader-tag-groups { display: block; }
+.reader-side-k + .reader-pane-tags { margin-top: 10px; }

@@ -35,7 +35,7 @@
 .interest-match-sheet .interest-match-body { min-height: 0; overflow-y: auto; padding: 0 16px max(16px, var(--sab)); }
 .interest-match-sheet .m-sheet-head .section-title { margin: 0 16px 12px; }
 
-.reader-current-interests { padding-inline: .75rem; padding-block: .25rem; }
+.reader-interest-indicator { display: block; color: var(--dorami-accent-ink); margin-top: 4px; }
 .reader-interest-search { padding: .75rem; }
 .reader-interest-search .form-input { width: 100%; min-height: var(--tap); font-size: var(--m-fs-lg); }
 
