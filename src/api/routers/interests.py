@@ -252,13 +252,21 @@ def replace_interests(
         onboarding_transition = accounts_service.complete_interest_onboarding(session, username)
     session.commit()
 
-    # v3.51.1(issue #33 §5):兴趣变更只记录,不再触发当日早报重编排——早报重编只剩
-    # 读者手动「重新编排」与次日定时两个入口,今日版面落后于当前兴趣时由
-    # /api/reader/briefs/today 的 interest_stale 提示读者自行决定。
-    # 唯一显式例外(issue #56 方案 B):首登引导**首次**完成且选了兴趣时就地重编一次,见 _rebuild_after_onboarding。
+    # issue #343:兴趣变更在今日早报上记一条意向,由巡检静置合并后自动换版(连点几个标签
+    # 只算一次;兴趣其实没变时不记)。此前(v3.51.1)是只标 interest_stale、等读者点「立即重编」。
+    # 首登引导**首次**完成且选了兴趣时仍就地重编一次(issue #56 方案 B):读者做完引导马上要看
+    # 结果,不等静置,见 _rebuild_after_onboarding。
     rebuild_status = (
         _rebuild_after_onboarding(session, auth, username) if onboarding_transition and requested else None
     )
+    if rebuild_status is None:
+        try:
+            personal_briefs.note_preference_change(
+                session.get_bind(), username, DigestGenerationReason.INTEREST_CHANGED
+            )
+        except Exception:  # noqa: BLE001 - 兴趣已保存;换版是附带动作
+            session.rollback()
+            logger.warning("兴趣变更后的早报意向记录失败(username=%s)", username, exc_info=True)
     result = get_interests(auth=auth, session=session)
     result["onboarding_completed"] = bool(body.complete_onboarding)
     result["brief_rebuild_status"] = rebuild_status

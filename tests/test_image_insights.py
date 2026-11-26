@@ -293,19 +293,35 @@ def test_failed_vision_call_is_negative_cached_with_cooldown(stack, monkeypatch)
 
 def test_budget_exhaustion_returns_cache_and_finishes_in_background(stack, monkeypatch):
     storage, service, media_calls, vision_calls = stack
-    _seed(storage, _article("slow", content="![x](https://cdn.example.com/b.png)"))
-
-    async def slow_chat(**kwargs):
-        await asyncio.sleep(0.8)  # 预算下限 0.5s(服务端钳制),睡过它才算超预算
-        vision_calls.append("done")
-        return json.dumps({"kind": "chart", "relevant": True, "caption": "慢图", "details": "读数 42"})
-
-    monkeypatch.setattr(ii, "chat_completion", slow_chat)
+    url = "https://cdn.example.com/b.png"
+    _seed(storage, _article("slow", content=f"![x]({url})"))
 
     async def scenario():
-        first = await service.ensure_notes("slow", VISION, budget_seconds=0.05)
+        release = asyncio.Event()
+        over_budget = []
+
+        async def held_chat(**kwargs):
+            # 视觉调用挂到用例放行为止。预算(服务端钳到下限 0.5s)到点的那一拍,这条任务就被登记为后台;
+            # 调用开始 1 秒后还没登记,说明预算没有照传入的值生效。预算定时器总比这 1 秒先到期,
+            # 所以这项检查不受机器快慢影响
+            try:
+                await asyncio.wait_for(release.wait(), 1)
+            except asyncio.TimeoutError:
+                over_budget.append(not service._background)
+                await release.wait()
+            vision_calls.append("done")
+            return json.dumps({"kind": "chart", "relevant": True, "caption": "慢图", "details": "读数 42"})
+
+        monkeypatch.setattr(ii, "chat_completion", held_chat)
+        # 取图放在预算窗口之外(issue #339):截止时刻定下之后才取图的话,取图一慢就没有图排得进
+        # 视觉调用,也就没有任务可转后台,结果取决于机器当时有多忙
+        assert await service.media_store.get_or_fetch(url) is not None
+        # 外面这层 30 秒只防挂:预算根本不生效时在这里超时,不会一直等视觉调用
+        first = await asyncio.wait_for(service.ensure_notes("slow", VISION, budget_seconds=0.05), 30)
         assert first == "" and vision_calls == []
         assert service._background  # 超预算任务转后台
+        assert True not in over_budget
+        release.set()
         await asyncio.gather(*list(service._background))
         return service.cached_notes("slow", VISION)
 

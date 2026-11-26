@@ -42,7 +42,7 @@ from models.db import (
     SourceConfigRecord,
     SourceIdentityKeyRecord,
 )
-from services import ingest_policy, item_url_identity, source_catalog, source_identity
+from services import ingest_policy, item_url_identity, social_ingest, source_catalog, source_identity
 from services.source_visibility import hidden_source_ids
 
 
@@ -102,6 +102,17 @@ EXTENSION_KEYS = {
     "article": frozenset({"author", "site_name", "summary", "tags", "language", "image_url"}),
     "social_post": frozenset({"lang", "tags", "media_urls"}),
     "podcast_episode": frozenset({"author", "tags", "image_url", "episode", "season"}),
+}
+
+# 各类条目实际使用的顶层字段。请求模型三类共用一份,调用方把别的类型的字段带进来(给文章带
+# ``media_urls``、给社交帖带 ``audio_url``)不报错也不生效,所以在回执里点出来(issue #341)。
+_COMMON_FIELDS = frozenset({"kind", "source", "url", "title", "content", "publish_date", "note", "extensions"})
+FIELDS_BY_KIND = {
+    "article": _COMMON_FIELDS | {"guid", "summary"},
+    "social_post": _COMMON_FIELDS | {
+        "platform", "post_id", "author", "lang", "media_urls", "quoted", "reposted", "raw",
+    },
+    "podcast_episode": _COMMON_FIELDS | {"guid", "summary", "audio_url", "audio_mime", "duration_seconds"},
 }
 
 _UNSAFE_ID = re.compile(r"[^a-z0-9_]+")
@@ -628,14 +639,26 @@ _LIST_EXTENSION_KEYS = frozenset({"tags", "media_urls"})
 _INT_EXTENSION_KEYS = frozenset({"episode", "season"})
 
 
-def _extensions(kind: str, raw: Any) -> dict[str, Any]:
-    """按 kind 的白名单取扩展键,并规整类型;值不合法时拒收该条(实现检视 R1 #12)。"""
+def _extensions(kind: str, raw: Any, warnings: Optional[list[str]] = None) -> dict[str, Any]:
+    """按 kind 的白名单取扩展键,并规整类型;值不合法时拒收该条(实现检视 R1 #12)。
+
+    白名单之外的键不入库,键名记进 ``warnings``(issue #341:此前静默丢弃,调用方无从知道)。
+    """
     if raw is None:
         return {}
     if not isinstance(raw, dict):
         raise IngestRejected("extensions 必须是对象")
     allowed = EXTENSION_KEYS[kind]
     out: dict[str, Any] = {}
+    dropped = [str(key) for key, value in raw.items() if key not in allowed and value is not None]
+    if dropped and warnings is not None:
+        # 写在 extensions 里、其实是顶层字段的(quoted / reposted / raw …)单独点出来。
+        misplaced = [key for key in dropped if key in FIELDS_BY_KIND[kind] - {"extensions", "kind"}]
+        other = [key for key in dropped if key not in misplaced]
+        if misplaced:
+            warnings.append(f"这些字段要放在条目顶层,不在 extensions 里:{'、'.join(misplaced)}")
+        if other:
+            warnings.append(f"extensions 里未采用的键:{'、'.join(other)}(已忽略)")
     for key, value in raw.items():
         if key not in allowed or value is None:
             continue
@@ -663,18 +686,31 @@ def _extensions(kind: str, raw: Any) -> dict[str, Any]:
 
 
 def build_content(
-    kind: str, source_id: str, item: dict[str, Any], *, id_prefix: str = "", channel: str = CHANNEL_PUSH
+    kind: str,
+    source_id: str,
+    item: dict[str, Any],
+    *,
+    id_prefix: str = "",
+    channel: str = CHANNEL_PUSH,
+    warnings: Optional[list[str]] = None,
 ) -> BaseContent:
+    if kind == "social_post":
+        # 社交帖先整理成入库形状(结构化字段或 X 原始 JSON 两种给法,见 social_ingest);批处理在
+        # 出处解析之前已经整理过,这里对已整理的条目是空操作。
+        try:
+            item, _notes = social_ingest.prepare(item)
+        except social_ingest.SocialPayloadRejected as exc:
+            raise IngestRejected(str(exc)) from exc
     item_id = item_id_for(kind, source_id, item, prefix=id_prefix)
     url = str(item.get("url") or "").strip()
     publish_date = str(item.get("publish_date") or "").strip() or _now()
     text = str(item.get("content") or item.get("text") or "")
     title = str(item.get("title") or "").strip()
-    extensions = _extensions(kind, item.get("extensions"))
+    extensions = _extensions(kind, item.get("extensions"), warnings)
     if kind == "social_post":
-        post_id = str(item.get("post_id") or "").strip()
-        author = item.get("author") if isinstance(item.get("author"), dict) else {}
-        handle = str(author.get("handle") or "").strip().lstrip("@")
+        social = item["_social"]
+        post_id = social["post_id"]
+        handle = social["author_handle"]
         content: BaseContent = SocialPostContent(
             id=item_id,
             title=title or (text.strip().splitlines()[0][:80] if text.strip() else f"post {post_id}"),
@@ -683,15 +719,7 @@ def build_content(
             content=text,
             has_content=bool(text),
             platform=str(item.get("platform") or "x"),
-            author_id=str(author.get("user_id") or ""),
-            author_handle=handle,
-            author_name=str(author.get("name") or ""),
-            author_avatar_url=str(author.get("avatar_url") or ""),
-            author_avatar_url_large=str(author.get("avatar_url") or ""),
-            post_id=post_id,
-            lang=str(extensions.get("lang") or ""),
-            tags=list(extensions.get("tags") or []),
-            media_urls=[str(value) for value in (extensions.get("media_urls") or [])][:20],
+            **{**social, "tags": list(social.get("tags") or extensions.get("tags") or [])},
         )
     elif kind == "podcast_episode":
         audio_url = str(item.get("audio_url") or "").strip()

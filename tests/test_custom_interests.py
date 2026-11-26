@@ -147,7 +147,8 @@ def test_worker_paging_resume_fingerprint_and_acl(store):
         assert service.current_matches(session,'alice')==[]
 
 
-def test_custom_only_brief_selects_existing_lane_and_typed_refs(store):
+@pytest.mark.parametrize('allow_empty', [False, True])
+def test_custom_only_brief_selects_existing_lane_and_typed_refs(store, allow_empty):
     with Session(store.engine) as session:
         save(session)
         add_article(session)
@@ -155,13 +156,15 @@ def test_custom_only_brief_selects_existing_lane_and_typed_refs(store):
     with Session(store.engine) as session:
         interests=digest._load_interests(session,'alice')
         assert interests[0].tag_code is None
-        result=digest.generate_personal_digest(session,'alice',now=NOW+dt.timedelta(minutes=1))
+        result=digest.generate_personal_digest(session,'alice',now=NOW+dt.timedelta(minutes=1),allow_empty=allow_empty)
         assert result.status!='empty_subscriptions'
         assert any(item.article_id=='a' for item in result.items)
         item=next(item for item in result.items if item.article_id=='a')
         assert json.loads(item.matched_interest_codes_json)==[]
         assert json.loads(item.ranking_features_json)['custom_interest_refs'][0]['kind']=='custom'
         assert json.loads(result.edition.interest_snapshot_json)[0]['condition']==AST
+        from services.personal_digest_refresh import is_empty_preferences_edition
+        assert not is_empty_preferences_edition(session, result.edition)
 
 
 def test_catalog_alias_search_and_formal_put_preserves_custom(store):

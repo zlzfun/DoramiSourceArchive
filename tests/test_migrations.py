@@ -1372,6 +1372,23 @@ def test_parallel_release_heads_converge_without_replay(tmp_path):
             engine.dispose()
 
 
+@pytest.mark.parametrize("parent", ["c298d4100001", "c3e5a91f7d24"])
+def test_interest_and_brief_refresh_heads_converge(tmp_path, parent):
+    """Both existing interest databases and newer main databases can upgrade."""
+    cfg = make_alembic_config(f"sqlite:///{tmp_path / 'interest-refresh.db'}")
+    command.upgrade(cfg, parent)
+    command.upgrade(cfg, "heads")
+    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    try:
+        with engine.connect() as conn:
+            assert _db_heads(conn) == _script_heads()
+        assert "user_interest_conditions" in inspect(engine).get_table_names()
+        constraints = inspect(engine).get_check_constraints("personal_digest_editions")
+        assert any("content_arrived" in item["sqltext"] for item in constraints)
+    finally:
+        engine.dispose()
+
+
 def test_sqlite_revision_rolls_back_all_ddl_on_interruption(tmp_path):
     """A failed revision must not leave columns/indexes ahead of its version row."""
 
@@ -1795,6 +1812,77 @@ def _assert_healed_to_head(db_url):
         user_cols = {c["name"] for c in insp.get_columns("users")}
         assert "ai_beta_enabled" in user_cols
         assert "ix_users_ai_beta_enabled" in {ix["name"] for ix in insp.get_indexes("users")}
+    finally:
+        engine.dispose()
+
+
+def test_content_arrived_reason_migration_round_trips_and_keeps_snapshots(tmp_path):
+    """issue #343:编排原因约束加 ``content_arrived``。改约束要重建版本表——条目快照(外键指向它)
+    不能随之丢;回退时旧约束不认识新取值,并入同属系统编排的 ``scheduled``。"""
+
+    db_url = f"sqlite:///{tmp_path / 'digest-reason.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b8d4107c2f61")
+    engine = create_engine(db_url)
+    stamp = "2026-11-25T08:30:00+08:00"
+
+    def _reason_sql() -> str:
+        return next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints("personal_digest_editions")
+            if item["name"] == "ck_personal_digest_editions_generation_reason"
+        )
+
+    try:
+        assert "content_arrived" not in _reason_sql()
+        with engine.begin() as conn:
+            # 裸连接不开外键检查:只造版本与条目两行,不必凑齐账号表的全部必填列。
+            conn.execute(text(
+                "INSERT INTO personal_digest_editions "
+                "(id,owner_username,report_date,revision,status,check_after,cutoff_at,"
+                "expected_source_ids_json,due_source_ids_json,source_state_snapshot_json,"
+                "policy_version,taxonomy_version,interest_version,interest_snapshot_json,"
+                "generation_attempt_count,generation_reason,sync_stale,analysis_incomplete,"
+                "created_at,updated_at) VALUES "
+                "(1,'alice','2026-11-25',1,'ready',:stamp,:stamp,'[]','[]','{}',"
+                "'personal-digest-v2',0,0,'[]',0,'scheduled',0,0,:stamp,:stamp)"
+            ), {"stamp": stamp})
+            conn.execute(text(
+                "INSERT INTO personal_digest_items "
+                "(edition_id,article_id,position,section,selection_lane,"
+                "matched_interest_codes_json,ranking_features_json,coverage_adjustments_json,"
+                "selection_reason,snapshot_json,created_at) VALUES "
+                "(1,'article-1',0,'精选','quality','[]','{}','[]','质量','{}',:stamp)"
+            ), {"stamp": stamp})
+            with pytest.raises(IntegrityError):
+                with conn.begin_nested():
+                    conn.execute(text(
+                        "UPDATE personal_digest_editions SET generation_reason='content_arrived'"
+                    ))
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "heads")
+    engine = create_engine(db_url)
+    try:
+        assert "content_arrived" in _reason_sql()
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT count(*) FROM personal_digest_items")).scalar() == 1
+            conn.execute(text(
+                "UPDATE personal_digest_editions SET generation_reason='content_arrived'"
+            ))
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, "b8d4107c2f61")
+    engine = create_engine(db_url)
+    try:
+        assert "content_arrived" not in _reason_sql()
+        with engine.begin() as conn:
+            assert conn.execute(text(
+                "SELECT generation_reason FROM personal_digest_editions"
+            )).scalar() == "scheduled"
+            assert conn.execute(text("SELECT count(*) FROM personal_digest_items")).scalar() == 1
     finally:
         engine.dispose()
 

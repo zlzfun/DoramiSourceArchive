@@ -40,7 +40,7 @@ test('条目行:手机卡片、播客、紧凑行、搜索、等高偏好都不�
 test('早报:目录只在桌面、多于一个板块时出现;条数只写在目录里', () => {
   assert.match(brief, /\{!mobile && showEdition && acts\.length > 1 && \(\s*<nav className="bp-toc" aria-label="本期板块">/);
   assert.match(brief, /\{\(mobile \|\| acts\.length <= 1\) && <p className="bp-act-count">/);
-  assert.match(brief, /onScroll=\{mobile \? recordProgress : \(event\) => \{ recordProgress\(event\); syncToc\(\); \}\}/);
+  assert.match(brief, /onScroll=\{mobile\s+\? \(event\) => \{ recordProgress\(event\); noteScroll\(event\); \}\s+: \(event\) => \{ recordProgress\(event\); noteScroll\(event\); syncToc\(\); \}\}/);
   assert.match(css, /\n\.reader-shell \.bp-items \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
 

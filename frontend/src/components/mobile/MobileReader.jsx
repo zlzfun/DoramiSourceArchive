@@ -586,6 +586,7 @@ export default function MobileReader({
             sourceMap={sourceMap}
             showToast={showToast}
             interestVersion={interestVersion}
+            subscribedIds={subscribedIds}
             restore={briefRestore}
             placeKeeper={briefPlace}
             supersedePendingOpen={supersedePendingOpen}

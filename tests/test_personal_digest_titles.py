@@ -16,15 +16,23 @@ from models.db import (  # noqa: E402
     ArticleRecord,
     PersonalDigestEditionRecord,
     PersonalDigestItemRecord,
+    TitleTranslationLeaseRecord,
     UserRecord,
 )
 from services import personal_digest_titles as titles  # noqa: E402
+from services import title_translation  # noqa: E402
 from services.reader_ai import TRANSLATION_TITLE_FP_KEY, TRANSLATION_TITLE_KEY, _body_fingerprint  # noqa: E402
 from storage.impl.db_storage import DatabaseStorage  # noqa: E402
 
 
 NOW_ISO = dt.datetime(2026, 9, 9, 8, 30, tzinfo=dt.timezone(dt.timedelta(hours=8))).isoformat()
 CONFIGURED = LLMConfig(base_url="http://llm.test", api_key="k", model="main", aux_model="aux")
+# 记账用例里挂住的供应商睡这么久,比预算长一个数量级:预算要是没传到位(比如回到默认的 20 秒),
+# 它会先返回,用例失败。这个数的大小不影响那条用例的结果。
+SLOW_PROVIDER_SECONDS = 3
+# 真实发布器用例里挂住的供应商睡这么久,要远大于任何可能的卡顿:那里供应商在另一个任务里跑,取消晚一拍
+# 才传到,事件循环要是卡过了「预算到点」和「供应商返回」两个时刻,译文会先写进缓存。
+HUNG_PROVIDER_SECONDS = 30
 
 
 @pytest.fixture
@@ -137,21 +145,67 @@ def test_failure_and_unconfigured_fall_back_to_original(storage, monkeypatch):
 
 
 def test_budget_timeout_falls_back_without_blocking(storage, monkeypatch):
-    async def slow(title, config, usage_meta=None, http_client=None):
-        if title == "Slow":
-            await asyncio.sleep(5)
-        return "快"
-    monkeypatch.setattr(titles, "_translate_title", slow)
+    """预算到点:已译完的照常写入,还挂着的被取消并回退原标题,不等供应商返回。
+
+    这条只验预算的记账,不经真实的共享标题发布器(它每条标题要做三次写事务,见下一条)。
+    替身直接调用供应商,``Fast`` 那条从头到尾不让出事件循环,轮不到预算定时器先触发;
+    ``Slow`` 那条的预算定时器总排在它自己的定时器前面,只要预算照传入的值生效,它就是被取消的。
+    两头都不看墙上时钟(issue #339)。
+    """
+
+    async def publish_inline(_engine, _article_id, _title, call, **_kwargs):
+        return await call()
+
+    outcome = {}
+
+    async def provider(title, config, usage_meta=None, http_client=None):
+        if title == "Fast":
+            return "快"
+        try:
+            await asyncio.sleep(SLOW_PROVIDER_SECONDS)
+        except asyncio.CancelledError:
+            outcome[title] = "cancelled"
+            raise
+        outcome[title] = "returned"
+        return "慢"
+
+    monkeypatch.setattr(title_translation, "translate_shared", publish_inline)
+    monkeypatch.setattr(titles, "_translate_title", provider)
     with Session(storage.engine) as session:
         edition = _seed(session, {"a-fast": "Fast", "a-slow": "Slow"})
-        started = dt.datetime.now()
         stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED, budget_seconds=0.3)
-        elapsed = (dt.datetime.now() - started).total_seconds()
         snaps = _snapshots(session, edition.id)
-    assert elapsed < 3
+    assert outcome == {"Slow": "cancelled"}
     assert stats["translated"] == 1 and stats["fallback"] == 1
     assert snaps["a-fast"]["title_zh"] == "快"
     assert "title_zh" not in snaps["a-slow"]
+
+
+def test_budget_expiry_leaves_the_title_free_for_the_next_run(storage, monkeypatch):
+    """经真实的共享标题发布器:到点没译完的条目本期回退原标题,认领随即放掉,下一次编排立刻能再译。
+
+    到点时这条可能还在认领事务里,也可能已经在等供应商,取决于机器当时有多忙;
+    所以只断言两种落点下都成立的结果。
+    """
+
+    async def hung(title, config, usage_meta=None, http_client=None):
+        await asyncio.sleep(HUNG_PROVIDER_SECONDS)
+        return "不该写入"
+
+    monkeypatch.setattr(titles, "_translate_title", hung)
+    with Session(storage.engine) as session:
+        edition = _seed(session, {"a-slow": "Slow"})
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED, budget_seconds=0.3)
+        assert stats["translated"] == 0 and stats["fallback"] == 1
+        assert "title_zh" not in _snapshots(session, edition.id)["a-slow"]
+        assert session.exec(select(TitleTranslationLeaseRecord)).all() == []
+        assert TRANSLATION_TITLE_KEY not in json.loads(session.get(ArticleRecord, "a-slow").extensions_json)
+
+        # 认领要是没放掉(租约三分钟才过期),这一次会等满预算,然后回退原标题
+        _fake_translate(monkeypatch, {"Slow": "慢"})
+        stats = titles.localize_edition_titles(session, edition, llm_config=CONFIGURED)
+        assert stats["translated"] == 1 and stats["fallback"] == 0
+        assert _snapshots(session, edition.id)["a-slow"]["title_zh"] == "慢"
 
 
 def test_run_async_works_inside_running_loop(monkeypatch):

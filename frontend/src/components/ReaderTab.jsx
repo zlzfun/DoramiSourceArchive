@@ -1324,6 +1324,7 @@ export default function ReaderTab({
           onOpenInterest={openMatchedInterest}
           showToast={showToast}
           interestVersion={interestVersion}
+          subscribedIds={subscribedIds}
           sourceMap={sourceMap}
           restore={briefRestore}
           placeKeeper={briefPlace}

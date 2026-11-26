@@ -61,7 +61,7 @@ python3 scripts/check_docs.py             # 文档守卫(索引覆盖 / 断链 /
 | 内容模型 | 每条内容带 `content_type`(数据形状)+ `source_id`(渠道);内容类型 / 事件类型**读取时推导不落库**;`content_shape` 三容器 article / social / podcast 互斥;子类字段进 `extensions_json` | [`content-model.md`](docs/architecture/content-model.md) |
 | 抓取器 | `FetcherRegistry` 自动扫描 `src/fetchers/impl/`;加策展源 = 目录文件 `src/sources/catalog/*.toml` 一条(身份 / 准入,类定义时回投到类属性;预设类缺条目起不来)+ 一个只写「怎么抓」的抓取器类(`generic_*` 模板前端隐藏,`is_template`);每次运行写 `FetchRunRecord` + `SourceStateRecord`;新源进观察期 `incubating` | [`fetchers-and-sources.md`](docs/architecture/fetchers-and-sources.md)、[`docs/sources/`](docs/sources/) |
 | 分析与评分 | 文章级只有一把尺子「新闻价值」(`quality_score`,`llm/article_analysis_prompt.py`)+ 第二维「内容价值」同一次调用产出;日报复用不写回;播客提示词逐字不动;Taxonomy 目录仓库受控、永不自动发布 | [`analysis-and-briefs.md`](docs/architecture/analysis-and-briefs.md) |
-| 早报 / 日报 | 个人早报冻结订阅范围 + 兴趣修订,版面快照不可变,重大事件 / 深度阅读 / 播客精选是额外分区;公共日报是独立产品,三层去重 + 确定性渲染 | 同上 |
+| 早报 / 日报 | 个人早报冻结订阅范围 + 兴趣修订,版面快照不可变,重大事件 / 深度阅读 / 播客精选是额外分区;今天的版面由系统自动换版(新内容落地 / 偏好改动 / 失败重试),读者面没有重编入口,同日只留最新一版可见;公共日报是独立产品,三层去重 + 确定性渲染 | 同上 |
 | 播客 | 只解析 enclosure 元数据**不下载音频**;原音频无公网回源路由;仅四类供应商下载失败才一次性 OSS 中转;简介初评只作付费 ASR 门 | [`podcast.md`](docs/architecture/podcast.md) |
 | 媒体 | 正文原链**永不改写**,显示层经 `/api/media/proxy`;按内容哈希去重;只随文预取不全量回填;OSS / 备份默认关 | [`media-and-storage.md`](docs/architecture/media-and-storage.md) |
 | 检索与问答 | FTS5 是唯一检索基础设施;问答 = LLM 计划检索 + FTS5,降级链自持;`[n]` 引用与 sources 同源同序 | [`search-and-qa.md`](docs/architecture/search-and-qa.md) |
