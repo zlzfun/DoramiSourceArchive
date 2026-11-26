@@ -1,6 +1,6 @@
 # 社交流「显示更多」点了没有展开任何内容(issue #346)
 
-> **归档于 2026-11-25(issue #346,开发版 3.70.5-alpha,纯前端)**:现状以 `frontend/src/utils/socialClamp.js`、`frontend/src/hooks/useClampCut.js` 与 `frontend/src/components/SocialFlow.jsx` 为准,文中路径与状态为当时记录。
+> **归档于 2026-11-25(issue #346,PR #347,开发版 3.70.5-alpha,纯前端;Codex 两轮检视)**:现状以 `frontend/src/utils/socialClamp.js`、`frontend/src/hooks/useClampCut.js` 与 `frontend/src/components/SocialFlow.jsx` 为准,文中路径与状态为当时记录。
 > 状态:已落地待发布(2026-11-25 开工并当日收口)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(见 §6)。分支 `feat/issue-346-social-more-toggle`。
 > 关联:[issue #346](https://github.com/zlzfun/DoramiSourceArchive/issues/346)。
