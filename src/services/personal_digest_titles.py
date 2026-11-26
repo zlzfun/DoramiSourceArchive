@@ -171,11 +171,16 @@ def localize_edition_titles(
     items: list[PersonalDigestItemRecord] | None = None,
     persist: bool = True,
     include_failure_count: bool = False,
+    cache_only: bool = False,
 ) -> dict[str, int]:
     """为一期早报的条目快照补 ``title_zh``;返回各来源计数(观测用)。
 
     幂等:已带 ``title_zh`` 的条目跳过。调用方应在 edition 落成终态后调用并自行兜底
     异常——本函数内部已把 LLM 失败降级为回退原标题,只有 DB 写入失败会向外抛。
+
+    ``cache_only``(issue #343):只用文章自身的译文缓存与近期公共日报的标题,不调模型、
+    不释放调用方的事务——给「持着写锁、在发布事务里补标题」的调用方用。本该送模型而缓存里
+    没有的条目计入 ``translation_failed``,与模型调用失败同口径。
     """
 
     stats = {
@@ -249,7 +254,10 @@ def localize_edition_titles(
             if aid in records and records[aid].source_id in exportable
         }
     config = llm_config if llm_config is not None else _llm_config(session)
-    if remaining and config.configured:
+    if remaining and config.configured and cache_only:
+        if include_failure_count:
+            stats["translation_failed"] = len(remaining)
+    elif remaining and config.configured:
         # The shared title publisher uses a fresh write transaction. Release
         # this read snapshot before it runs (SQLite WAL read-upgrade fence), then
         # reload items/metadata instead of writing stale article extensions.

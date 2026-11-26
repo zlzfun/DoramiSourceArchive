@@ -1799,6 +1799,77 @@ def _assert_healed_to_head(db_url):
         engine.dispose()
 
 
+def test_content_arrived_reason_migration_round_trips_and_keeps_snapshots(tmp_path):
+    """issue #343:编排原因约束加 ``content_arrived``。改约束要重建版本表——条目快照(外键指向它)
+    不能随之丢;回退时旧约束不认识新取值,并入同属系统编排的 ``scheduled``。"""
+
+    db_url = f"sqlite:///{tmp_path / 'digest-reason.db'}"
+    cfg = make_alembic_config(db_url)
+    command.upgrade(cfg, "b8d4107c2f61")
+    engine = create_engine(db_url)
+    stamp = "2026-11-25T08:30:00+08:00"
+
+    def _reason_sql() -> str:
+        return next(
+            item["sqltext"]
+            for item in inspect(engine).get_check_constraints("personal_digest_editions")
+            if item["name"] == "ck_personal_digest_editions_generation_reason"
+        )
+
+    try:
+        assert "content_arrived" not in _reason_sql()
+        with engine.begin() as conn:
+            # 裸连接不开外键检查:只造版本与条目两行,不必凑齐账号表的全部必填列。
+            conn.execute(text(
+                "INSERT INTO personal_digest_editions "
+                "(id,owner_username,report_date,revision,status,check_after,cutoff_at,"
+                "expected_source_ids_json,due_source_ids_json,source_state_snapshot_json,"
+                "policy_version,taxonomy_version,interest_version,interest_snapshot_json,"
+                "generation_attempt_count,generation_reason,sync_stale,analysis_incomplete,"
+                "created_at,updated_at) VALUES "
+                "(1,'alice','2026-11-25',1,'ready',:stamp,:stamp,'[]','[]','{}',"
+                "'personal-digest-v2',0,0,'[]',0,'scheduled',0,0,:stamp,:stamp)"
+            ), {"stamp": stamp})
+            conn.execute(text(
+                "INSERT INTO personal_digest_items "
+                "(edition_id,article_id,position,section,selection_lane,"
+                "matched_interest_codes_json,ranking_features_json,coverage_adjustments_json,"
+                "selection_reason,snapshot_json,created_at) VALUES "
+                "(1,'article-1',0,'精选','quality','[]','{}','[]','质量','{}',:stamp)"
+            ), {"stamp": stamp})
+            with pytest.raises(IntegrityError):
+                with conn.begin_nested():
+                    conn.execute(text(
+                        "UPDATE personal_digest_editions SET generation_reason='content_arrived'"
+                    ))
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, "heads")
+    engine = create_engine(db_url)
+    try:
+        assert "content_arrived" in _reason_sql()
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT count(*) FROM personal_digest_items")).scalar() == 1
+            conn.execute(text(
+                "UPDATE personal_digest_editions SET generation_reason='content_arrived'"
+            ))
+    finally:
+        engine.dispose()
+
+    command.downgrade(cfg, "b8d4107c2f61")
+    engine = create_engine(db_url)
+    try:
+        assert "content_arrived" not in _reason_sql()
+        with engine.begin() as conn:
+            assert conn.execute(text(
+                "SELECT generation_reason FROM personal_digest_editions"
+            )).scalar() == "scheduled"
+            assert conn.execute(text("SELECT count(*) FROM personal_digest_items")).scalar() == 1
+    finally:
+        engine.dispose()
+
+
 def test_ensure_migrated_aligns_pre_baseline_legacy_db(tmp_path):
     """断代早于基线的老库(缺列缺表):收养前对齐到基线,再升级到 head 不崩。
 
