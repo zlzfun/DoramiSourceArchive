@@ -1034,6 +1034,11 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
         return digest_refresh.apply_preference_intents(engine, now=dt.datetime.now(shanghai))
 
     app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    # 记下意向时把「几时静置期满」交给宿主(到点即编);这里只记下来看,换版仍由用例自己推进
+    due_calls: list[tuple[str, dt.datetime]] = []
+    monkeypatch.setattr(
+        digest_refresh, "_preference_due_hook", lambda username, due: due_calls.append((username, due))
+    )
     with TestClient(app_module.app) as client:
         _login(client, "alice")
         ensured = client.post("/api/reader/briefs/today/ensure")
@@ -1043,6 +1048,7 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
         assert edition["interest_stale"] is False
         assert edition["scope_stale"] is False
         assert edition["refresh_pending"] is None  # 内容齐备时编的,也没有待办
+        assert due_calls == []
 
         # 关注一个标签:今日版本先原样不动,只记下意向;页面据 refresh_pending 知道稍后有新版
         saved = client.put(
@@ -1058,6 +1064,8 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
         assert today["refresh_pending"] == "soon"
         reason, first_marker = _intent(sink.engine, edition["id"])
         assert reason == "interest_changed"
+        slack = dt.timedelta(seconds=digest_refresh.PREFERENCE_DUE_SLACK_SECONDS)
+        assert due_calls == [("alice", dt.datetime.fromisoformat(first_marker) + slack)]
 
         # 原样重存:行不改写,兴趣版本不变
         with Session(sink.engine) as session:
@@ -1075,10 +1083,20 @@ def test_interest_and_subscription_edits_are_followed_automatically(monkeypatch,
         while _intent(sink.engine, edition["id"])[0] != "subscription_changed":
             assert time.monotonic() < deadline, "订阅变更没有记到今日版本上"
             time.sleep(0.05)
-        assert _intent(sink.engine, edition["id"])[1] >= first_marker
+        second_marker = _intent(sink.engine, edition["id"])[1]
+        assert second_marker >= first_marker
         today = client.get("/api/reader/briefs/today").json()["edition"]
         assert today["id"] == edition["id"]
         assert today["scope_stale"] is True and today["interest_stale"] is True
+        # 订阅那条路径同样登记了到点时刻:每次改动(含上面那次原样重存——版面仍落后,静置重新起算)各登记一次,
+        # 宿主按账号只留最后一次;最后一次的时刻 = 最后一次改动 + 静置期
+        expected_last = ("alice", dt.datetime.fromisoformat(second_marker) + slack)
+        deadline = time.monotonic() + 5
+        while due_calls[-1] != expected_last:
+            assert time.monotonic() < deadline, f"订阅变更没有登记到点任务: {due_calls}"
+            time.sleep(0.05)
+        assert {username for username, _ in due_calls} == {"alice"}
+        assert [due for _, due in due_calls] == sorted(due for _, due in due_calls)
         # 历史 / 列表端点不带这几位(历史版本不会再动,不必逐行多查)
         by_date = client.get(f"/api/reader/briefs/{edition['report_date']}").json()
         assert "interest_stale" not in by_date and "refresh_pending" not in by_date
@@ -1409,3 +1427,88 @@ def test_onboarding_complete_ignores_inactive_interest_rows(monkeypatch, tmp_pat
         assert res.json() == {"onboarding_completed": True, "brief_rebuild_status": None, "brief_rebuilt": False}
         assert calls == []  # 无有效兴趣,不空跑 _ensure
         assert client.get("/api/reader/briefs/today").json()["status"] == "not_started"
+
+
+def test_preference_refresh_is_scheduled_once_per_account_and_runs_the_pass(
+    monkeypatch, tmp_path, no_background_preference_refresh
+):
+    """静置一满就编(issue #343):到点任务每个账号一个、连着改只留最后一次;调度器没起时不登记;
+    登记随应用的 lifespan 接上与撤掉。到点任务本身跑的是偏好那一步。"""
+    from services import personal_digest_refresh as digest_refresh
+
+    shanghai = dt.timezone(dt.timedelta(hours=8))
+    app_module, sink, tag_id = _setup(monkeypatch, tmp_path)
+    job_id = lambda username: f"{app_module.PREFERENCE_REFRESH_JOB_PREFIX}{username}"  # noqa: E731
+    far = dt.datetime.now(shanghai) + dt.timedelta(hours=1)   # 用例期间不会真的到点
+
+    # 调度器没起:什么都不做
+    app_module.schedule_preference_refresh("alice", far)
+    assert app_module.scheduler.get_job(job_id("alice")) is None
+
+    monkeypatch.setattr(digest_refresh, "set_preference_due_hook", no_background_preference_refresh)
+    with TestClient(app_module.app) as client:
+        assert digest_refresh._preference_due_hook is app_module.schedule_preference_refresh  # noqa: SLF001
+        app_module.schedule_preference_refresh("alice", far)
+        assert app_module.scheduler.get_job(job_id("alice")).trigger.run_date == far
+        # 同一账号再改:还是那一个任务,时刻换成后一次的
+        later = far + dt.timedelta(seconds=7)
+        app_module.schedule_preference_refresh("alice", later)
+        assert app_module.scheduler.get_job(job_id("alice")).trigger.run_date == later
+        app_module.schedule_preference_refresh("bob", far)
+        assert app_module.scheduler.get_job(job_id("bob")).trigger.run_date == far
+        app_module.schedule_preference_refresh("", far)
+        scheduled = [job.id for job in app_module.scheduler.get_jobs() if job.id.startswith(app_module.PREFERENCE_REFRESH_JOB_PREFIX)]
+        assert sorted(scheduled) == [job_id("alice"), job_id("bob")]
+
+        # 到点时刻只往后挪:交错的两个请求里,先记意向的后登记,不能把任务改回较早的时刻
+        app_module.schedule_preference_refresh("bob", far - dt.timedelta(seconds=30))
+        assert app_module.scheduler.get_job(job_id("bob")).trigger.run_date == far
+
+        # 真实路径:改兴趣 → 记意向 → 登记到点任务,时刻 = 意向时刻 + 静置期。
+        # 静置期先放到一小时:任务在用例期间不会自己跑掉(否则慢机器上它可能先于下面的断言执行、消失)
+        monkeypatch.setattr(digest_refresh, "PREFERENCE_QUIET_SECONDS", 3600)
+        app_module.scheduler.remove_job(job_id("alice"))
+        _login(client, "alice")
+        edition = client.post("/api/reader/briefs/today/ensure").json()["edition"]
+        assert client.put(
+            "/api/reader/interests", json={"items": [{"tag_id": tag_id, "stance": "follow"}]}
+        ).status_code == 200
+        with Session(sink.engine) as session:
+            from models.db import PersonalDigestEditionRecord
+
+            marker = session.get(PersonalDigestEditionRecord, edition["id"]).desired_requested_at
+        expected = dt.datetime.fromisoformat(marker) + dt.timedelta(
+            seconds=digest_refresh.PREFERENCE_QUIET_SECONDS + digest_refresh.PREFERENCE_DUE_SLACK_SECONDS
+        )
+        job = app_module.scheduler.get_job(job_id("alice"))
+        assert job.trigger.run_date == expected
+        assert job.func is app_module.execute_preference_refresh_job
+        app_module.scheduler.remove_job(job_id("alice"))   # 不让它在用例里自己跑
+
+        # 到点时另一轮正在跑:不排队,只定一个稍后的补跑任务(再来几个到点任务也还是这一个)
+        monkeypatch.setattr(digest_refresh, "PREFERENCE_QUIET_SECONDS", 0)
+        retry_id = app_module.PREFERENCE_REFRESH_RETRY_JOB_ID
+        assert digest_refresh._PREFERENCE_PASS_LOCK.acquire(blocking=False)  # noqa: SLF001
+        try:
+            before = dt.datetime.now(dt.timezone.utc)
+            app_module.execute_preference_refresh_job()
+            app_module.execute_preference_refresh_job()
+            retry = app_module.scheduler.get_job(retry_id)
+            assert retry is not None and retry.func is app_module.execute_preference_refresh_job
+            gap = (retry.trigger.run_date - before).total_seconds()
+            assert 0 < gap <= app_module.PREFERENCE_REFRESH_BUSY_RETRY_SECONDS + 5
+            assert [job.id for job in app_module.scheduler.get_jobs()].count(retry_id) == 1
+            assert client.get("/api/reader/briefs/today").json()["edition"]["id"] == edition["id"]  # 这一趟什么都没做
+        finally:
+            digest_refresh._PREFERENCE_PASS_LOCK.release()  # noqa: SLF001
+        app_module.scheduler.remove_job(retry_id)   # 不让它在用例里自己跑
+
+        # 没人占着:到点任务跑的就是偏好那一步,换成按新兴趣编的一版,不再留补跑任务
+        app_module.execute_preference_refresh_job()
+        assert app_module.scheduler.get_job(retry_id) is None
+        followed = client.get("/api/reader/briefs/today").json()["edition"]
+        assert followed["id"] != edition["id"]
+        assert followed["generation_reason"] == "interest_changed"
+        assert followed["refresh_pending"] is None
+    assert digest_refresh._preference_due_hook is None  # noqa: SLF001
+

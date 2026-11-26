@@ -1288,6 +1288,7 @@ export default function ReaderTab({
         <PersonalBriefPage
           showToast={showToast}
           interestVersion={interestVersion}
+          subscribedIds={subscribedIds}
           sourceMap={sourceMap}
           restore={briefRestore}
           placeKeeper={briefPlace}

@@ -14118,6 +14118,9 @@ input[type="radio"] {
 .bp-eyebrow i { flex: none; width: 28px; height: 1px; background: var(--dorami-border); }
 .bp-top-r { position: relative; display: flex; align-items: center; gap: 18px; font-size: 13px; color: var(--dorami-faint); }
 .bp-top-note { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 新的一版几十秒内就到(issue #343):编排时刻的位置改说「正在编排」,比常态的时刻醒目一档;窄栏下时刻收起,这一句留着 */
+.bp-top-note.is-live { display: inline-flex; align-items: center; gap: 6px; color: var(--dorami-ink); }
+.bp-top-note.is-live svg { flex: none; width: 13px; height: 13px; color: var(--dorami-accent); }
 .bp-lbtn {
   display: inline-flex;
   align-items: center;
@@ -14134,7 +14137,6 @@ input[type="radio"] {
 }
 .bp-lbtn svg { width: 16px; height: 16px; }
 .bp-lbtn:hover, .bp-lbtn[aria-expanded="true"] { color: var(--dorami-ink); }
-.bp-lbtn:disabled { cursor: default; opacity: 0.55; }
 /* 「往期」入口(目检返修:原样页的纯文字钮混在编排信息里不显眼):描边胶囊 + 日历图标 + 下拉角标,
    抬起面与描边在海报的环境光上也立得住;展开时角标翻转 */
 .bp-hist {
@@ -14164,8 +14166,6 @@ input[type="radio"] {
 
 /* 眉头下的状态提示(原编排说明行尾句):一行,带就地动作;未完成走 warn,其余 accent */
 .bp-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: -30px 0 34px; font-size: 13px; line-height: 1.6; color: var(--dorami-accent-ink); }
-.bp-notice svg { flex: none; width: 14px; height: 14px; }
-.bp-notice.is-partial { color: var(--state-warn); }
 .bp-notice-act {
   padding: 0;
   border: 0;
@@ -14179,7 +14179,6 @@ input[type="radio"] {
   cursor: pointer;
 }
 @media (hover: hover) { .bp-notice-act:hover { text-decoration-color: currentColor; } }
-.bp-notice-act:disabled { cursor: default; opacity: 0.6; text-decoration: none; }
 
 /* 头条 */
 .bp-kicker { display: flex; align-items: center; gap: 10px; margin: 0 0 22px; font-size: 13px; letter-spacing: 0.06em; color: var(--dorami-accent-ink); }
