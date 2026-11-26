@@ -1015,9 +1015,9 @@ export default function PersonalBriefPage({
   } else if (!usesToday && detail.error) {
     posterBody = stateBlock(detail.error, { tone: 'is-error', role: 'alert' });
   } else if (status === 'failed') {
+    // 只说没有完成、给一条去处;edition.error 是内部错误码(generation_failed 之类),不上读者面
     posterBody = stateBlock(isToday ? '今日早报没有完成' : '这一版没有完成', {
       tone: 'is-error',
-      meta: edition?.error || '生成过程遇到问题',
       actions: browseBtn || null,
     });
   } else if (!edition) {

@@ -132,3 +132,11 @@ test('读者面没有重编入口:早报页不再调重编接口,也不再有那
   assert.equal(/rebuildPersonalBrief|today\/rebuild/.test(code), false);
   assert.equal(/today\/rebuild/.test(read('../src/api.js')), false);
 });
+
+test('失败用尽的状态块不显示内部错误码:早报页不读 edition.error', () => {
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  const page = read('../src/components/PersonalBriefPage.jsx');
+  const code = page.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+  assert.equal(/edition\??\.error/.test(code), false, '早报页又把版本上的错误码(generation_failed 之类)画出来了');
+  assert.equal(code.includes('今日早报没有完成'), true);
+});
