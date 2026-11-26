@@ -311,6 +311,10 @@
       body.append(runs);
       const review = titled('源审查');
       review.querySelector('.micro-label').className = 'tools-title';
+      // 稳定性写中文档位(现网原样露出目录里的取值,长的会把右栏撑出横向滚动);原始取值留在悬停提示
+      review.querySelectorAll('.inspector-review-val').forEach((val) => {
+        if (val.textContent.trim() === 'official_paid_api') val.textContent = '官方付费 API';
+      });
       review.insertAdjacentHTML('beforebegin', pushSection('x_openai'));
     }
     if (open === 'register') {

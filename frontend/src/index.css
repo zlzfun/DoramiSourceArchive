@@ -7731,11 +7731,19 @@ input[type="radio"] {
     gap: 8px 14px;
   }
 
+  /* 格子可以比内容窄(min-width: 0),取值一行截断:认不出的原始取值再长也不撑宽右栏 */
+  .inspector-review-grid > div {
+    min-width: 0;
+  }
+
   .inspector-review-val {
     font-size: 12px;
     font-weight: 600;
     color: var(--dorami-ink-2);
     margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* 移动端遮罩（仅小屏渲染出效果） */
