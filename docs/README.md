@@ -81,6 +81,7 @@
 
 ## plans/ —— 活跃方案(☐ 进行中 / 排队中;落地后归档)
 
+- ☐ [plans/issue-349-prefer-chinese.md](./plans/issue-349-prefer-chinese.md) — **「优先显示中文」:中文偏好从标题扩到推文,推文入库即译(issue #349)**:拍板三项(入库即译 / 中文替换原文 / 开关文案)、挂在写入层的预译待办与各入库方式、独立预算、列表带回译文、部署顺序与混版本;实现与沙箱自查完成,待检视与目检。
 - ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
 
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。

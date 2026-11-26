@@ -311,7 +311,7 @@ export default function MobileReader({
         },
       });
     }
-    // 动作单标题随「默认显示中文标题」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
+    // 动作单标题随「优先显示中文」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
     setSheet({
       title: displayTitle(article, preferChinese),
       items,
@@ -333,7 +333,7 @@ export default function MobileReader({
     title: article.title || '推文',
     items: buildSocialMenuItems(article),
     anchorKey: `social:${article.id}`,
-    preview: <SocialPeek article={article} source={sourceMap[article.source_id]} sourceName={sourceNameMap[article.source_id]} />,
+    preview: <SocialPeek article={article} source={sourceMap[article.source_id]} sourceName={sourceNameMap[article.source_id]} translation={socialTranslations[article.id] || null} />,
   });
 
   const pressBind = useLongPress(openArticleSheet);

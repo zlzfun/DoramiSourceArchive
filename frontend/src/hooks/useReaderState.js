@@ -17,9 +17,11 @@ import {
 import { copyText } from '../utils/clipboard';
 import {
   currentSocialTranslation,
+  socialCachedZh,
+  socialCardView,
+  socialOriginalTexts,
   nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
-  socialQuotaActive,
   socialQuotaUntil,
   socialTranslationSignature,
 } from '../utils/socialTranslate';
@@ -43,6 +45,7 @@ import { createListRegistry, markReadMatcher } from '../utils/articleList';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useTitlePreference } from './useTitlePreference';
 import { useListLoader, useListWindow } from './useArticleList';
 import {
   fetchReaderSources,
@@ -1118,19 +1121,40 @@ export function useReaderState({
     }
   };
 
-  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试 / 原文已变才发请求。服务端有缓存,
-  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)当天留在 quota 态,不给重试。
+  // 一张推文卡的翻译视图(issue #349):卡片、长按预览卡、菜单与下面的开关都从这一处推导,口径不会走样。
+  // 判定在 utils/socialTranslate.socialCardView;最新的偏好 / 搜索词 / AI 开关经 ref 取,开关本身引用稳定。
+  const { preferChinese } = useTitlePreference();
+  const socialViewInputs = useRef({ preferChinese, aiEnabled, searchQuery });
+  useEffect(() => { socialViewInputs.current = { preferChinese, aiEnabled, searchQuery }; }, [preferChinese, aiEnabled, searchQuery]);
+  const socialViewOf = (article, translations, inputs) => {
+    const sig = socialTranslationSignature(article);
+    return socialCardView({
+      cached: socialCachedZh(article),
+      entry: currentSocialTranslation(translations[article?.id], sig),
+      preferChinese: inputs.preferChinese,
+      aiEnabled: inputs.aiEnabled,
+      translatable: Boolean(sig),
+      searchQuery: inputs.searchQuery,
+      original: socialOriginalTexts(article),
+    });
+  };
+
+  // 推文换语言:有译文(随列表带回的,或本次会话翻出来的)只在本地切,不发请求;没有译文才向 AI 要——
+  // 首次 / 失败后重试 / 原文已变。额度用尽(429)当天留在 quota 态,不给重试。
   const toggleSocialTranslation = useCallback((article) => {
     const id = article?.id;
+    if (!id) return;
     const sig = socialTranslationSignature(article);
-    if (!id || !sig) return;
-    let entry = currentSocialTranslation(socialTranslationsRef.current[id], sig);
-    if (entry?.status === 'quota' && !socialQuotaActive(entry)) entry = null;
-    if (entry?.status === 'loading' || entry?.status === 'quota') return;
-    if (entry?.status === 'done') {
-      setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
+    const view = socialViewOf(article, socialTranslationsRef.current, socialViewInputs.current);
+    if (view.zh) {
+      // 记下这张卡的选择:之后它不再跟偏好走,直到原文变了(签名对不上)或页面重载
+      setSocialTranslations((prev) => ({
+        ...prev,
+        [id]: { status: 'done', open: !view.showZh, sig, text: view.zh.text, quoted: view.zh.quoted },
+      }));
       return;
     }
+    if (view.action !== 'request') return;
     // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02);
     // next 为 null 表示回到可点状态(移除该卡条目)
     const settle = (next) => setSocialTranslations((prev) => {
@@ -1225,15 +1249,15 @@ export function useReaderState({
   const buildSocialMenuItems = (article) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
-    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」;状态按原文签名取,原文变了视为未翻译
-    const trSig = aiEnabled ? socialTranslationSignature(article) : '';
-    const tr = currentSocialTranslation(socialTranslations[article.id], trSig);
-    const translateItems = trSig
+    // 语言项与卡片底栏同一个开关(issue #84 / #349):显示中文时是「显示原文」,否则「译为中文」;
+    // 没有译文、也要不到(AI 不可用 / 这条不需要翻译)时不出这一项
+    const view = socialViewOf(article, socialTranslations, { preferChinese, aiEnabled, searchQuery });
+    const translateItems = view.action || view.status
       ? [{
         key: 'translate',
-        label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
+        label: view.action === 'original' ? '显示原文' : '译为中文',
         icon: Sparkles,
-        disabled: tr?.status === 'loading' || socialQuotaActive(tr),
+        disabled: view.status === 'loading' || view.status === 'quota',
         onClick: () => toggleSocialTranslation(article),
       }]
       : [];

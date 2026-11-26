@@ -2,8 +2,8 @@ import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRe
 import { updateOwnPreferences } from '../api';
 import { accountTitlePreference, readGuestTitlePreference, writeGuestTitlePreference } from '../utils/titleDisplay';
 
-// 「默认显示中文标题」偏好的 context(issue #218)。App 持有(useTitlePreferenceState)并下发;
-// 阅读器各标题位与设置分区都从这里读,切换后所有位置同一帧统一。
+// 「优先显示中文」偏好的 context(issue #218 起管标题,issue #349 扩到推文;字段名仍是 prefer_chinese_titles)。
+// App 持有(useTitlePreferenceState)并下发;阅读器各标题位、推文卡与设置分区都从这里读,切换后所有位置同一帧统一。
 export const TitlePreferenceContext = createContext(null);
 
 const DEFAULT_TITLE_PREFERENCE = Object.freeze({

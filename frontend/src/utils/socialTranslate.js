@@ -69,6 +69,61 @@ export function currentSocialTranslation(entry, signature) {
   return entry && signature && entry.sig === signature ? entry : null;
 }
 
+// ── 卡片现在显示哪种语言(issue #349)──
+// 随列表带回的译文:服务端只在译文指纹仍对得上当前原文时才给 article.social_zh({ text, quoted },
+// 不需要翻译的一侧为 null),前端不自己校验缓存。没有可用译文返回 null。
+export function socialCachedZh(article) {
+  const zh = article?.social_zh;
+  if (!zh || typeof zh !== 'object') return null;
+  const text = typeof zh.text === 'string' && zh.text.trim() ? zh.text : null;
+  const quoted = typeof zh.quoted === 'string' && zh.quoted.trim() ? zh.quoted : null;
+  return text || quoted ? { text, quoted } : null;
+}
+
+// 卡片上的两段原文:主推(转推取原推全文,同 socialTranslationSources)与引用推
+export function socialOriginalTexts(article, ext = parseExtensions(article)) {
+  const reposted = ext.reposted && typeof ext.reposted === 'object' ? ext.reposted : null;
+  const quoted = ext.quoted && typeof ext.quoted === 'object' ? ext.quoted : null;
+  return {
+    text: String(reposted?.text || article?.content || '').trim(),
+    quoted: String(quoted?.text || '').trim(),
+  };
+}
+
+const includesQuery = (text, query) => Boolean(text) && String(text).toLowerCase().includes(query);
+
+/**
+ * 一张推文卡的翻译视图。译文原位替换原文,一次只显示一种语言:
+ *   zh      可用的译文 { text, quoted } 或 null——本次会话里翻出来的(entry)优先,其次是随列表带回的;
+ *   showZh  现在是否显示中文:读者在这张卡上切过就听这张卡的(entry.open),否则跟「优先显示中文」偏好;
+ *   status  'loading' | 'quota' | 'error' | null——向 AI 要译文的过渡态,此时显示原文;
+ *   action  底栏 / 菜单那一个动作:'original'(切回原文)| 'chinese'(切到已有译文,不发请求)|
+ *           'request'(没有译文,向 AI 要一份)| null(没有可做的,底栏不出现)。
+ * entry 须是已按原文签名核对过的条目(currentSocialTranslation)。
+ * 搜索时的例外:搜的词只在原文里、译文里没有,这张卡默认显示原文——否则读者看不出它为什么被搜到。
+ */
+export function socialCardView({
+  cached = null, entry = null, preferChinese = true, aiEnabled = false, translatable = false,
+  searchQuery = '', original = null,
+}) {
+  const done = entry?.status === 'done' && (entry.text || entry.quoted);
+  const zh = done ? { text: entry.text || null, quoted: entry.quoted || null } : cached;
+  if (zh) {
+    let showZh = done ? Boolean(entry.open) : Boolean(preferChinese);
+    const query = String(searchQuery || '').trim().toLowerCase();
+    if (!done && showZh && query && original) {
+      const inOriginal = includesQuery(original.text, query) || includesQuery(original.quoted, query);
+      const inChinese = includesQuery(zh.text || original.text, query) || includesQuery(zh.quoted || original.quoted, query);
+      if (inOriginal && !inChinese) showZh = false;
+    }
+    return { zh, showZh, status: null, action: showZh ? 'original' : 'chinese' };
+  }
+  let status = ['loading', 'quota', 'error'].includes(entry?.status) ? entry.status : null;
+  if (status === 'quota' && !socialQuotaActive(entry)) status = null; // 额度已恢复:回到可点
+  const busy = status === 'loading' || status === 'quota';
+  return { zh: null, showZh: false, status, action: translatable && aiEnabled && !busy ? 'request' : null };
+}
+
 // 额度用尽(429)的恢复时刻(毫秒):按服务端 Retry-After(距服务端下一个零点的秒数)算,不猜服务端时区;
 // 缺失时退回本地零点(检视 R1-03 / 复检)
 export function socialQuotaUntil(retryAfterSeconds, now = Date.now()) {

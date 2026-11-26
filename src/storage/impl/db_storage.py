@@ -102,6 +102,8 @@ class DatabaseStorage(BaseStorage):
             ensure_podcast_qa_fts(self.engine)
         from services import title_translation
         title_translation.initialize(self.engine)
+        from services import social_translation
+        social_translation.initialize(self.engine)
         self.logger.info(f"🗄️ 关系型数据库已连接: {db_url}")
 
     def _queue_refreshed_podcast_analysis(self, article_id: str) -> None:

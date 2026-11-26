@@ -412,6 +412,31 @@ def _social_fingerprint(sources: dict) -> str:
     return _body_fingerprint(json.dumps(sources, ensure_ascii=False, sort_keys=True))
 
 
+def cached_social_translation(content: str, ext: dict) -> Optional[dict]:
+    """这条推文当前原文的可用译文 {"text", "quoted"}(issue #349),没有则 None。
+
+    列表接口与预译待办共用的读侧判定:缓存的指纹须对得上**现在**需要翻译的那几段原文、流程版本一致,
+    且至少有一段非空译文;只返回原文确实需要翻译的那几侧。原文变了(补上引用帖、换成抓取版)而缓存
+    还是旧的,这里一律当没有——读者看到的是原文,不会是对不上号的旧译文。
+    """
+    sources = social_translation_sources((content or "").strip(), ext if isinstance(ext, dict) else {})
+    if not sources:
+        return None
+    entry = ext.get(SOCIAL_TRANSLATION_KEY) if isinstance(ext, dict) else None
+    if (
+        not isinstance(entry, dict)
+        or entry.get("fp") != _social_fingerprint(sources)
+        or type(entry.get("v")) is not int
+        or entry.get("v") != SOCIAL_TRANSLATION_VERSION
+    ):
+        return None
+    result = {}
+    for name in ("text", "quoted"):
+        value = entry.get(name)
+        result[name] = value.strip() if name in sources and isinstance(value, str) and value.strip() else None
+    return result if any(result.values()) else None
+
+
 async def _translate_social_batch(batch, llm_config: LLMConfig, usage_meta, http_client) -> dict:
     """一批片段一次调用,沿用 #206 的逐行单元协议:各片段的行单元编成全局 id 混进同一个 units 列表
     (主推与引用推同一请求),回包按 id 拆回各片段,交给 restore_translation_units 逐行校验与还原——
