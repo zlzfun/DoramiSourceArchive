@@ -1,3 +1,5 @@
+import { blockedInterestQuery, canFilterCustomInterests } from './readerInterestQuery.js';
+
 // 条目列表实例的纯逻辑(issue #230 阶段 3 批 3a):一条列表 = 一份查询 + 一扇窗口(已载入的条目与总数)。
 // 阅读器的主列表(内容 Tab / 桌面条目列)与手机订阅 Tab 的推入页(来源 / 全部 / 收藏 / 兴趣)各是一个实例,
 // 走同一个 hooks/useArticleList;本模块放两边共用、可在 node 里单测的部分:
@@ -13,7 +15,9 @@ const FAVORITES = Object.freeze({ axis: 'subscribed', favorite: true });
 const INTEREST = Object.freeze({ axis: 'interest', favorite: false });
 
 // 列表请求参数的单一拼装点:轴 + 下钻项 + 收藏 + 容器形态 + 读态 + 搜索(列表首拉与分析轮询共用)
-export function buildListFilters({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter }) {
+export function buildListFilters(query) {
+  const { activeSourceId, activeTagId, activeCustomInterestId, interestCapabilities, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter } = query;
+  if (blockedInterestQuery(query)) throw new Error('这个兴趣暂不可用');
   const filters = {};
   if (activeSourceId) filters.source_id = activeSourceId;
   else filters.shape = mode; // 容器分流(文章/播客/社交各取自己那类)
@@ -22,6 +26,10 @@ export function buildListFilters({ activeSourceId, activeTagId, mode, scope, tag
     filters.subscribed_scope = 'off';
     filters.interest_scope = 'only';
     if (activeTagId) filters.interest_tag_id = activeTagId;
+    else if (activeCustomInterestId) {
+      filters.interest_kinds = 'custom';
+      filters.custom_interest_id = activeCustomInterestId;
+    } else if (canFilterCustomInterests(interestCapabilities)) filters.interest_kinds = 'tag,custom';
   } else {
     // 订阅轴:全集 = 订阅源;单源 = 该源(未订阅的预览源也要能看,故 off)
     filters.subscribed_scope = activeSourceId ? 'off' : 'only';
@@ -45,7 +53,7 @@ const INTEREST_VIEW_ITEMS = VIEW_ITEMS.slice(0, 2);
 
 export function pushViewItems(kind) {
   if (kind === 'all' || kind === 'fav') return VIEW_ITEMS;
-  if (kind === 'interest' || kind === 'tag') return INTEREST_VIEW_ITEMS;
+  if (kind === 'interest' || kind === 'tag' || kind === 'custom') return INTEREST_VIEW_ITEMS;
   return null;   // 来源页的形态就是来源自己的,不切
 }
 
@@ -57,15 +65,21 @@ export function pushMode(spec, view, shapeOf) {
 }
 
 // 推入页的查询:只由 spec / 形态 / 只看未读决定;不带搜索与类型筛选(样页推入页没有这两样)
-export function pushListQuery(spec, { mode, unreadOnly = false }) {
+export function pushListQuery(spec, { mode, unreadOnly = false, searchQuery = '', interestCapabilities, interestRevision, sessionKey, customInterestUnavailable = false }) {
   const kind = spec?.kind;
   return {
     activeSourceId: kind === 'source' ? spec.id : null,
     activeTagId: kind === 'tag' ? spec.id : null,
+    ...(spec?.union ? { interestUnion: true } : {}),
+    ...(kind === 'custom' ? { activeCustomInterestId: spec.id } : {}),
+    ...(interestCapabilities ? { interestCapabilities } : {}),
+    ...(interestRevision !== undefined ? { interestRevision } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(customInterestUnavailable ? { customInterestUnavailable } : {}),
     mode,
-    scope: kind === 'fav' ? FAVORITES : kind === 'interest' || kind === 'tag' ? INTEREST : SUBSCRIBED,
+    scope: kind === 'fav' ? FAVORITES : kind === 'interest' || kind === 'tag' || kind === 'custom' ? INTEREST : SUBSCRIBED,
     tagSearch: null,
-    searchQuery: '',
+    searchQuery,
     unreadOnly: Boolean(unreadOnly),
     kindFilter: '',
   };
@@ -73,11 +87,11 @@ export function pushListQuery(spec, { mode, unreadOnly = false }) {
 
 // 推入页「全部标读」的写路(与主列表同口径:订阅轴按源 / 容器推水位,兴趣轴逐篇写行);
 // 收藏页返回 null —— 后端没有「收藏范围」的标读,推水位会把没收藏的一并标掉,越出读者看见的范围,故不出这枚钮。
-export function pushMarkReadPlan(spec, mode) {
+export function pushMarkReadPlan(spec, mode, capabilities) {
   switch (spec?.kind) {
     case 'source': return { sourceId: spec.id, shape: null, interest: false, tagId: null };
     case 'all': return { sourceId: null, shape: mode, interest: false, tagId: null };
-    case 'interest': return { sourceId: null, shape: mode, interest: true, tagId: null };
+    case 'interest': if (spec.union || canFilterCustomInterests(capabilities)) return null; return { sourceId: null, shape: mode, interest: true, tagId: null };
     case 'tag': return { sourceId: null, shape: mode, interest: true, tagId: spec.id };
     default: return null;
   }

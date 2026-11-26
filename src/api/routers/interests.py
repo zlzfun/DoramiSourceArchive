@@ -4,26 +4,35 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
+from sqlalchemy import or_, exists, func
 
 from api import deps
 from api.routers import personal_briefs
 from models.analysis_contracts import DigestGenerationReason
-from models.db import CmsTagRecord, UserInterestTagRecord
+from models.db import CmsTagRecord, CmsTagAliasRecord, UserInterestTagRecord
 from services import accounts as accounts_service
 from services import taxonomy as taxonomy_service
+from services import custom_interests as custom_service
+from services import reader_interests as projection
 
 
 logger = logging.getLogger(__name__)
 
+def _private_response(response: Response):
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['Vary'] = 'Cookie'
+
+
 router = APIRouter(
     prefix="/api/reader/interests",
     tags=["reader-interests"],
-    dependencies=[Depends(deps.require_reader)],
+    dependencies=[Depends(deps.require_reader), Depends(_private_response)],
 )
 
 
@@ -36,6 +45,7 @@ class InterestInput(BaseModel):
 class InterestReplace(BaseModel):
     items: list[InterestInput] = Field(default_factory=list, max_length=200)
     complete_onboarding: bool = False
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 def _username(auth: dict[str, Any]) -> str:
@@ -54,16 +64,37 @@ def _tag_payload(tag: CmsTagRecord, **metadata: Any) -> dict[str, Any]:
         "name_en": tag.name_en,
         "description": tag.description,
         "entity_type": tag.entity_type,
+        "status": tag.status,
+        "user_selectable": tag.user_selectable,
         **metadata,
     }
 
 
 @router.get("/catalog")
 def catalog(
+    q: str = "",
+    cursor: int = 0,
+    limit: int = 100,
     auth: dict[str, Any] = Depends(deps.require_reader),
     session: Session = Depends(deps.get_session),
 ):
     personal_briefs._require_enabled(session)  # noqa: SLF001 - shared feature gate
+    if len(q) > 100 or cursor < 0 or not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="搜索参数超出范围")
+    if q.strip():
+        term = "%" + q.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        alias = select(CmsTagAliasRecord.id).where(CmsTagAliasRecord.tag_id == CmsTagRecord.id,
+            func.lower(CmsTagAliasRecord.alias).like(term, escape="\\"))
+        rows = session.exec(select(CmsTagRecord).where(
+            CmsTagRecord.status == "active", CmsTagRecord.user_selectable.is_(True), CmsTagRecord.id > cursor,
+            or_(func.lower(CmsTagRecord.name_zh).like(term, escape="\\"),
+                func.lower(CmsTagRecord.name_en).like(term, escape="\\"),
+                func.lower(CmsTagRecord.code).like(term, escape="\\"), exists(alias)),
+        ).order_by(CmsTagRecord.id).limit(limit + 1)).all()
+        items = [_tag_payload(row) for row in rows[:limit]]
+        return {"items": items, "facets": {kind: [item for item in items if item["kind"] == kind]
+            for kind in taxonomy_service.INTEREST_CATALOG_DEFAULT_LIMITS},
+            "next_cursor": rows[limit-1].id if len(rows) > limit else None, "query": q.strip()}
     result = taxonomy_service.ranked_interest_catalog(
         session,
         owner_username=_username(auth),
@@ -81,6 +112,7 @@ def catalog(
         "facets": grouped,
         "policy": result["policy"],
         "facet_stats": result["facet_stats"],
+        "next_cursor": None,
     }
 
 
@@ -97,6 +129,9 @@ def get_interests(
         .order_by(CmsTagRecord.kind, CmsTagRecord.normalized_name)
     ).all()
     return {
+        "capabilities": {"interest_match_projection": 1, "custom_interest_filter": True, "match_contract": 1},
+        "revision": custom_service.state_revision(session, _username(auth)),
+        "custom_items": [custom_service.payload(row) for row in custom_service.list_conditions(session, _username(auth))],
         "items": [
             {
                 "tag": _tag_payload(tag),
@@ -150,6 +185,9 @@ def replace_interests(
 ):
     personal_briefs._require_enabled(session)  # noqa: SLF001 - shared feature gate
     username = _username(auth)
+    custom_service.lock_mutation(session)
+    if body.expected_revision is not None and body.expected_revision != custom_service.state_revision(session, username):
+        raise HTTPException(status_code=409, detail="兴趣已在其他页面更新，请刷新后重试")
     requested = {item.tag_id: item for item in body.items}
     if len(requested) != len(body.items):
         raise HTTPException(status_code=400, detail="同一标签不能重复配置")
@@ -177,6 +215,9 @@ def replace_interests(
             )
         ).all()
     }
+    changed = set(existing) != set(requested) or any(
+        row.stance != "follow" or row.priority != "normal" or row.source != "explicit" for row in existing.values()
+    )
     for tag_id, row in existing.items():
         if tag_id not in requested:
             session.delete(row)
@@ -203,6 +244,8 @@ def replace_interests(
             row.source = "explicit"
             row.updated_at = now
         session.add(row)
+    if changed:
+        custom_service.bump_revision(session, username)
     onboarding_transition = False
     if body.complete_onboarding:
         # 条件 UPDATE 与兴趣替换同一事务;rowcount 是「首次完成」的唯一凭据(并发双 PUT 只有一个为 True)
@@ -256,10 +299,92 @@ def complete_onboarding(
             .where(UserInterestTagRecord.owner_username == username, CmsTagRecord.status == "active")
             .limit(1)
         ).first() is not None
-        if has_interests:
+        if has_interests or custom_service.list_conditions(session, username, active_only=True):
             rebuild_status = _rebuild_after_onboarding(session, auth, username)
     return {
         "onboarding_completed": True,
         "brief_rebuild_status": rebuild_status,
         "brief_rebuilt": rebuild_status in REBUILT_STATUSES,
     }
+
+
+@router.post("/custom/preview")
+def preview_custom_interest(body: custom_service.ConditionInput,
+    auth: dict[str, Any] = Depends(deps.require_reader), session: Session = Depends(deps.get_session)):
+    personal_briefs._require_enabled(session)
+    return custom_service.preview(session, _username(auth), body.condition)
+
+
+def _save_custom(body, auth, session, condition_id=None):
+    personal_briefs._require_enabled(session)
+    try:
+        row = custom_service.save_condition(session, _username(auth), body, condition_id)
+        session.commit()
+        return {"item": custom_service.payload(row), "revision": custom_service.state_revision(session, _username(auth))}
+    except custom_service.RevisionConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except LookupError as exc:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.post("/custom")
+def create_custom_interest(body: custom_service.ConditionInput,
+    auth: dict[str, Any] = Depends(deps.require_reader), session: Session = Depends(deps.get_session)):
+    return _save_custom(body, auth, session)
+
+
+@router.put("/custom/{condition_id}")
+def update_custom_interest(condition_id: int, body: custom_service.ConditionInput,
+    auth: dict[str, Any] = Depends(deps.require_reader), session: Session = Depends(deps.get_session)):
+    return _save_custom(body, auth, session, condition_id)
+
+
+@router.delete("/custom/{condition_id}")
+def delete_custom_interest(condition_id: int, expected_revision: int = Query(ge=1),
+    auth: dict[str, Any] = Depends(deps.require_reader), session: Session = Depends(deps.get_session)):
+    personal_briefs._require_enabled(session)
+    try:
+        custom_service.delete_condition(session, _username(auth), condition_id, expected_revision)
+        session.commit()
+        return {"revision": custom_service.state_revision(session, _username(auth))}
+    except custom_service.RevisionConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except LookupError as exc:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@router.get("/custom/{condition_id}/matches")
+def custom_interest_matches(condition_id: int, cursor: int = Query(default=0, ge=0),
+    pagination_token: str | None = None, match_contract: int | None = None,
+    auth: dict[str, Any] = Depends(deps.require_reader), session: Session = Depends(deps.get_session)):
+    personal_briefs._require_enabled(session)
+    username = _username(auth)
+    if match_contract not in {None, 1}:
+        raise HTTPException(400, '无效的 match_contract')
+    projection.require_custom(session, username, condition_id)
+    cache = {}
+    all_rows = custom_service.current_matches(session, username, condition_ids=[condition_id],
+        limit=None, snapshot_cache=cache, order_by_id=True)
+    token = projection.pagination_token(session, username,
+        query={'kind': 'custom', 'id': condition_id, 'order': 'match_id_asc'},
+        results=[(m.id, a.id, m.fingerprint) for m, _, a in all_rows], validated_matches=all_rows)
+    projection.validate_page_token(pagination_token, token, required=match_contract == 1 and cursor > 0)
+    rows = [(m, c, a) for m, c, a in all_rows if m.id > cursor]
+    items = []
+    for match, condition, article in rows[:50]:
+        raw = json.loads(match.evidence_json)
+        method, evidence = projection.safe_evidence(raw, article,
+            custom_service.bound_evidence_snapshot(session, article, raw, cache=cache))
+        typed = projection._match({'kind': 'custom', 'id': str(condition.id)}, condition.name,
+            condition.revision, 'current', method, evidence)
+        items.append({'article_id': article.id, 'title': article.title, 'source_id': article.source_id,
+                      'outcome': match.outcome, 'evidence': evidence, 'interest_matches': [typed]})
+    return {'items': items, 'next_cursor': rows[49][0].id if len(rows) > 50 else None,
+            'pagination_token': token, 'total': len(all_rows), 'count_status': 'exact'}

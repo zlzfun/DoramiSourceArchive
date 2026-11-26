@@ -6,6 +6,36 @@ import { briefMenuArticle, briefMenuItems } from '../src/utils/briefMenu.js';
 
 const item = (lane, extra = {}) => ({ selection_lane: lane, matched_interest_codes: [], snapshot: {}, ...extra });
 
+test('自定义与正式兴趣按版面快照计数，并存时每篇只计一次', () => {
+  const custom = { matched_interest_refs: [{ kind: 'custom', id: '7' }], snapshot: { subscribed: false } };
+  const result = briefSelectionCounts({ items: [
+    item('news', custom), item('news', { ...custom, matched_interest_codes: ['topic:ai'] }),
+    item('news', { matched_interest_codes: ['topic:science'] }), item('news'),
+    item('listen', custom), item('read', custom), item('breaking', custom),
+  ] });
+  assert.equal(result.interestCount, 3);
+  assert.equal(result.externalHits, 2);
+  assert.equal(briefSelectionCounts({ items: [item('news')] }).interestCount, 0);
+});
+
+test('typed 投影存在时页头与卡片同口径，不用旧 refs 恢复空或无效匹配', () => {
+  const core = { ref: { kind: 'custom', id: '7' }, name: '冻结兴趣', revision: 2,
+    outcome: 'core', basis: 'edition_snapshot', method: 'semantic' };
+  const legacy = { matched_interest_codes: ['topic:ai'], matched_interest_refs: [{ kind: 'custom', id: '7' }],
+    snapshot: { subscribed: false } };
+  const invalid = [[], null, {}, [{ ...core, outcome: 'mention' }], [{ ...core, outcome: 'unknown' }],
+    [{ ...core, basis: 'current' }]];
+  const result = briefSelectionCounts({ items: [
+    ...invalid.map((interest_matches) => item('news', { ...legacy, interest_matches })),
+    item('news', { ...legacy, interest_matches: [core, { ...core, ref: { kind: 'custom', id: '8' } }] }),
+    item('news', legacy), // No typed field: retain old count compatibility.
+    item('listen', { ...legacy, interest_matches: [core] }),
+  ] });
+  assert.equal(result.interestCount, 2);
+  assert.equal(result.externalHits, 2);
+  assert.equal(result.listenCount, 1);
+});
+
 test('入选数字只取这一期自己的快照,看往期不混今天的数字', () => {
   const today = {
     expected_source_ids: ['a', 'b', 'c'],

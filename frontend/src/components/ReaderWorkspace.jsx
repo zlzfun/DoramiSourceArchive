@@ -90,7 +90,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
   const scrollRef = useRef({});
   const previousLayout = useRef(mobile);
   const articleKey = rs.activeArticle?.id;
-  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter, rs.podcastGuideFilter]);
+  const listKey = JSON.stringify([rs.mode, rs.activeSourceId, rs.activeTagId, rs.activeCustomInterestId, rs.interestRevision, rs.sessionKey, rs.listWindowRevision, rs.scope, rs.searchQuery, rs.unreadOnly, rs.kindFilter, rs.podcastGuideFilter]);
   const captureScroll = (event) => {
     const el = event.target;
     // 手机订阅 Tab 的推入页是另一个列表实例(issue #230 批 3a):它的滚动不是主列表的位置
@@ -133,7 +133,7 @@ export default function ReaderWorkspace({ mobile, surfaceActive = true, ...props
     handoffLayoutRef.current = mobile;
     if (!mobile) {
       if (rs.activeArticle) rs.alignModeToArticle(rs.activeArticle, { keepArticle: true });
-    } else if (!rs.activeArticle && (rs.activeSourceId || rs.activeTagId)) {
+    } else if (!rs.activeArticle && (rs.activeSourceId || rs.activeTagId || rs.activeCustomInterestId)) {
       rs.dropNarrowing();
     }
   }, [mobile, rs]);

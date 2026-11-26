@@ -14286,6 +14286,7 @@ input[type="radio"] {
 :where(.m-shell, .m-page, .m-read, .m-sheet) .bp-item-sum { line-height: 1.8; } /* m-keep #279-b1 */
 .bp-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 14px; font-size: 13px; color: var(--dorami-faint); }
 .bp-item-meta .bp-src { gap: 7px; }
+.bp-interest-topics { margin: 12px 0 0; line-height: 1.7; color: var(--dorami-accent-ink); overflow-wrap: anywhere; }
 /* 分数前的中点与其它分隔同高:inline-flex 居中,否则 13px 的点落在 17px 数字的基线上看着像句点 */
 .bp-score { display: inline-flex; align-items: center; font-family: var(--font-score); font-size: 17px; font-weight: 600; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
 .bp-fav {
@@ -16145,3 +16146,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .reader-shell .reader-col-read .reader-pane-bar::after { animation: reader-bar-shade linear both; animation-timeline: --reader-scroll; animation-range: 0px 72px; }
 }
 @keyframes reader-bar-shade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Reader tag groups share tag styling; headings distinguish article and personal topics. */
+.reader-tag-groups { display: block; }
+.reader-side-k + .reader-pane-tags { margin-top: 10px; }

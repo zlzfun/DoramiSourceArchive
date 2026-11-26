@@ -26,6 +26,17 @@ from models.db import (
 from services import taxonomy as taxonomy_service
 
 
+def _taxonomy_state_payload(session: Session) -> dict[str, Any]:
+    state = taxonomy_service.taxonomy_governance_state(session)
+    authority = session.get(AppSettingRecord, taxonomy_service.TAXONOMY_AUTHORITY_ID_KEY)
+    state["exact_merge_available"] = bool(
+        settings.taxonomy.governance_enabled and settings.taxonomy.exact_merge_enabled
+        and settings.taxonomy.mode != "replica"
+        and not (authority and (authority.value or "").strip())
+    )
+    return state
+
+
 def _require_local_taxonomy_authority(
     request: Request,
     session: Session = Depends(deps.get_session),
@@ -543,7 +554,7 @@ def delete_candidate(
 
 @router.get("/api/admin/taxonomy/state")
 def taxonomy_state(session: Session = Depends(deps.get_session)):
-    return taxonomy_service.taxonomy_governance_state(session)
+    return _taxonomy_state_payload(session)
 
 
 @router.get("/api/admin/cms-tags/{tag_id}")
@@ -774,7 +785,7 @@ def backfill_aliases(
         actor_id=_actor(auth),
         reason=body.reason,
     )
-    return {"created": created, "state": taxonomy_service.taxonomy_governance_state(session)}
+    return {"created": created, "state": _taxonomy_state_payload(session)}
 
 
 @router.post("/api/admin/taxonomy/v1/publish")
@@ -785,7 +796,7 @@ def publish_taxonomy_v1(
 ):
     if body.confirmation != "PUBLISH TAXONOMY V1":
         raise HTTPException(status_code=400, detail="发布确认文本不匹配")
-    state = taxonomy_service.taxonomy_governance_state(session)
+    state = _taxonomy_state_payload(session)
     if not state["publish_ready"]:
         raise HTTPException(
             status_code=409,
@@ -800,7 +811,7 @@ def publish_taxonomy_v1(
         now=dt.datetime.now(dt.timezone.utc),
         change_summary=body.change_summary,
     )
-    return {**result, "state": taxonomy_service.taxonomy_governance_state(session)}
+    return {**result, "state": _taxonomy_state_payload(session)}
 
 
 @router.post("/api/admin/cms-tags/{tag_id}/merge")

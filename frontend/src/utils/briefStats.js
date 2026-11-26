@@ -3,10 +3,14 @@
 // items(入选条目)——看往期时不能混进今天的数字(样页第 9 轮回填第 12 条)。历史版本没有 selection_stats 时对应半句省略。
 
 // 额外于新闻精选之上的通道:重大事件 + 深度阅读 / 播客精选(「N 篇精选」不数它们)
+import { normalizeInterestMatches } from './interestMatches.js';
+
 export const EXTRA_LANES = new Set(['breaking', 'read', 'listen']);
 export const VALUE_LANES = new Set(['read', 'listen']);
 
-const hitsInterest = (item) => (item.matched_interest_codes || []).length > 0;
+const hitsInterest = (item) => Object.hasOwn(item, 'interest_matches')
+  ? normalizeInterestMatches(item).length > 0
+  : (item.matched_interest_codes || []).length > 0 || (item.matched_interest_refs || []).length > 0;
 
 export function briefSelectionCounts(edition) {
   const items = edition?.items || [];

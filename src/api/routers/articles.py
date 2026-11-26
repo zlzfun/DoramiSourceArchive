@@ -328,6 +328,10 @@ def get_articles(
         # 兴趣 = 命中读者关注标签(主标签或相关度过门槛);收藏 = 读者收藏过;三者全关 = 全站可见源。
         interest_scope: str = "off",  # off | only
         interest_tag_id: Optional[int] = None,  # 兴趣轴下钻:只看命中这一个关注标签的(五稿,须与 interest_scope=only 同用)
+        custom_interest_id: Optional[int] = None,
+        interest_kinds: Optional[str] = None,
+        pagination_token: Optional[str] = None,
+        response: Response = None,
         favorite_scope: str = "off",  # off | only
         with_interest: bool = False,  # 给返回条目附 interest_hits(列表命中胶囊)
         shape: Optional[str] = None,  # article | social | podcast：阅读器容器（旧值 bulletin 视同 article）
@@ -351,6 +355,9 @@ def get_articles(
 ):
     scope = (subscribed_scope or "off").strip().lower()
     interest_only = (interest_scope or "off").strip().lower() == "only"
+    projection_kinds = reader_interests_service.parse_interest_query(scope=interest_scope,
+        kinds=interest_kinds, tag_id=interest_tag_id, custom_id=custom_interest_id, annotation=with_interest)
+    match_cache = {}
     favorite_only = (favorite_scope or "off").strip().lower() == "only"
     safe_limit = min(max(int(limit), 1), 500)
     safe_skip = max(int(skip), 0)
@@ -478,13 +485,8 @@ def get_articles(
         else reader_interests_service.InterestMap()
     )
     if interest_only:
-        # 「兴趣」谓词:无关注标签时显式空集(与零订阅同理),不退化成不过滤。
-        # 单标签下钻只认读者**关注中的**标签(不是任意标签检索——那是 tag_ids 的事);
-        # 传了不在关注集里的 id 同样显式空集,不退化成全部兴趣。
-        followed_ids = list(interests.followed.keys())
-        if interest_tag_id is not None:
-            followed_ids = [tid for tid in followed_ids if tid == int(interest_tag_id)]
-        interest_cond = reader_interests_service.interest_filter_condition(followed_ids)
+        interest_cond = reader_interests_service.unified_filter(session, username, interests, projection_kinds,
+            tag_id=interest_tag_id, custom_id=custom_interest_id, cache=match_cache)
         query = query.where(interest_cond)
         count_query = count_query.where(interest_cond)
     if favorite_only:
@@ -552,6 +554,24 @@ def get_articles(
     else:
         prefix = (score_order,) if sort_value in {"score", "quality"} else ()
         query = query.order_by(*article_recency_order(*prefix))
+    page_token = None
+    if interest_only and ('custom' in projection_kinds or pagination_token is not None):
+        complete = session.exec(query).all()
+        from services import custom_interests as custom_projection
+        pending = [a for a in complete if (a.id, 2) not in match_cache]
+        assets = custom_projection.evidence_assets(session, pending)
+        for article in pending:
+            custom_projection.bound_evidence_snapshot(session, article, {'evidence_binding_version': 2},
+                cache=match_cache, assets=assets)
+        query_identity = dict(request.query_params)
+        for key in ('skip', 'limit', 'pagination_token'):
+            query_identity.pop(key, None)
+        query_identity.update(interest_scope=interest_scope, interest_kinds=sorted(projection_kinds),
+                              interest_tag_id=interest_tag_id, custom_interest_id=custom_interest_id, sort=sort_value)
+        page_token = reader_interests_service.pagination_token(session, username, query=query_identity,
+            results=[(a.id, a.publish_date, a.fetched_date, match_cache[(a.id, 2)][0]) for a in complete], cache=match_cache)
+        reader_interests_service.validate_page_token(pagination_token, page_token,
+            required=safe_skip > 0 and interest_kinds is not None and 'custom' in projection_kinds)
     total = int(session.exec(count_query).one() or 0) if include_total else None
     records = session.exec(query.offset(safe_skip).limit(safe_limit)).all()
     analyses, tags = _analysis_assets(session, [record.id for record in records])
@@ -595,7 +615,12 @@ def get_articles(
             item["unread"] = item.get("id") in unread_ids
     if with_interest:
         # 逐条标注命中的兴趣标签名(与兴趣谓词同一把门槛尺子);无兴趣时为空列表
-        reader_interests_service.annotate_interest(items, tags, interests)
+        reader_interests_service.annotate_current(session, username, items, tags, interests, cache=match_cache)
+    if response is not None and (with_interest or interest_only):
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['Vary'] = 'Cookie'
+        if page_token:
+            response.headers['X-Interest-Pagination-Token'] = page_token
     if not include_total:
         return items
     payload = {
@@ -605,6 +630,8 @@ def get_articles(
         "limit": safe_limit,
         "next_skip": safe_skip + len(records) if safe_skip + len(records) < total else None,
     }
+    if page_token is not None:
+        payload['pagination_token'] = page_token
     if facets is not None:
         payload["kind_facets"] = facets
     return payload
@@ -775,7 +802,7 @@ async def get_article_analysis(article_id: str, request: Request):
 
 
 @router.get("/api/articles/{article_id:path}")
-async def get_article(article_id: str, request: Request):
+async def get_article(article_id: str, request: Request, with_interest: bool = False, response: Response = None):
     record = await deps.get_db_sink().get(article_id)
     if not record:
         raise HTTPException(status_code=404, detail="文章未找到")
@@ -807,7 +834,7 @@ async def get_article(article_id: str, request: Request):
             analyses=analyses,
             canonical_tags=tags,
         )
-        return serialize_article_list_item(
+        item = serialize_article_list_item(
             record,
             include_content=True,
             analysis=analyses.get(record.id),
@@ -819,6 +846,15 @@ async def get_article(article_id: str, request: Request):
             digest_audio=digest_audios.get(record.id),
             include_podcast_diagnostics=is_admin,
         )
+
+        if with_interest and auth_session:
+            username = str(auth_session.get('sub', ''))
+            reader_interests_service.annotate_current(session, username, [item], tags,
+                reader_interests_service.load_interest_map(session, username))
+            if response is not None:
+                response.headers['Cache-Control'] = 'private, no-store'
+                response.headers['Vary'] = 'Cookie'
+        return item
 
 
 @router.post("/api/articles")

@@ -15,12 +15,12 @@ from apscheduler.triggers.cron import CronTrigger
 CRON_INVALID_DETAIL = "cron 表达式非法:需 5 段(分 时 日 月 周)且字段在取值范围内"
 
 
-def parse_cron_expr(expr: str) -> Optional[CronTrigger]:
+def parse_cron_expr(expr: str, *, timezone: str | None = None) -> Optional[CronTrigger]:
     """把 5 段 cron 解析成 CronTrigger;任何非法形态返回 None。"""
     parts = (expr or "").split()
     if len(parts) != 5:
         return None
     try:
-        return CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
+        return CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4], timezone=timezone)
     except ValueError:
         return None

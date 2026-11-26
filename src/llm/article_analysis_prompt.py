@@ -25,7 +25,9 @@ from collections.abc import Sequence
 from typing import Any
 
 
-ARTICLE_ANALYSIS_PROMPT_VERSION = "article-analysis-v7"
+ARTICLE_ANALYSIS_PROMPT_VERSION = "article-analysis-v8"
+# v8 only clarifies output shape; existing v7 assets do not require another call.
+REUSABLE_ARTICLE_PROMPT_VERSIONS = (ARTICLE_ANALYSIS_PROMPT_VERSION, "article-analysis-v7")
 # 新闻价值尺子自 v6 起逐字未变,评分版本保持不动(公共日报据此复用存量新闻分)。
 ARTICLE_ANALYSIS_SCORING_VERSION = "news-value-v2"
 # 内容价值(issue #178 第二波)的独立尺子版本。content-value-v1 是 v3.44 时代旧尺子的名字,不复用。
@@ -202,6 +204,12 @@ ARTICLE_ANALYSIS_SYSTEM_PROMPT = (
     + CONTENT_VALUE_RULER_PROMPT
     + _GENRE_AND_TAGGING_RULES
     + _V7_OUTPUT_CONTRACT
+    + "\ncontent_features 必须是 JSON 字符串数组，最多 12 项，每项为 1–80 字符的客观内容特征。"
+      "无可支持特征输出 []，不可输出对象、逗号分隔字符串、null 或用默认值伪造特征。"
+      "例如：\"content_features\":[\"原创研究\",\"含复现实验\"]。"
+      "entities 必须是 JSON 对象数组，最多 12 项；每项 name 为 1–120 字符字符串、"
+      "type 为 1–60 字符字符串、relevance 为 0 到 1 的有限数值（不是字符串或布尔值）。"
+      "无实体输出 []。这两个数组都只按给定正文取值。\n"
 )
 
 
@@ -285,6 +293,19 @@ def analysis_contract_versions(content_type: str) -> tuple[str, str]:
     if (content_type or "").strip() == "podcast_episode":
         return PODCAST_ANALYSIS_PROMPT_VERSION, PODCAST_ANALYSIS_SCORING_VERSION
     return ARTICLE_ANALYSIS_PROMPT_VERSION, ARTICLE_ANALYSIS_SCORING_VERSION
+
+
+def reusable_analysis_prompt_versions(content_type: str) -> tuple[str, ...]:
+    """Exact compatibility set, shared by SQL and in-memory admission checks."""
+    if (content_type or "").strip() == "podcast_episode":
+        return (PODCAST_ANALYSIS_PROMPT_VERSION,)
+    return REUSABLE_ARTICLE_PROMPT_VERSIONS
+
+
+def analysis_contract_is_reusable(content_type: str, prompt: str, scoring: str) -> bool:
+    """Reuse an asset without relabeling its original producing contract."""
+    return (prompt in reusable_analysis_prompt_versions(content_type)
+            and scoring == analysis_contract_versions(content_type)[1])
 
 
 def content_value_contract_version(content_type: str) -> str:

@@ -12,6 +12,27 @@ from sqlalchemy import (
     inspect,
     text,
 )
+from models.taxonomy_governance import (
+    CandidateGovernanceStateRecord,
+    CandidateGovernanceActionRecord,
+)
+from models.custom_interests import (
+    UserInterestConditionRecord,
+    UserInterestStateRecord,
+    InterestArticleMatchRecord,
+    InterestMatchJobRecord,
+    InterestSemanticScanRecord,
+    InterestSemanticRequestRecord,
+)
+from models.taxonomy_review import (
+    ReviewProposalRecord,
+    ReviewProposalMemberRecord,
+    ReviewProposalRevisionRecord,
+    ReviewInboxRecord,
+    ReviewNotificationOutboxRecord,
+    ReviewNotificationBatchRecord,
+    ReviewNotificationAttemptRecord,
+)
 
 
 class ObjectBlobRecord(SQLModel, table=True):
@@ -3001,11 +3022,14 @@ class BailianTtsCallRecord(SQLModel, table=True):
             name="ck_bailian_tts_usage",
         ),
         Index("ix_bailian_tts_scope_period", "account_scope", "budget_period"),
+        Index("ix_bailian_tts_scope_day", "account_scope", "budget_day"),
     )
     id: str = Field(primary_key=True)
     episode_id: str = Field(index=True)
     account_scope: str
     budget_period: str
+    # Shanghai authorization day; blank legacy dates are conservatively unknown.
+    budget_day: str = ""
     created_at: str
     status: str = "reserved"
     reserved_characters: int

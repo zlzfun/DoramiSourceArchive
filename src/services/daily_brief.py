@@ -577,6 +577,10 @@ def resolve_llm_config(session: Session) -> config.LLMConfig:
     return config.LLMConfig(
         timeout_seconds=base.timeout_seconds,
         map_concurrency=base.map_concurrency,
+        paid_authorized_until=base.paid_authorized_until,
+        interest_max_output_tokens=base.interest_max_output_tokens,
+        interest_model=base.interest_model,
+        interest_thinking_mode=base.interest_thinking_mode,
         **values,
     )
 

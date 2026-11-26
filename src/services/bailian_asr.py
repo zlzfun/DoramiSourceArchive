@@ -67,7 +67,9 @@ def usage_plan(config, *, audio_duration_ms, now):
         quota_period=local.date().isoformat(),
         unit=ProviderUsageUnit.AUDIO_SECONDS,
         window_start_at=starts,
-        window_end_at=min(starts + dt.timedelta(days=1), ends),
+        # Daily accounting is independent of the paid submission entitlement.
+        # Planning above and the wire client each enforce that separate cutoff.
+        window_end_at=starts + dt.timedelta(days=1),
         limit_units=config.asr_daily_audio_seconds_limit,
         reserved_units=(audio_duration_ms + 999) // 1000,
         unit_price_cny_minor=config.asr_price_minor,

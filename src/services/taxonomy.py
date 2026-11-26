@@ -789,6 +789,8 @@ def record_candidate_evidence(
     session.add(candidate)
     session.flush()
     aggregate_candidate(session, int(candidate.id), now=now, commit=False)
+    from services.candidate_governance import wake_candidate
+    wake_candidate(session, int(candidate.id), now=now)
     session.commit()
     session.refresh(candidate)
     return candidate
@@ -808,44 +810,24 @@ def aggregate_candidate(
     candidate_id: int,
     *,
     now: Optional[dt.datetime] = None,
-    commit: bool = True,
+    commit: bool = False,
 ) -> CmsTagCandidateRecord:
-    """Recompute 7/30 day materialized statistics solely from evidence rows."""
+    """Refresh the shared review projection; caller owns the transaction."""
 
     candidate = session.get(CmsTagCandidateRecord, candidate_id)
     if candidate is None:
         raise TaxonomyError("candidate does not exist")
-    today = (now or dt.datetime.now(dt.timezone.utc)).date()
-    rows = list(
-        session.exec(
-            select(CmsTagCandidateEvidenceRecord).where(
-                CmsTagCandidateEvidenceRecord.candidate_id == candidate_id
-            )
-        ).all()
-    )
+    from services.candidate_governance import evidence_projection
 
-    def window(days: int) -> list[CmsTagCandidateEvidenceRecord]:
-        since = today - dt.timedelta(days=days - 1)
-        return [row for row in rows if since <= _evidence_date(row) <= today]
-
-    seven, thirty = window(7), window(30)
-    candidate.support_article_count_7d = len({row.article_id for row in seven})
-    candidate.support_article_count_30d = len({row.article_id for row in thirty})
-    candidate.distinct_source_count_7d = len(
-        {row.source_owner_or_domain or row.source_id for row in seven}
-    )
-    candidate.distinct_source_count_30d = len(
-        {row.source_owner_or_domain or row.source_id for row in thirty}
-    )
-    candidate.distinct_day_count_7d = len({_evidence_date(row) for row in seven})
-    candidate.distinct_day_count_30d = len({_evidence_date(row) for row in thirty})
-    candidate.mean_confidence = (
-        sum(float(row.confidence) for row in thirty) / len(thirty) if thirty else 0.0
-    )
-    candidate.sample_article_ids_json = json.dumps(
-        [row.article_id for row in sorted(thirty, key=lambda item: item.created_at, reverse=True)[:10]],
-        ensure_ascii=False,
-    )
+    projection, _ = evidence_projection(session, candidate_id, now=now)
+    review = projection["review"]
+    for days in (7, 30):
+        values = review[f"{days}d"]
+        setattr(candidate, f"support_article_count_{days}d", values["article_count"])
+        setattr(candidate, f"distinct_source_count_{days}d", values["source_count"])
+        setattr(candidate, f"distinct_day_count_{days}d", values["day_count"])
+    candidate.mean_confidence = review["mean_confidence"]
+    candidate.sample_article_ids_json = json.dumps(review["sample_article_ids"], ensure_ascii=False)
     candidate.updated_at = now_iso(now)
     session.add(candidate)
     if commit:
@@ -1067,7 +1049,8 @@ def candidate_meets_auto_activation_threshold(
         and candidate.distinct_source_count_7d >= thresholds.distinct_source_count_7d
         and candidate.distinct_day_count_7d >= thresholds.distinct_day_count_7d
         and candidate.mean_confidence >= thresholds.mean_confidence
-        and (similarity is None or similarity < thresholds.nearest_active_similarity)
+        and similarity is not None
+        and similarity < thresholds.nearest_active_similarity
         and not risks
     )
 
@@ -1107,6 +1090,8 @@ def activate_candidate(
     parent_id: Optional[int] = None,
     now: Optional[dt.datetime] = None,
 ) -> CmsTagRecord:
+    if automatic:
+        raise TaxonomyError("automatic new-concept promotion is disabled; human review is required")
     candidate = session.get(CmsTagCandidateRecord, candidate_id)
     if candidate is None:
         raise TaxonomyError("candidate does not exist")
@@ -1281,50 +1266,23 @@ def maybe_auto_activate_candidate(
     entity_external_key: Optional[str] = None,
     now: Optional[dt.datetime] = None,
 ) -> Optional[CmsTagRecord]:
-    """Activate an eligible public candidate, never exposing it to interests."""
+    """Compatibility entry: only resolve an existing exact identity.
 
-    if not auto_activation_enabled(session):
+    Public new concepts and semantic aliases always require human review.
+    Numeric similarity is no longer authorization to create a taxonomy tag.
+    """
+    if not auto_activation_enabled(session) or current_taxonomy_version(session) <= 0:
         return None
-    candidate = aggregate_candidate(session, candidate_id, now=now)
-    # User-added evidence is visible in the global review queue, but cannot by
-    # itself (or accidentally through aggregate counts) promote a global tag.
-    from services.user_sources import is_user_source
-
-    evidence_source_ids = {
-        str(source_id)
-        for source_id in session.exec(
-            select(CmsTagCandidateEvidenceRecord.source_id).where(
-                CmsTagCandidateEvidenceRecord.candidate_id == candidate_id
-            )
-        ).all()
-    }
-    configured_sources = list(
-        session.exec(
-            select(SourceConfigRecord).where(
-                SourceConfigRecord.source_id.in_(evidence_source_ids)
-            )
-        ).all()
-    ) if evidence_source_ids else []
-    if any(is_user_source(source_id) for source_id in evidence_source_ids) or any(
-        bool((source.owner_username or "").strip()) for source in configured_sources
-    ):
+    if settings.taxonomy.mode == "replica" or sync_consumer_policy.taxonomy_governed_remotely(session):
         return None
-    configured = thresholds or load_auto_activation_thresholds(session)
-    if not candidate_meets_auto_activation_threshold(candidate, configured):
+    from services.candidate_governance import preview_exact_merge, apply_exact_merge
+    aggregate_candidate(session, candidate_id, now=now, commit=False)
+    preview = preview_exact_merge(session, candidate_id, now=now)
+    if preview is None:
         return None
-    if candidate.proposed_kind == "entity" and not entity_external_key:
-        return None
-    return activate_candidate(
-        session,
-        candidate_id,
-        automatic=True,
-        actor_type="system",
-        actor_id="taxonomy-auto-activation",
-        reason="candidate met configured cross-source thresholds",
-        user_selectable=False,
-        external_key=entity_external_key,
-        now=now,
-    )
+    action = apply_exact_merge(session, preview, now=now)
+    session.commit()
+    return session.get(CmsTagRecord, action.target_tag_id)
 
 
 def run_auto_activation_cycle(
@@ -1333,45 +1291,13 @@ def run_auto_activation_cycle(
     limit: int = 100,
     now: Optional[dt.datetime] = None,
 ) -> list[CmsTagRecord]:
-    """Apply the configured conservative rule to the oldest unresolved rows.
-
-    Bootstrap cannot reach this function: its ingestion path forces the switch
-    off and never invokes the runtime scheduler.  Entity Candidates remain
-    manual because discovery does not provide stable external keys.
-    """
-
-    if (
-        settings.taxonomy.mode == "replica"
-        or sync_consumer_policy.taxonomy_governed_remotely(session)
-    ):
+    """Legacy scheduler adapter: fair maintenance, never new-concept promotion."""
+    if settings.taxonomy.mode == "replica" or sync_consumer_policy.taxonomy_governed_remotely(session):
         return []
-
-    # Runtime discovery must never activate concepts against an unpublished
-    # bootstrap vocabulary, even if an operator enables the switch early.
-    if not auto_activation_enabled(session) or current_taxonomy_version(session) <= 0:
-        return []
-    thresholds = load_auto_activation_thresholds(session)
-    candidates = list(
-        session.exec(
-            select(CmsTagCandidateRecord)
-            .where(CmsTagCandidateRecord.status == TagCandidateStatus.CANDIDATE.value)
-            .order_by(CmsTagCandidateRecord.last_seen_at, CmsTagCandidateRecord.id)
-            .limit(max(1, min(int(limit), 500)))
-        ).all()
-    )
-    activated: list[CmsTagRecord] = []
-    for candidate in candidates:
-        if candidate.id is None or candidate.proposed_kind == TagKind.ENTITY.value:
-            continue
-        tag = maybe_auto_activate_candidate(
-            session,
-            int(candidate.id),
-            thresholds=thresholds,
-            now=now,
-        )
-        if tag is not None:
-            activated.append(tag)
-    return activated
+    from services.candidate_governance import run_governance_cycle
+    run_governance_cycle(session, limit=limit, now=now,
+        apply_exact=auto_activation_enabled(session) and current_taxonomy_version(session) > 0)
+    return []
 
 
 def reject_candidate(
@@ -1869,6 +1795,11 @@ def merge_tags(
             session.add(target_interest)
             session.delete(source_interest)
 
+    if source_interests:
+        from services.custom_interests import bump_revision
+        for username in {row.owner_username for row in source_interests}:
+            bump_revision(session, username)
+
     source_tag.status = "merged"
     source_tag.replacement_id = target_tag_id
     source_tag.user_selectable = False
@@ -2064,6 +1995,8 @@ def reconcile_synced_taxonomy_candidates(
     stamp = now_iso(now)
     resolved_ids: list[int] = []
     for candidate in session.exec(select(CmsTagCandidateRecord)).all():
+        if candidate.status not in {"candidate", "reviewing"}:
+            continue
         target_ids = matches.get(
             (candidate.proposed_kind, normalize_label(candidate.normalized_label)), set()
         )
@@ -2075,9 +2008,8 @@ def reconcile_synced_taxonomy_candidates(
             and candidate.resolution_tag_id == target_id
         ):
             continue
-        # A synced taxonomy is authoritative: the local Candidate did not
-        # activate a new concept here, it converged into an existing one. This
-        # also repairs stale rejected/activated resolutions from earlier policy.
+        # A remote directory can resolve an undecided local identity. It cannot
+        # overwrite a human rejection or a previously resolved decision.
         candidate.status = TagCandidateStatus.MERGED.value
         candidate.resolution_tag_id = target_id
         candidate.updated_at = stamp
@@ -2166,12 +2098,17 @@ def retag_article_from_evidence(
     taxonomy_version: int,
     *,
     now: Optional[dt.datetime] = None,
-) -> None:
+    relevance_evaluator: Optional[Callable[[ArticleRecord, CmsTagRecord], Optional[float]]] = None,
+    relevance_evidence_text: Optional[str] = None,
+    relevance_exclusions: Optional[set[int]] = None,
+) -> dict[str, Any]:
     """Rebuild closed-set machine assignments without recomputing analysis.
 
     Existing active assignments remain eligible, and Candidate evidence that a
-    human resolved to an active canonical tag is folded in by maximum
-    confidence.  Manual assignments are preserved by ``assign_article_tags``.
+    human resolved to an active canonical tag requires independent relevance
+    evaluation. Candidate confidence is identity evidence, never relevance.
+    Without an evaluator the concept is resolved but no new assignment is made.
+    Manual assignments are preserved by ``assign_article_tags``.
     The callback deliberately does not commit so ``process_retag_batch`` owns
     the batch cursor transaction.
     """
@@ -2188,7 +2125,7 @@ def retag_article_from_evidence(
         )
         or not _analysis_has_readable_result(session, analysis)
     ):
-        return
+        return {"status": "skipped", "verified_assignment_count": 0, "unverified_identity_count": 0}
     active_tags = {
         int(tag.id): tag
         for tag in session.exec(
@@ -2197,13 +2134,14 @@ def retag_article_from_evidence(
         if tag.id is not None
     }
     relevance_by_tag: dict[int, float] = {}
+    verified_count, unverified_count = 0, 0
     for assignment in session.exec(
         select(ArticleTagAssignmentRecord).where(
             ArticleTagAssignmentRecord.article_id == article.id,
             ArticleTagAssignmentRecord.assignment_source != TagAssignmentSource.MANUAL.value,
         )
     ).all():
-        if assignment.tag_id in active_tags:
+        if assignment.tag_id in active_tags and assignment.tag_id not in (relevance_exclusions or set()):
             relevance_by_tag[assignment.tag_id] = max(
                 relevance_by_tag.get(assignment.tag_id, 0.0),
                 float(assignment.relevance),
@@ -2220,10 +2158,17 @@ def retag_article_from_evidence(
         } or candidate.resolution_tag_id not in active_tags:
             continue
         tag_id = int(candidate.resolution_tag_id)
-        relevance_by_tag[tag_id] = max(
-            relevance_by_tag.get(tag_id, 0.0),
-            float(evidence.confidence),
-        )
+        if tag_id in (relevance_exclusions or set()):
+            continue
+        body = article.content if relevance_evidence_text is None else relevance_evidence_text
+        if relevance_evaluator is None or len((body or "").strip()) < 80:
+            unverified_count += 1
+            continue
+        relevance = relevance_evaluator(article, active_tags[tag_id])
+        if relevance is None or not 0.0 <= float(relevance) <= 1.0:
+            continue
+        verified_count += 1
+        relevance_by_tag[tag_id] = float(relevance)
 
     selected: list[tuple[CmsTagRecord, float]] = []
     for facet, limit in DEFAULT_FACET_LIMITS.items():
@@ -2261,6 +2206,9 @@ def retag_article_from_evidence(
     analysis.updated_at = now_iso(now)
     session.add(analysis)
     session.flush()
+    return {"status": "identity_only" if unverified_count else "verified",
+            "verified_assignment_count": verified_count,
+            "unverified_identity_count": unverified_count}
 
 
 def claim_retag_job(
@@ -2288,6 +2236,17 @@ def claim_retag_job(
             .order_by(TagRetagJobRecord.id)
         ).all()
     )
+    # Relevance-verification jobs need detached model I/O and durable attempt
+    # records. The generic in-transaction callback cannot safely execute them.
+    ordinary_jobs = []
+    for candidate_job in candidates:
+        try:
+            candidate_scope = json.loads(candidate_job.scope_json or "{}")
+        except ValueError:
+            candidate_scope = {}
+        if not isinstance(candidate_scope, dict) or not candidate_scope.get("relevance_verification_required"):
+            ordinary_jobs.append(candidate_job)
+    candidates = ordinary_jobs
     if not candidates:
         return None
     job = candidates[0]
@@ -2363,6 +2322,15 @@ def process_retag_batch(
     failed_ids = [str(item) for item in scope.get("failed_article_ids", []) if str(item)]
     for article in batch:
         try:
+            expected_fingerprints = scope.get("version_fingerprints")
+            if expected_fingerprints is not None:
+                from services.candidate_governance import article_version_fingerprint
+                expected = expected_fingerprints.get(article.id)
+                if not expected or expected != article_version_fingerprint(session, article):
+                    scope.setdefault("skipped_stale_article_ids", []).append(article.id)
+                    job.cursor = article.id
+                    job.affected_count += 1
+                    continue
             with session.begin_nested():
                 retag_article(session, article, int(job.taxonomy_version))
             job.succeeded_count += 1

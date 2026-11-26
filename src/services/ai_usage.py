@@ -51,6 +51,11 @@ VALID_PURPOSES = (
     "podcast_premium_blog",
     "podcast_premium_narration",
     "article_ondemand_narration",
+    # Scheduled #298 matching/advice: token visibility; bounded by worker batches,
+    # not a second reader-initiated generation quota charge.
+    "custom_interest_match",
+    "taxonomy_review_advice",
+    "taxonomy_relevance_retag",
 )
 
 SYSTEM_USERNAME = "system"

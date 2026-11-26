@@ -197,9 +197,10 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         ensured = client.post("/api/reader/briefs/today/ensure")
         assert ensured.status_code == 200, ensured.text
         edition = ensured.json()["edition"]
-        # With only one followed-interest article and no quality-lane peer, the
-        # hard 50% actual-output ceiling correctly uses latest-update fallback.
-        assert edition["status"] == "degraded", edition.get("error")
+        # A subscribed article that qualifies by value stays selected even if it also matches.
+        assert edition["status"] == "ready", edition.get("error")
+        assert edition["items"][0]["selection_lane"] == "quality"
+        assert edition["selection_stats"]["interest_promoted_count"] == 0
         assert edition["expected_source_ids"] == ["source-a"]
         assert [item["article_id"] for item in edition["items"]] == ["article-a"]
         assert edition["items"][0]["snapshot"]["summary"] == "unified summary"
@@ -211,7 +212,7 @@ def test_interest_and_personal_brief_api_are_subscription_strict(monkeypatch, tm
         repeated = client.post("/api/reader/briefs/today/ensure").json()["edition"]
         assert repeated["id"] == edition["id"]
         assert repeated["revision"] == edition["revision"]
-        assert repeated["status"] == "degraded"
+        assert repeated["status"] == "ready"
 
         rebuilt = client.post("/api/reader/briefs/today/rebuild").json()["edition"]
         assert rebuilt["revision"] == edition["revision"] + 1
@@ -379,7 +380,7 @@ def test_admin_can_tune_personal_digest_breaking_lane(monkeypatch, tmp_path):
             "external_min_score": 6.0,
             "external_per_source_max": 2,
             "external_per_source_max_limit": 5,
-            "interest_slots": 5,
+            "interest_slots": 3,
         }
         tuned = client.put(
             "/api/admin/analysis/config",
@@ -1511,4 +1512,3 @@ def test_preference_refresh_is_scheduled_once_per_account_and_runs_the_pass(
         assert followed["generation_reason"] == "interest_changed"
         assert followed["refresh_pending"] is None
     assert digest_refresh._preference_due_hook is None  # noqa: SLF001
-

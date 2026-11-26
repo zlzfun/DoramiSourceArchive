@@ -1068,10 +1068,11 @@ def test_hn_ai_zero_thresholds_fall_back_to_unfiltered_query():
     assert "comments=" not in url
 
 
-def test_hn_ai_parameter_schema_is_limit_only():
-    # 参数固化波:去噪门槛固化为类默认(10 分/0 评),schema 只剩 limit;调整 = 改代码。
+def test_hn_ai_parameter_schema_keeps_quality_gates_fixed():
+    # 去噪门槛仍固化；只有条数与可选发布时间窗口可配置。
     fields = {f["field"] for f in HackerNewsAiRssFetcher.get_parameter_schema()}
-    assert fields == {"limit"}
+    assert fields == {"limit", "publish_after", "publish_before", "window_max_pages"}
+    assert not {"min_points", "min_comments"} & fields
     assert HackerNewsAiRssFetcher.default_min_points == 10
     assert HackerNewsAiRssFetcher.default_min_comments == 0
 

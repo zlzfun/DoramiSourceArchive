@@ -434,13 +434,15 @@ def _intake_reason(article: ArticleRecord, analysis: ArticleAnalysisRecord, *,
 
 
 def scan_pending(session: Session, *, now: Optional[dt.datetime] = None, limit: int = SCAN_LIMIT,
-                 page_size: int = SCAN_PAGE_SIZE) -> int:
+                 page_size: int = SCAN_PAGE_SIZE, article_ids=None) -> int:
     """入池:分析 ``succeeded`` 且无 ledger 行、无成员行、本机权威、7 天内入库的文章 → ledger ``pending``;
     不进事件层的(私有 / 论文 / 汇编 / 播客 / 窗口外 / 时间不可解析)记 ``skipped`` 并写原因,不再重扫。
 
     SQL 只能按日期前缀粗筛(``fetched_date`` 历史格式混杂),精确窗口在 Python 判;按 ``(fetched_date, id)``
     keyset 翻页直到凑够 ``limit`` 篇 pending 或翻完 ``SCAN_MAX_ROWS`` 行——被排除的行都记了账,
     不会反复占住扫描额度(R1 #9)。返回新写 ``pending`` 的条数。"""
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     now = _as_utc(now)
     cutoff = now - dt.timedelta(days=INTAKE_WINDOW_DAYS)
     prefix = (cutoff - dt.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -457,6 +459,7 @@ def scan_pending(session: Session, *, now: Optional[dt.datetime] = None, limit: 
             .join(ArticleAnalysisRecord, ArticleAnalysisRecord.article_id == ArticleRecord.id)
             .where(
                 ArticleAnalysisRecord.status == "succeeded",
+                ArticleRecord.id.in_(article_ids) if article_ids is not None else True,
                 ArticleRecord.analysis_authority_id == "",
                 ArticleRecord.fetched_date >= prefix,
                 ArticleRecord.id.not_in(select(EventAssignmentLedgerRecord.article_id)),
@@ -1465,12 +1468,13 @@ def _new_stats() -> dict[str, Any]:
 
 
 def _sweep_expired_pending(session: Session, *, now: dt.datetime,
-                           meta_cache: Optional[Mapping[str, SourceMeta]] = None) -> int:
+                           meta_cache: Optional[Mapping[str, SourceMeta]] = None, article_ids=None) -> int:
     """``pending`` 超 72h → 机械单例 + ledger ``skipped``(保证早报键始终可用)。"""
     deadline = _iso(now - dt.timedelta(hours=PENDING_MAX_AGE_HOURS))
     expired = session.exec(
         select(EventAssignmentLedgerRecord).where(
             EventAssignmentLedgerRecord.status == LEDGER_PENDING,
+            EventAssignmentLedgerRecord.article_id.in_(article_ids) if article_ids is not None else True,
             EventAssignmentLedgerRecord.created_at <= deadline,
         )
     ).all()
@@ -1486,14 +1490,17 @@ def _sweep_expired_pending(session: Session, *, now: dt.datetime,
     return int(apply_assignments(session, decisions, now=now, meta=meta_cache)["assigned"])
 
 
-def _load_due_batch(session: Session, *, now: dt.datetime, batch_size: int) -> list[
+def _load_due_batch(session: Session, *, now: dt.datetime, batch_size: int, article_ids=None) -> list[
     tuple[EventAssignmentLedgerRecord, ArticleRecord, Optional[ArticleAnalysisRecord]]
 ]:
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     now_iso = _iso(now)
     ledgers = session.exec(
         select(EventAssignmentLedgerRecord)
         .where(
             EventAssignmentLedgerRecord.status == LEDGER_PENDING,
+            EventAssignmentLedgerRecord.article_id.in_(article_ids) if article_ids is not None else True,
             (EventAssignmentLedgerRecord.next_attempt_at == "")
             | (EventAssignmentLedgerRecord.next_attempt_at <= now_iso),
         )
@@ -1774,17 +1781,17 @@ def _process_batch(session: Session, rows: Sequence[tuple[EventAssignmentLedgerR
 
 
 def _assign_pending_locked(engine: Engine, llm_config: LLMConfig, *, now: dt.datetime,
-                           batch_size: int, stats: dict[str, Any]) -> dict[str, Any]:
+                           batch_size: int, stats: dict[str, Any], article_ids=None) -> dict[str, Any]:
     with Session(engine) as session:
-        stats["closed"] = close_stale_events(session, now=now)
-        stats["scanned"] = scan_pending(session, now=now)
-        stats["skipped"] += _sweep_expired_pending(session, now=now)
+        stats["closed"] = close_stale_events(session, now=now) if article_ids is None else 0
+        stats["scanned"] = scan_pending(session, now=now, article_ids=article_ids)
+        stats["skipped"] += _sweep_expired_pending(session, now=now, article_ids=article_ids)
         for _ in range(MAX_BATCHES_PER_RUN):
             if local_assignment_blocked(session):
                 # 两批之间上游事件到了:后面的批不再调模型。
                 stats["blocked"] = True
                 break
-            rows = _load_due_batch(session, now=now, batch_size=batch_size)
+            rows = _load_due_batch(session, now=now, batch_size=batch_size, article_ids=article_ids)
             if not rows:
                 break
             if not _process_batch(session, rows, llm_config, now=now, stats=stats):
@@ -1795,13 +1802,15 @@ def _assign_pending_locked(engine: Engine, llm_config: LLMConfig, *, now: dt.dat
 
 
 def assign_pending(engine: Engine, llm_config: LLMConfig, *, now: Optional[dt.datetime] = None,
-                   batch_size: int = 20) -> dict[str, Any]:
+                   batch_size: int = 20, article_ids=None) -> dict[str, Any]:
     """分析周期末尾 / 10 分钟兜底 job 的入口(同步;异步调用方 ``asyncio.to_thread``)。
 
     返回统计:``scanned`` 新入池、``direct`` 机械直连、``singleton`` 单例、``llm_assigned`` 模型归并(含批内并组)、
     ``new_events`` 新建事件、``failed`` 退避篇数、``echo_mismatch`` 回显失配、``skipped`` 72h 兜底、``closed`` 懒关窗、
     ``recall`` 召回统计;另一次运行在途时直接返回 ``busy=True``。任何异常记日志后原样抛出,由调用方的 try/except 兜住。
     """
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     stats = _new_stats()
     if not _ASSIGN_LOCK.acquire(blocking=False):
         stats["busy"] = True
@@ -1813,7 +1822,7 @@ def assign_pending(engine: Engine, llm_config: LLMConfig, *, now: Optional[dt.da
                 stats["blocked"] = True
                 return stats
         return _assign_pending_locked(
-            engine, llm_config, now=_as_utc(now), batch_size=max(1, int(batch_size)), stats=stats,
+            engine, llm_config, now=_as_utc(now), batch_size=max(1, int(batch_size)), stats=stats, article_ids=article_ids,
         )
     finally:
         _ASSIGN_LOCK.release()

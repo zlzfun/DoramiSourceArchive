@@ -943,9 +943,12 @@ def claim_next_processing(
     policy: Optional[StagePolicyCheck] = None,
     requested_target: Optional[str] = None,
     now: Optional[dt.datetime] = None,
+    episode_ids=None,
 ) -> Optional[PodcastProcessingClaim]:
     """Atomically claim one due row, including work abandoned after restart."""
 
+    from services.worker_scope import scoped_ids
+    episode_ids = scoped_ids(episode_ids)
     worker = _require_nonempty(worker_id, "worker_id")
     if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or lease_seconds <= 0:
         raise ValueError("lease_seconds must be a positive integer")
@@ -963,6 +966,8 @@ def claim_next_processing(
         if configured is not None:
             allowed_stages = {str(item) for item in configured}
     conditions = [or_(_claimable(stamp), _drain_candidate())]
+    if episode_ids is not None:
+        conditions.append(PodcastProcessingRecord.episode_id.in_(episode_ids))
     if requested_target is not None:
         conditions.append(
             PodcastProcessingRecord.requested_target
@@ -1437,8 +1442,52 @@ def _reservation_matches_usage_plan(
     )
 
 
+def _legacy_bailian_asr_window_matches(
+    reservation: PodcastBudgetReservationRecord,
+    plan: ProviderUsagePlan,
+    *,
+    provider_name: str,
+    stage: str,
+) -> bool:
+    """Read old entitlement-truncated windows only for aggregate daily capacity.
+
+    This grants no replay: exact reservation matching remains unchanged. Old
+    settled debits and pending holds keep their original windows and amounts.
+    """
+    if (
+        provider_name != "aliyun-bailian"
+        or stage != "asr"
+        or plan.unit is not ProviderUsageUnit.AUDIO_SECONDS
+        or not plan.quota_scope.startswith("bailian-asr:")
+        or not plan.quota_scope.removeprefix("bailian-asr:").strip()
+        or reservation.provider_quota_scope != plan.quota_scope
+        or reservation.provider_quota_period != plan.quota_period
+        or reservation.provider_quota_unit != plan.unit.value
+        or reservation.provider_quota_window_start_at != _iso(plan.window_start_at)
+        or reservation.unit_price_cny_minor != plan.unit_price_cny_minor
+        or reservation.price_unit_count != plan.price_unit_count
+        or reservation.pricing_revision != plan.pricing_revision
+        or plan.minimum_units != 0
+        or reservation.minimum_usage_units != plan.minimum_units
+    ):
+        return False
+    try:
+        day = dt.date.fromisoformat(plan.quota_period)
+        start = dt.datetime.combine(day, dt.time.min, tzinfo=ZoneInfo("Asia/Singapore"))
+        end = dt.datetime.fromisoformat(reservation.provider_quota_window_end_at or "")
+        return (
+            day.isoformat() == plan.quota_period
+            and plan.window_start_at == start
+            and plan.window_end_at == start + dt.timedelta(days=1)
+            and end.utcoffset() is not None
+            and start < end <= plan.window_end_at
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _require_provider_usage_capacity(
-    session: Session, plan: ProviderUsagePlan
+    session: Session, plan: ProviderUsagePlan, *, provider_name: str, stage: str
 ) -> None:
     reservations = list(session.exec(
         select(PodcastBudgetReservationRecord).where(
@@ -1462,7 +1511,9 @@ def _require_provider_usage_capacity(
             reservation.price_unit_count,
             reservation.pricing_revision,
         )
-        if definition != expected_definition:
+        if definition != expected_definition and not _legacy_bailian_asr_window_matches(
+            reservation, plan, provider_name=provider_name, stage=stage
+        ):
             raise PodcastProcessingConflict(
                 "provider quota scope/period was reused with a different definition"
             )
@@ -1770,7 +1821,12 @@ def begin_stage_attempt(
             f"budget reservation exceeds configured cap ({spent + reserved + estimate}>{limit})"
         )
     if provider_usage_plan is not None:
-        _require_provider_usage_capacity(session, provider_usage_plan)
+        _require_provider_usage_capacity(
+            session,
+            provider_usage_plan,
+            provider_name=str(provider_name or "").strip().lower(),
+            stage=claim.stage,
+        )
 
     attempt_no = process.attempt_count + 1
     guarded = session.exec(

@@ -99,7 +99,7 @@ def test_database_storage_enables_sqlite_pragmas(tmp_path, db_url_factory, expec
 
 def test_contracts_keep_genre_separate_and_validate_score():
     assert ANALYSIS_LEASE_SECONDS == 300
-    assert PERSONAL_DIGEST_INTEREST_MAX_RATIO == 0.5
+    assert PERSONAL_DIGEST_INTEREST_MAX_RATIO == 0.3
     assert {item.value for item in ContentGenre}.isdisjoint({item.value for item in TagKind})
     assert AnalysisStatus.SUCCEEDED.value == "succeeded"
 

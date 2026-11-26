@@ -6,9 +6,9 @@ truth used by WP-1/WP-2/WP-3; database CHECK constraints mirror their values.
 """
 
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StringEnum(str, Enum):
@@ -184,7 +184,7 @@ class SourceReadinessStatus(StringEnum):
 
 ANALYSIS_LEASE_SECONDS = 5 * 60
 PERSONAL_DIGEST_TARGET_ITEMS = 10
-PERSONAL_DIGEST_INTEREST_MAX_RATIO = 0.5
+PERSONAL_DIGEST_INTEREST_MAX_RATIO = 0.3  # 仅限制新闻价值基础名单之外的兴趣推荐。
 # 新闻价值尺子下(v3.48)博客/教程/观点落 4～6 分,7.0 会让博客订阅者的早报常态为空;
 # 5.0 只挡边角与营销,兴趣/质量两通道同门槛。
 PERSONAL_DIGEST_MIN_QUALITY_SCORE = 5.0
@@ -271,6 +271,15 @@ class ArticleAnalysisResultDTO(ContractModel):
     content_value_reason: str = ""
 
 
+class InterestRef(ContractModel):
+    kind: Literal["tag", "custom"]
+    id: str
+
+    @property
+    def key(self) -> str:
+        return self.id if self.kind == "tag" else f"custom:{self.id}"
+
+
 class DigestArticleCandidateDTO(ContractModel):
     """User-independent analyzed article input consumed by digest selection."""
 
@@ -297,6 +306,8 @@ class DigestArticleCandidateDTO(ContractModel):
     # 兴趣命中判据用的标签码(主标签或相关度过线的指派,与阅读器兴趣透镜同一尺);None = 回退到
     # tag_codes 全集(旧调用方/纯策略测试)。
     interest_tag_codes: Optional[tuple[str, ...]] = None
+    custom_interest_refs: tuple[InterestRef, ...] = Field(default_factory=tuple)
+    custom_interest_evidence: dict = Field(default_factory=dict)
     # issue #178 第三波:条目的内容类型(content_classification.classify_item 推导)与当前有效的
     # 内容价值(文章只认当前尺子版本;播客 = 现有播客分的投影)。「深度阅读」「播客精选」两个分区据此入选,
     # 新闻通道不读这两项。
@@ -305,7 +316,23 @@ class DigestArticleCandidateDTO(ContractModel):
 
 
 class UserInterestDTO(ContractModel):
-    tag_code: str = Field(min_length=1)
+    tag_code: Optional[str] = Field(default=None, min_length=1)
+    custom_interest_id: Optional[int] = Field(default=None, gt=0)
+    revision: int = 0
+    name: str = ""
+    condition: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def exactly_one_reference(self):
+        if bool(self.tag_code) == (self.custom_interest_id is not None):
+            raise ValueError("An interest must reference either a formal tag or a private condition")
+        return self
+
+    @property
+    def ref(self) -> InterestRef:
+        if self.custom_interest_id is not None:
+            return InterestRef(kind="custom", id=str(self.custom_interest_id))
+        return InterestRef(kind="tag", id=self.tag_code or "")
     stance: InterestStance = InterestStance.FOLLOW
     priority: InterestPriority = InterestPriority.NORMAL
 
@@ -314,8 +341,11 @@ class DigestSelectionDTO(ContractModel):
     article_id: str = Field(min_length=1)
     lane: SelectionLane
     matched_interest_codes: tuple[str, ...] = Field(default_factory=tuple)
+    matched_interest_refs: tuple[InterestRef, ...] = Field(default_factory=tuple)
     selection_reason: str
     coverage_adjustments: tuple[str, ...] = Field(default_factory=tuple)
+    # Additive, frozen facts from the actual selector; absent on old editions.
+    selection_contribution: dict[str, object] = Field(default_factory=dict)
     # 仅 lane=breaking 填写:准入依据 official|corroborated、同事件来源数、
     # 事件实体码(跨天抑制的对照物,随条目 ranking_features 落库)。
     breaking_basis: Optional[str] = None
