@@ -218,11 +218,20 @@ def register_source(
     homepage_url: str = "",
     description: str = "",
     listed: bool = True,
+    exclusive: bool = False,
 ) -> SourceConfigRecord:
     """建一个没有抓取绑定的源行(``origin=ingest``)。调用方提交。
 
     给了出处(账号 / 站点 / feed)的沿用收录通道的身份派生,id 与抓取器的公式一致;这个出处已经有源时
     抛 ``BindingError(status=409)`` 并带上已有的源 id。不给出处的是合集源,id 是 ``push_<后缀>``。
+
+    文章源给的每个地址(站点、feed、主页)都先探一遍占用(``ingest_push.claimed_address``):现在认得到
+    已有文章源的,同样是 409——新源不能一建出来就把别的源的链接认走。只按 feed 登记的文章源只认领这个
+    feed,不认领 feed 所在的主机(不留站点身份键、不派生主页)。
+
+    ``exclusive``(令牌自己登记):只能占用没有任何源认领的出处。主页不由调用方给(由出处派生);新源要
+    登记的身份键如果已经有主人,一律 409——「账号改名后被人接手」这类要把身份键从别的源转过来的事,
+    只有管理员能做(检视 R1 #1 / #2)。
     """
     if kind not in ingest_push.KINDS:
         raise BindingError(f"kind 必须是 {' / '.join(ingest_push.KINDS)}")
@@ -232,7 +241,7 @@ def register_source(
     content_type = ingest_push.CONTENT_TYPE_BY_KIND[kind]
     admission = ADMISSION_LISTED if listed else source_catalog.ADMISSION_PROVISIONAL
     avatar = _http_url(avatar_url, "头像地址")
-    homepage = _http_url(homepage_url, "主页地址")
+    homepage = "" if exclusive else _http_url(homepage_url, "主页地址")
     handle = str(handle or "").strip().lstrip("@")
     user_id = str(user_id or "").strip()
     url = _http_url(url, "站点地址")
@@ -266,23 +275,42 @@ def register_source(
         )
         return row
 
+    def taken(source_id: str) -> BindingError:
+        return BindingError(
+            f"这个出处已经有来源 {source_id},直接绑定它即可", status=409, existing_source_id=source_id
+        )
+
     ctx = ingest_push.new_context(session, "")
     try:
         resolved = ingest_push.resolve_source(ctx, kind, source)
     except ValueError as exc:  # IngestRejected,以及身份派生对清洗后为空的账号名抛的 ValueError
         raise BindingError(str(exc)) from exc
     if not resolved.created:
-        raise BindingError(
-            f"这个出处已经有来源 {resolved.source_id},直接绑定它即可",
-            status=409, existing_source_id=resolved.source_id,
-        )
+        raise taken(resolved.source_id)
+    # 站点地址已由 resolve_source 探过;feed 与主页也要探:它们同样会让新源认走别的源的链接。
+    for address in (feed_url, homepage):
+        owner = ingest_push.claimed_address(ctx, kind, address)
+        if owner:
+            raise taken(owner)
     hint = dict(resolved.hint)
     podcast_feed = hint.pop("podcast_feed_url", "")
     hint.update({"name": name, "admission_status": admission})
     if kind == "article" and feed_url:
         # 文章源按 feed 登记:留下 feed 身份键,之后带同一个 feed_url 的条目(文章链接可以在别的主机上)
         # 才认得回来(检视 R1 #4)。
-        hint["identity_keys"] = [*hint.get("identity_keys", []), ingest_push.feed_identity_key(feed_url)]
+        feed_key = ingest_push.feed_identity_key(feed_url)
+        if url:
+            hint["identity_keys"] = [*hint.get("identity_keys", []), feed_key]
+        else:
+            # 只按 feed 登记:认领的只有这个 feed。feed 所在的主机不归它(那里可以有别的源,
+            # 也可以再登记别的 feed),所以不留站点身份键、不把主机根当主页放进前缀索引。
+            hint["identity_keys"] = [feed_key]
+            hint["homepage_url"] = ""
+    if exclusive:
+        for key in hint.get("identity_keys", []):
+            owner = ingest_push.identity_owner(ctx, key)
+            if owner and owner != resolved.source_id:
+                raise taken(owner)
     if avatar:
         hint["avatar_url"] = avatar
     if homepage:
@@ -305,18 +333,19 @@ def register_by_token(session: Session, token: IngestTokenRecord, **fields: Any)
     """令牌自己登记一个来源:先是待列入(临时源状态),并绑定给这个令牌。调用方提交,出错时调用方回滚。
 
     - 是令牌的一项权限,默认没有;
-    - 只能新建:出处已经有源时抛 409,``existing_source_id`` 给出那个源,``bound`` 说明它是否已经绑定
-      给这个令牌(绑了就直接推,没绑要管理员绑);
-    - 每个令牌每天(UTC)最多登记 ``ingest_push.REGISTER_DAILY_LIMIT`` 个。名额先占、失败回滚时退还。
+    - 只能新建、只能占用没有任何源认领的出处(``register_source(exclusive=True)``):出处已经有源时抛 409,
+      ``existing_source_id`` 给出那个源,``bound`` 说明它是否已经绑定给这个令牌(绑了就直接推,没绑要管理员绑);
+    - 每个令牌每天(UTC)最多登记 ``ingest_push.REGISTER_DAILY_LIMIT`` 个,只有确实新建成功的才占名额。
+
+    先执行占名额的那条语句(它同时拿到写锁,后面的查重与写入因此串行),但占不到时不立刻回 429:已有来源
+    仍然是 409、字段不对仍然是 400——调用方可以把登记当成幂等的准备动作,名额用完之后也一样(检视 R1 #3)。
+    确实要新建又没有名额才是 429,调用方回滚,刚建的行不落库。
     """
     if not token.can_register_sources:
         raise BindingError("这个令牌没有登记来源的权限;请管理员在运维「自定源与收录」里打开", status=403)
-    if not ingest_push.reserve_registration(session, token.id):
-        raise BindingError(
-            f"今天登记的来源已到上限({ingest_push.REGISTER_DAILY_LIMIT} 个);明天(UTC)再登记", status=429
-        )
+    reserved = ingest_push.reserve_registration(session, token.id)
     try:
-        row = register_source(session, listed=False, **fields)
+        row = register_source(session, listed=False, exclusive=True, **fields)
     except BindingError as exc:
         if not exc.existing_source_id:
             raise
@@ -330,5 +359,9 @@ def register_by_token(session: Session, token: IngestTokenRecord, **fields: Any)
         raise conflict from exc
     if row is None:
         raise BindingError("登记失败:这个 id 不能用作来源")
+    if not reserved:
+        raise BindingError(
+            f"今天登记的来源已到上限({ingest_push.REGISTER_DAILY_LIMIT} 个);明天(UTC)再登记", status=429
+        )
     bind(session, token.id, row.source_id, created_by=f"{SELF_REGISTERED_BY}{token.actor}")
     return row

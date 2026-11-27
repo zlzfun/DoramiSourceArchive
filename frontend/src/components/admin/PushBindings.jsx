@@ -42,13 +42,16 @@ export function BindList({ rows, onUnbind, busyKey = '' }) {
   );
 }
 
-/** 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染;`onFocus` 给调用方在下拉获得焦点时重取候选。 */
-export function BindAdd({ label, groups, onBind, busy = false, onFocus, selectClassName = 'form-input form-input-inline' }) {
+/**
+ * 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染;`onFocus` 给调用方在下拉获得焦点时重取候选。
+ * `busy` 是这一条绑定自己在途(按钮转圈);`disabled` 是同一对象上别的修改在途(整行不可点)。
+ */
+export function BindAdd({ label, groups, onBind, busy = false, disabled = false, onFocus, selectClassName = 'form-input form-input-inline' }) {
   const [value, setValue] = useState('');
   const hasOptions = groups.some((group) => group.options.length > 0);
   if (!hasOptions) return null;
   const submit = async () => {
-    if (!value || busy) return;
+    if (!value || busy || disabled) return;
     const done = await onBind(value);
     if (done !== false) setValue('');
   };
@@ -67,7 +70,7 @@ export function BindAdd({ label, groups, onBind, busy = false, onFocus, selectCl
       <button
         type="button"
         className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
-        disabled={!value || busy}
+        disabled={!value || busy || disabled}
         onClick={submit}
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '绑定'}

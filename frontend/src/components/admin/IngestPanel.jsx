@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Copy, KeyRound, Loader2, X } from 'lucide-react';
 import {
   bindIngestSource, createIngestToken, fetchFetchers, fetchIngestTokens, revokeIngestToken, unbindIngestSource,
@@ -6,6 +6,7 @@ import {
 } from '../../api';
 import { useConfirm } from '../../hooks/useConfirm';
 import { bindableSources, bindingPillOf, registerQuotaOf } from '../../utils/sourceAcquisition';
+import { createMutationGate } from '../../utils/mutationGate';
 import { BindAdd, BindList } from './PushBindings';
 import { SyncDrawerShell } from './sync/syncParts';
 
@@ -46,17 +47,21 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const [tokens, setTokens] = useState(null);
   const [actor, setActor] = useState('');
   const [issued, setIssued] = useState(null); // { actor, token }
+  // 对令牌的修改(绑定 / 解绑 / 权限开关 / 吊销)串行:'issue' | 'add' | 'perm' | 'token:<id>' | 绑定行的 key。
+  // 它们的回包都带回整个令牌,同时在途会乱序互相覆盖;整表重取的结果如果是在修改之前发出的也作废(检视 R1 #4)。
   const [busy, setBusy] = useState('');
+  const gate = useRef(null);
+  if (gate.current === null) gate.current = createMutationGate();
   // 抽屉:开合与「是哪个令牌」分开记——关上时令牌 id 留着,滑出去的过程里内容不空。
   const [drawerId, setDrawerId] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [catalog, setCatalog] = useState(null); // 源目录(每次打开抽屉时重取)
-  const [bindBusy, setBindBusy] = useState(''); // 'add' | 绑定行的 key
-  const [permBusy, setPermBusy] = useState(false);
 
   const load = useCallback(async () => {
+    const snapshot = gate.current.snapshot();
     try {
       const tokenRes = await fetchIngestTokens();
+      if (!gate.current.accept(snapshot)) return; // 取数期间有过修改:作废,修改结束后会再取
       setTokens(tokenRes.items || []);
     } catch (error) {
       showToast(error.message || '获取收录令牌失败', 'error');
@@ -70,20 +75,31 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只响应「切回 Tab / 切子页」刷新脉冲(M15)
   }, [refreshTick]);
 
+  // 一次修改:在途时别的修改不放行;结束后如果期间有重取被作废,再取一次。
+  const mutate = async (key, run, failed) => {
+    if (!gate.current.begin()) return false;
+    setBusy(key);
+    try {
+      await run();
+      return true;
+    } catch (error) {
+      showToast(error.message || failed, 'error');
+      return false;
+    } finally {
+      setBusy('');
+      if (gate.current.end()) load();
+    }
+  };
+
   const handleIssue = async () => {
     const name = actor.trim();
     if (!name) return;
-    setBusy('issue');
-    try {
+    const done = await mutate('issue', async () => {
       const res = await createIngestToken({ actor: name });
       setIssued({ actor: res.actor, token: res.token });
       setActor('');
-      load();
-    } catch (error) {
-      showToast(error.message || '签发失败', 'error');
-    } finally {
-      setBusy('');
-    }
+    }, '签发失败');
+    if (done) load();
   };
 
   const handleCopy = async () => {
@@ -97,6 +113,12 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
 
   // 抽屉:这个令牌的来源。绑定 / 解绑的接口都返回更新后的令牌,就地换进列表。
   const shown = tokens?.find((token) => token.id === drawerId) || null;
+  // 这两份派生值放在各个修改回调之前:回调定义在它们前面时,编译器会认为令牌对象可能被改写而放弃记忆化。
+  const bindings = useMemo(() => shown?.bindings || [], [shown]);
+  const addGroups = useMemo(
+    () => sourceGroups(bindableSources(catalog, bindings.map((binding) => binding.source_id))),
+    [catalog, bindings],
+  );
   const openDrawer = (token) => {
     setDrawerId(token.id);
     setDrawerOpen(true);
@@ -104,56 +126,28 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
     fetchFetchers().then((list) => { if (Array.isArray(list)) setCatalog(list); }).catch(() => {});
   };
   const replaceToken = (next) => setTokens((prev) => (prev || []).map((token) => (token.id === next.id ? next : token)));
-  const handleBind = async (sourceId) => {
-    setBindBusy('add');
-    try {
-      replaceToken(await bindIngestSource(shown.id, sourceId));
-      return true;
-    } catch (error) {
-      showToast(error.message || '绑定失败', 'error');
-      return false;
-    } finally {
-      setBindBusy('');
-    }
-  };
-  const handleUnbind = async (row) => {
-    setBindBusy(row.key);
-    try {
-      replaceToken(await unbindIngestSource(shown.id, row.id));
-    } catch (error) {
-      showToast(error.message || '解绑失败', 'error');
-    } finally {
-      setBindBusy('');
-    }
-  };
-  const handleRegisterToggle = async () => {
-    setPermBusy(true);
-    try {
-      replaceToken(await updateIngestToken(shown.id, { can_register_sources: !shown.can_register_sources }));
-    } catch (error) {
-      showToast(error.message || '修改失败', 'error');
-    } finally {
-      setPermBusy(false);
-    }
-  };
-  const bindings = useMemo(() => shown?.bindings || [], [shown]);
-  const addGroups = useMemo(
-    () => sourceGroups(bindableSources(catalog, bindings.map((binding) => binding.source_id))),
-    [catalog, bindings],
+  // 回调里只带原始值(令牌 id、当前开关),不闭包整个令牌对象。
+  const shownId = shown?.id ?? null;
+  const canRegister = Boolean(shown?.can_register_sources);
+  const handleBind = (sourceId) => mutate(
+    'add', async () => replaceToken(await bindIngestSource(shownId, sourceId)), '绑定失败',
+  );
+  const handleUnbind = (row) => mutate(
+    row.key, async () => replaceToken(await unbindIngestSource(shownId, row.id)), '解绑失败',
+  );
+  const handleRegisterToggle = () => mutate(
+    'perm',
+    async () => replaceToken(await updateIngestToken(shownId, { can_register_sources: !canRegister })),
+    '修改失败',
   );
 
   const handleRevoke = async (token) => {
     if (!(await confirm(`确认吊销「${token.actor}」的收录令牌？使用它的调用方将立即无法推送。`))) return;
-    setBusy(`token:${token.id}`);
-    try {
-      await revokeIngestToken(token.id);
-      showToast(`已吊销 ${token.actor}`, 'success');
-      load();
-    } catch (error) {
-      showToast(error.message || '吊销失败', 'error');
-    } finally {
-      setBusy('');
-    }
+    // 吊销接口返回更新后的令牌,就地换进列表(不靠整表重取)。
+    const done = await mutate(
+      `token:${token.id}`, async () => replaceToken(await revokeIngestToken(token.id)), '吊销失败',
+    );
+    if (done) showToast(`已吊销 ${token.actor}`, 'success');
   };
 
   return (
@@ -177,7 +171,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
         <button
           type="button"
           onClick={handleIssue}
-          disabled={!actor.trim() || busy === 'issue'}
+          disabled={!actor.trim() || Boolean(busy)}
           className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
         >
           {busy === 'issue' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '签发令牌'}
@@ -251,7 +245,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                         {busy === `token:${token.id}` ? (
                           <span className="rowact-btn" aria-hidden="true"><Loader2 className="animate-spin" /></span>
                         ) : token.is_active ? (
-                          <button type="button" className="rowact-btn is-danger" title={`吊销 ${token.actor}`} onClick={() => handleRevoke(token)}>
+                          <button type="button" className="rowact-btn is-danger" title={`吊销 ${token.actor}`} disabled={Boolean(busy)} onClick={() => handleRevoke(token)}>
                             <Ban />
                           </button>
                         ) : null}
@@ -290,10 +284,10 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                 pushedAt: binding.last_pushed_at,
               }))}
               onUnbind={handleUnbind}
-              busyKey={bindBusy}
+              busyKey={busy}
             />
             {shown.is_active && (
-              <BindAdd label="来源" groups={addGroups} onBind={handleBind} busy={bindBusy === 'add'} />
+              <BindAdd label="来源" groups={addGroups} onBind={handleBind} busy={busy === 'add'} disabled={Boolean(busy)} />
             )}
           </section>
         )}
@@ -306,7 +300,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
               role="switch"
               aria-checked={Boolean(shown.can_register_sources)}
               aria-label={`${shown.actor} 自行登记来源`}
-              disabled={permBusy}
+              disabled={Boolean(busy)}
               onClick={handleRegisterToggle}
               className={`ledger-switch ${shown.can_register_sources ? 'is-on' : ''}`}
             />

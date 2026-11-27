@@ -242,8 +242,9 @@ async def push_items(batch: IngestBatch, request: Request):
 
 
 class IngestSourceSelfRegister(_Open):
-    """字段与管理员登记(``IngestSourceRegister``)相同,没有 ``listed`` 与 ``token_id``:
-    令牌登记的源一律先是待列入,并绑定给它自己。"""
+    """字段比管理员登记(``IngestSourceRegister``)少三个:没有 ``listed`` 与 ``token_id``(令牌登记的源一律
+    先是待列入,并绑定给它自己),也没有 ``homepage_url``(主页由出处派生——主页地址会进入认出处的前缀索引,
+    不能由令牌指到别的站点上去,检视 R1 #2)。带了这些字段不拒收,写进回执的 ``warnings``。"""
 
     kind: str = ""
     name: str = ""
@@ -253,7 +254,6 @@ class IngestSourceSelfRegister(_Open):
     feed_url: str = ""
     source_id_suffix: str = ""
     avatar_url: str = ""
-    homepage_url: str = ""
     description: str = ""
 
 
