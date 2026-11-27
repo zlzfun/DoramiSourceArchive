@@ -1,7 +1,7 @@
 # 推送绑定:登记过的推送是源的一种获取方式(issue #344)
 
-> **归档于 2026-11-27(issue #344,PR #350 与第二个 PR,开发版 3.70.5-alpha)**:现状以 `docs/contracts/ingest_push.md`、`docs/architecture/fetchers-and-sources.md`、`src/services/ingest_bindings.py` 与 `tests/test_ingest_bindings.py` / `tests/test_ingest_self_register.py` 为准,文中路径与状态为当时记录。
-> 状态:已落地待发布(2026-11-25 立项并拍板;第一个 PR——后端 + 管理面界面 + 读者面一行——2026-11-27 合入 main(PR #350);第二个 PR——Agent 自助登记,§8——同日在分支 `feat/issue-344-agent-register` 上实现)。带两条迁移,同步流不变。
+> **归档于 2026-11-27(issue #344,PR #350 与 PR #353,开发版 3.70.5-alpha)**:现状以 `docs/contracts/ingest_push.md`、`docs/architecture/fetchers-and-sources.md`、`src/services/ingest_bindings.py` 与 `tests/test_ingest_bindings.py` / `tests/test_ingest_self_register.py` 为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-25 立项并拍板;第一个 PR——后端 + 管理面界面 + 读者面一行——2026-11-27 合入 main(PR #350);第二个 PR——Agent 自助登记,§8——同日合入 main(PR #353))。带两条迁移,同步流不变。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §11)。
 > 关联:[issue #344](https://github.com/zlzfun/DoramiSourceArchive/issues/344);前情是收录推送 [issue #262](../plans/issue-262-agent-ingest-sources.md) 与三层源模型 [重构方案](../plans/issue-262-source-model-refactor.md);上一波 [#341](./issue-341-ingest-social-fidelity.md)。
 
@@ -282,7 +282,7 @@
 
 **还没做**:Agent 自助登记(§8,第二个 PR)。
 
-**第二个 PR:令牌自己登记来源(2026-11-27,分支 `feat/issue-344-agent-register`)**:
+**第二个 PR:令牌自己登记来源(2026-11-27,PR #353,分支 `feat/issue-344-agent-register`)**:
 
 - 表与迁移:`IngestTokenRecord` 加 `can_register_sources` / `register_day` / `register_count`;`alembic/versions/d4a7c1e93b52_ingest_token_register_sources.py`(加列;收养路径上这些列可能已由 `create_all` 建好,只补缺的——首稿直接加列,在「有表、没有版本表」的库上批量改表报循环依赖,迁移测试拦住)。
 - `services/ingest_push.py`:`REGISTER_DAILY_LIMIT`、`registered_today`、`reserve_registration`(一条 `UPDATE` 占名额)、`set_register_permission`;令牌序列化带权限与今日个数;`resolve_bound_source(can_register=…)` 给拒收原因加提示。
