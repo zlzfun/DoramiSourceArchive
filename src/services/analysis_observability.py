@@ -11,7 +11,7 @@ from typing import Any, Iterable
 from sqlmodel import Session, select
 
 from llm.article_analysis_prompt import (
-    analysis_contract_versions,
+    analysis_contract_is_reusable,
 )
 
 from models.db import (
@@ -91,8 +91,7 @@ def collect_release_metrics(
     # 版本键过期的 succeeded 行:扫描每 tick 慢滴失效(VERSION_REFRESH_PER_CYCLE),这里透出剩余量
     version_stale = sum(
         1 for row in succeeded
-        if (row.prompt_version, row.scoring_version)
-        != analysis_contract_versions(content_types.get(row.article_id, ""))
+        if not analysis_contract_is_reusable(content_types.get(row.article_id, ""), row.prompt_version, row.scoring_version)
     )
     scores = [float(row.quality_score) for row in succeeded if row.quality_score is not None]
     histogram = {

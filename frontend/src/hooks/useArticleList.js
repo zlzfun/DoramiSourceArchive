@@ -5,6 +5,7 @@ import { usePolling } from './usePolling';
 import { analysisItemsFromResponse, analysisNeedsPolling } from '../utils/analysis';
 import { withFreshAnalysis } from '../utils/analysisProjection';
 import { applyPolledFacetDelta, polledKindChanges, polledMembershipChanged } from '../utils/contentKind';
+import { blockedInterestQuery, invalidInterestWindow, loadInterestPage, strictInterestQuery } from '../utils/readerInterestQuery';
 import { LIST_PAGE_SIZE, buildListFilters } from '../utils/articleList';
 
 const ANALYSIS_POLL_MS = 30000;
@@ -27,6 +28,7 @@ const ANALYSIS_POLL_MS = 30000;
  */
 export function useListWindow() {
   const [articles, setArticles] = useState([]);
+  const [windowRevision, setWindowRevision] = useState(0);
   const [articlesTotal, setArticlesTotal] = useState(0);
   const [articlesLoading, setArticlesLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -39,7 +41,7 @@ export function useListWindow() {
   return {
     articles, setArticles, articlesTotal, setArticlesTotal,
     articlesLoading, setArticlesLoading, loadingMore, setLoadingMore,
-    listRef, sentinel, sentinelRef, listVersionRef,
+    listRef, sentinel, sentinelRef, listVersionRef, windowRevision, setWindowRevision,
   };
 }
 
@@ -64,25 +66,32 @@ export function useListLoader(win, {
   selectedIdRef = null,
   onPolled = null,
   onWindowFresh = null,
+  onWindowReplaced = null,
   onScopeReset = null,
 }) {
   const {
     articles, setArticles, articlesTotal, setArticlesTotal, setArticlesLoading,
-    loadingMore, setLoadingMore, articlesLoading, listRef, sentinel, listVersionRef,
+    loadingMore, setLoadingMore, articlesLoading, listRef, sentinel, listVersionRef, setWindowRevision,
   } = win;
   // 列表加载的竞态安全器：切源/搜索时慢的旧请求若晚返回会「后发先至」覆盖当前源列表，
   // runList 发新请求前 abort 掉旧的（与 DataTab 同一约定）。
   const runList = useAbortableLoad();
+  const pageRef = useRef({ token: '', seq: 0 });
+  const [pageFailed, setPageFailed] = useState(false);
+  const strict = strictInterestQuery(query);
+  const unavailable = hidden || blockedInterestQuery(query);
   const facetsOn = Boolean(kindFacets?.enabled);
   const facetsKey = kindFacets?.key ?? '';
   const setFacets = kindFacets?.setState;
   // 回调经 ref 读最新值(布局副作用先于清场副作用声明:同一次提交里清场读到的是这一轮的回调)
-  const hooksRef = useRef({ onPolled, onWindowFresh, onScopeReset, setFacets });
-  useLayoutEffect(() => { hooksRef.current = { onPolled, onWindowFresh, onScopeReset, setFacets }; });
+  const hooksRef = useRef({ onPolled, onWindowFresh, onWindowReplaced, onScopeReset, setFacets });
+  useLayoutEffect(() => { hooksRef.current = { onPolled, onWindowFresh, onWindowReplaced, onScopeReset, setFacets }; });
 
   // ── 首拉 / 翻页 ──
   const loadArticles = useCallback(async (skip = 0, append = false) => {
-    if (hidden) {
+    const seq = ++pageRef.current.seq;
+    if (!append) { pageRef.current.token = ''; setPageFailed(false); }
+    if (unavailable) {
       // 暂不可用源不发请求:读者侧服务端本就返回空,admin 会话的按源查询不过滤,
       // 前端统一短路,空态与文案由渲染层给出。
       setArticles([]);
@@ -99,30 +108,42 @@ export function useListLoader(win, {
     try {
       // 列表只渲染摘要（content_preview），故请求统一不带全文，正文按需懒加载（见 selectArticle）。
       // 「我的订阅」聚合由后端 subscribed_scope=only 自行解析范围，前端无需先拿到订阅集合即可发请求。
-      data = await runList((signal) => {
-        // 三谓词面板 + 源轴 + 读态 + 搜索,一份拼装(分析轮询复用同一函数,不再分叉)
+      data = await runList((signal) => loadInterestPage((pageSkip, token) => {
         const filters = buildListFilters(query);
-        // 首页顺带取类型分面(文章容器才有筛选条);翻页不重复计算
-        if (facetsOn && !append) filters.kind_facets = 'true';
-        // 社交流全文直出(推文正文 2~4 行,取回零负担),且卡片要 extensions
-        // (引用推/转推/图链)——那只在 include_content=true 时随列表返回。
-        return fetchArticles(filters, LIST_PAGE_SIZE, skip, true, { signal, includeContent: query.mode === 'social' });
-      });
+        // Strict token binds the complete query: facets stay identical on every page.
+        if (facetsOn && (strict || !append)) filters.kind_facets = 'true';
+        if (token) filters.pagination_token = token;
+        return fetchArticles(filters, LIST_PAGE_SIZE, pageSkip, true, { signal, includeContent: query.mode === 'social' });
+      }, { skip, append, strict, token: pageRef.current.token }));
     } catch (error) {
+      if (seq !== pageRef.current.seq) return;
       showToast(error.message || '获取文章列表失败', 'error');
-      if (append) setLoadingMore(false); else setArticlesLoading(false);
+      if (strict) {
+        if (invalidInterestWindow(error)) { setArticles([]); setArticlesTotal(0); pageRef.current.token = ''; }
+        setPageFailed(true);
+      }
+      setLoadingMore(false); setArticlesLoading(false);
       return;
     }
-    if (data === undefined) return; // 被更新的请求取代，loading 交给新请求，不在此清除
-    // 翻页的偏移取自发起时的窗口:期间窗口被分析轮询的快照整体替换过,这一页已对不上,丢弃;
-    // 哨兵随 loadingMore 复位重新求值,按新窗口长度再取(codex R3-O1)
+    if (data === undefined || seq !== pageRef.current.seq) return;
     if (append && listVersionRef.current !== versionAtStart) {
       setLoadingMore(false);
       return;
     }
+    const replacedAfterAppend = append && data.replace;
+    // A stale append replaces the window, but still owns the append loading flag.
+    const appendResult = !data.replace;
+    pageRef.current.token = data.token;
+    data = data.data;
+    if (replacedAfterAppend) {
+      setWindowRevision((value) => value + 1);
+      hooksRef.current.onWindowReplaced?.();
+      if (listRef.current) listRef.current.scrollTop = 0;
+    }
+
     const items = data.items || [];
     listVersionRef.current += 1;
-    if (!append && facetsOn) {
+    if (!appendResult && facetsOn) {
       hooksRef.current.setFacets?.((prev) => ({
         key: facetsKey,
         gen: prev.gen + 1,
@@ -130,20 +151,20 @@ export function useListLoader(win, {
       }));
     }
     setArticlesTotal(data.total || 0);
-    setArticles(prev => (append ? [...prev, ...items] : items));
+    setArticles(prev => (appendResult ? [...prev, ...items] : items));
     // 不再自动展开第一篇——避免「被动打开」污染阅读计量；右栏停在提示态，
     // 等用户主动点选一篇才加载正文并计一次阅读（见 selectArticle）。
-    if (!append) hooksRef.current.onWindowFresh?.(); // 列表已刷新,新内容提示归零
+    if (!appendResult) hooksRef.current.onWindowFresh?.(); // 列表已刷新,新内容提示归零
     if (append) setLoadingMore(false); else setArticlesLoading(false);
-  }, [query, hidden, facetsOn, facetsKey, showToast, runList,
-    setArticles, setArticlesTotal, setArticlesLoading, setLoadingMore, listVersionRef]);
+  }, [query, unavailable, strict, facetsOn, facetsKey, showToast, runList, listRef,
+    setArticles, setArticlesTotal, setArticlesLoading, setLoadingMore, setWindowRevision, listVersionRef]);
 
   // ── 分析状态轮询 ──
   // 分析任务与采集解耦：列表首拉可能拿到 pending/running。只在确有在途项时
   // 每 30 秒静默重取当前已加载窗口，既不闪骨架屏也不弹失败 toast；响应回写前
   // 校验 scopeKey，避免切源/搜索后旧轮询污染新列表。
   const analysisScopeKey = JSON.stringify([query, hidden]);
-  const analysisPollingEnabled = !pollPaused && !hidden && (
+  const analysisPollingEnabled = !strict && !pollPaused && !unavailable && (
     articles.some(analysisNeedsPolling)
     || analysisNeedsPolling(selected)
   );
@@ -164,7 +185,7 @@ export function useListLoader(win, {
   }, [selected, query, articles, facetsOn, analysisScopeKey, facetsKey, facetsBasisKey, facetsBasisGen, listVersionRef]);
   const refreshAnalysisStates = useCallback(async () => {
     const context = analysisPollContextRef.current;
-    if (!context) return;
+    if (!context || strictInterestQuery(context.query) || blockedInterestQuery(context.query)) return;
     const activeIds = new Set(
       context.articles
         .filter(analysisNeedsPolling)
@@ -186,7 +207,7 @@ export function useListLoader(win, {
       );
       const [data, selectedDetail] = await Promise.all([
         listRequest,
-        selectedNeedsRefresh ? fetchArticle(context.selected.id) : Promise.resolve(null),
+        selectedNeedsRefresh ? fetchArticle(context.selected.id, { withInterest: true }) : Promise.resolve(null),
       ]);
       // 作用域变了,或期间有过列表加载(同作用域刷新 / 翻页):本轮结果整体作废,等下一轮
       const superseded = () => (
@@ -216,7 +237,7 @@ export function useListLoader(win, {
         // 正在阅读的条目被移出窗口:快照里没有它的新结果,补取一次详情,阅读窗当轮更新(codex R3-O2)
         const readingId = selectedIdRef?.current ?? null;
         if (readingId && !updates.has(readingId) && context.articles.some((article) => article.id === readingId)) {
-          const detail = await fetchArticle(readingId).catch(() => null);
+          const detail = await fetchArticle(readingId, { withInterest: true }).catch(() => null);
           if (superseded()) return;
           if (detail?.id === readingId) updates.set(readingId, detail);
         }
@@ -256,7 +277,7 @@ export function useListLoader(win, {
   // 会遮蔽服务端读态的本会话覆盖);失败、或期间有过列表加载(换作用域 / 刷新 / 翻页)时返回空表,不改窗口。
   const refreshReadState = useCallback(async () => {
     const empty = new Map();
-    if (hidden || articles.length === 0) return empty;
+    if (unavailable || strict || articles.length === 0) return empty;
     const versionAtStart = listVersionRef.current;
     let data;
     try {
@@ -278,7 +299,7 @@ export function useListLoader(win, {
         : article
     )));
     return flags;
-  }, [hidden, articles.length, query, listVersionRef, setArticles]);
+  }, [unavailable, strict, articles.length, query, listVersionRef, setArticles]);
 
   // 换作用域 → 重置列表、回顶(主列表另清阅读窗)
   // 用 useLayoutEffect：在绘制前同步进入加载态，避免「切源瞬间旧列表被画出一帧」的陈旧帧闪现
@@ -290,10 +311,12 @@ export function useListLoader(win, {
     // 非社交源的源名)。同作用域内的刷新失败仍保留旧列表(不走本 effect)。
     setArticles([]);
     setArticlesTotal(0);
+    const page = pageRef.current;
     loadArticles(0, false);
+    return () => { page.seq += 1; };
   }, [loadArticles, listRef, setArticles, setArticlesTotal]);
 
-  const hasMore = articles.length < articlesTotal;
+  const hasMore = !pageFailed && articles.length < articlesTotal;
   const handleLoadMore = useCallback(
     () => loadArticles(articles.length, true),
     [loadArticles, articles.length],
@@ -316,7 +339,7 @@ export function useListLoader(win, {
     return () => io.disconnect();
   }, [sentinel, hasMore, loadingMore, articlesLoading, articles.length, loadArticles]);
 
-  return { loadArticles, handleLoadMore, hasMore, refreshReadState };
+  return { loadArticles, handleLoadMore, hasMore, refreshReadState, pageFailed };
 }
 
 /**

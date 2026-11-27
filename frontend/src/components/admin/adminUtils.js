@@ -12,6 +12,7 @@ export const PURPOSE_LABELS = {
   image_insight: '图片理解',
   personal_digest_title: '早报标题',
   auto_title_translate: '自动标题', // issue #218:新入库文章的标题自动翻译
+  auto_social_translate: '自动推文', // issue #349:新入库推文的自动翻译(系统用途,不扣读者额度)
   daily_brief_editorial: '日报·点评',
   daily_brief_dedup: '日报·去重',
   daily_brief_reduce: '日报·汇编',
@@ -22,6 +23,9 @@ export const PURPOSE_LABELS = {
   article_ondemand_narration: '文章·点播旁白',
   taxonomy_bootstrap: '标签·目录初始化',
   event_assignment: '事件·归并', // issue #121 事件层:新文章归入事件的模型判定(系统用途)
+  custom_interest_match: '兴趣·匹配',
+  taxonomy_review_advice: '标签·审核建议',
+  taxonomy_relevance_retag: '标签·相关性复核',
   source_config: '源·配置',
   detail_profile: '源·详情',
 };

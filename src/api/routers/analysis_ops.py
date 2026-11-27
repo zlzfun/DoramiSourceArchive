@@ -80,10 +80,14 @@ class FullAnalysisScope(BaseModel):
     days: int | None = Field(default=30, ge=1, le=3650)
     selection: Literal["all", "missing_or_outdated", "missing", "content_value"] = "all"
     source_ids: list[str] = Field(default_factory=list, max_length=200)
+    article_ids: list[str] | None = Field(default=None, min_length=1, max_length=5000)
+    publish_after: str | None = None
+    publish_before: str | None = None
 
 
 class FullAnalysisCreate(FullAnalysisScope):
     confirmation: str
+    expected_cohort_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 def _flags(session: Session) -> dict[str, bool]:
@@ -154,7 +158,7 @@ def _domain_error(exc: backfill_service.AnalysisBackfillError) -> HTTPException:
     message = str(exc)
     status = 409 if any(
         phrase in message
-        for phrase in ("unfinished", "active taxonomy", "can be paused", "can be resumed", "can be cancelled")
+        for phrase in ("cohort_changed", "unfinished", "active taxonomy", "can be paused", "can be resumed", "can be cancelled")
     ) else 400
     return HTTPException(status_code=status, detail=message)
 
@@ -214,6 +218,9 @@ def estimate_full_analysis_backfill(
             days=body.days,
             selection=body.selection,
             source_ids=body.source_ids,
+            article_ids=body.article_ids,
+            publish_after=body.publish_after,
+            publish_before=body.publish_before,
         )
     except backfill_service.AnalysisBackfillError as exc:
         raise _domain_error(exc) from exc
@@ -249,8 +256,12 @@ def create_full_analysis_backfill(
             days=body.days,
             selection=body.selection,
             source_ids=body.source_ids,
+            article_ids=body.article_ids,
+            publish_after=body.publish_after,
+            publish_before=body.publish_before,
             actor_id=_actor(auth),
             confirmation=body.confirmation,
+            expected_cohort_hash=body.expected_cohort_hash,
         )
     except backfill_service.AnalysisBackfillError as exc:
         raise _domain_error(exc) from exc

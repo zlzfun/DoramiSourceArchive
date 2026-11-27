@@ -5,11 +5,15 @@ import { platformLabelOf, resolveCompany } from '../sourceTaxonomy';
 import { dayKeyOf, dayLabelOf } from '../utils/readerTime';
 import { formatRelativeTime, formatDateTime } from '../utils/datetime';
 import { highlightMatch } from '../utils/highlight';
-import { currentSocialTranslation, socialSignatureOf, socialTranslationSources } from '../utils/socialTranslate';
+import {
+  currentSocialTranslation, socialCachedZh, socialCardView, socialOriginalTexts, socialSignatureOf,
+  socialTranslationSources,
+} from '../utils/socialTranslate';
 import { reposterLabel } from '../utils/socialPost';
 import { socialClampCandidate, socialMoreVisible } from '../utils/socialClamp';
 import { useClampCut } from '../hooks/useClampCut';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
+import { useTitlePreference } from '../hooks/useTitlePreference';
 import { mediaProxyUrl } from '../api';
 
 /* 社交媒体流 —— 阅读器第三容器(shape=social)的呈现形态。
@@ -101,8 +105,9 @@ function SocialAvatar({ avatarUrl, source, fallbackName, className = '' }) {
 
 /* 引用推:内缩嵌套卡。与转推的「顶部归属行」形态必须可区分,
    否则读者判断不了「这话是谁说的」。
-   translation(issue #84):引用推译文接在原文下、细线隔开;整卡是原推链接,卡内不放按钮,开合归卡片底栏。 */
-function SocialQuote({ quoted, translation = null }) {
+   zhText(issue #349):给了就显示这段译文、不显示原文(与主推同一个语言开关);整卡是原推链接,
+   卡内不放按钮,换语言归卡片底栏。swapped = 这张卡换过语言,换的那一下淡入。 */
+function SocialQuote({ quoted, zhText = null, swapped = false }) {
   if (!quoted || (!quoted.text && !quoted.author_name)) return null;
   const quoteAvatar = quoted.author_avatar_url_large || quoted.author_avatar_url || '';
   const body = (
@@ -114,8 +119,11 @@ function SocialQuote({ quoted, translation = null }) {
         <span className="social-quote-name">{quoted.author_name || quoted.author_handle || '原推'}</span>
         {quoted.author_handle && <span className="social-quote-meta">@{quoted.author_handle}</span>}
       </span>
-      {quoted.text && <span className="social-quote-text">{quoted.text}</span>}
-      {translation && <span className="social-quote-tr">{translation}</span>}
+      {(zhText || quoted.text) && (
+        <span key={zhText ? 'zh' : 'orig'} className={`social-quote-text${swapped ? ' is-swap' : ''}`}>
+          {zhText || quoted.text}
+        </span>
+      )}
     </>
   );
   if (!quoted.url) return <div className="social-quote">{body}</div>;
@@ -146,35 +154,37 @@ function SocialCardsSkeleton({ count = 3 }) {
   );
 }
 
-/* 推文翻译底栏(issue #84,样页 docs/design/social-translate):卡片最后一行——翻译管整张卡片
-   (主推 + 引用推),入口就放在整张卡片末尾;「显示更多」仍紧贴正文,只管正文折叠。
-   开合都在这一行,位置不随状态移动。额度用尽只给说明,不给重试。 */
-function SocialTranslateRow({ article, translation, withQuote, onToggle }) {
-  const status = translation?.status;
-  const toggle = () => onToggle?.(article);
+/* 推文翻译底栏(issue #84 的位置,issue #349 的语义):卡片最后一行——语言开关管整张卡片(主推 + 引用推),
+   所以放在整张卡片末尾;「显示更多」仍紧贴正文,只管正文折叠。位置不随状态移动。
+   view 见 utils/socialTranslate.socialCardView:显示中文时是「✦ 已译为中文 · 原文」,显示原文而有译文可看 /
+   可向 AI 要时是「✦ 译为中文」;额度用尽只给说明,不给重试。 */
+function SocialTranslateRow({ article, view, message = '', withQuote, onToggle }) {
+  // 把这张卡自己的视图交给开关:开关不重新推导(同一条推文在别的列表里默认语言可能不同)
+  const toggle = () => onToggle?.(article, view);
   let body;
-  if (status === 'loading') {
+  if (view.status === 'loading') {
     body = (
       <button type="button" className="social-tr-btn" disabled>
         <Loader2 className="animate-spin" aria-hidden="true" />
         翻译中…
       </button>
     );
-  } else if (status === 'quota') {
-    body = <span className="social-tr-note">{translation.message || '今日 AI 翻译次数已用完，明天再试'}</span>;
-  } else if (status === 'error') {
+  } else if (view.status === 'quota') {
+    body = <span className="social-tr-note">{message || '今日 AI 翻译次数已用完，明天再试'}</span>;
+  } else if (view.status === 'error') {
     body = (
       <span className="social-tr-err">
         <span className="social-tr-note">翻译失败</span>
         <button type="button" className="social-tr-retry" onClick={toggle}>重试</button>
       </span>
     );
-  } else if (status === 'done' && translation.open) {
+  } else if (view.action === 'original') {
     body = (
       <span className="social-tr-mark">
         <Sparkles aria-hidden="true" />
         <span>已译为中文</span>
-        <button type="button" className="social-tr-hide" onClick={toggle}>收起</button>
+        <span className="social-tr-sep" aria-hidden="true">·</span>
+        <button type="button" className="social-tr-hide" aria-label="显示原文" onClick={toggle}>原文</button>
       </span>
     );
   } else {
@@ -210,10 +220,21 @@ function postAuthorOf(article, ext, source, sourceName) {
 }
 
 // 长按预览卡(issue #230 批 4a;样页拍板 5「长按写清对象 = 抬起预览卡」、拍板 22「长按扩到播客卡与社交卡」):
-// 只读小卡——头像 · 作者 · @handle · 时间 / 正文前几行;没有动作钮、配图与译文(动作就在下面的动作单里)
-export function SocialPeek({ article, source = null, sourceName = '' }) {
+// 只读小卡——头像 · 作者 · @handle · 时间 / 正文前几行;没有动作钮与配图(动作就在下面的动作单里)。
+// 正文的语言与下面那张卡一致(issue #349):translation 是这张卡的逐卡状态(读者在卡上切回过原文就显示原文),
+// searchQuery 是那张卡所在列表的搜索词(搜的词只在原文里时卡片显示原文,预览卡跟着)
+export function SocialPeek({ article, source = null, sourceName = '', translation = null, searchQuery = '' }) {
   const ext = parseExt(article);
-  const { reposted, authorName, authorHandle, avatarUrl, text } = postAuthorOf(article, ext, source, sourceName);
+  const { preferChinese } = useTitlePreference();
+  const { reposted, authorName, authorHandle, avatarUrl, text: originalText } = postAuthorOf(article, ext, source, sourceName);
+  const view = socialCardView({
+    cached: socialCachedZh(article),
+    entry: currentSocialTranslation(translation, socialSignatureOf(socialTranslationSources(article, ext))),
+    preferChinese,
+    searchQuery,
+    original: socialOriginalTexts(article, ext),
+  });
+  const text = (view.showZh && view.zh.text) || originalText;
   const stamp = article.publish_date || article.fetched_date;
   // 末行渐隐只在三行确实装不下时出现(issue #346):一两行的短推文不能被淡掉
   const [textRef, cut] = useClampCut(Boolean(text), text);
@@ -262,21 +283,38 @@ const SocialPost = memo(function SocialPost({
 }) {
   const ext = useMemo(() => parseExt(article), [article]);
   const [expanded, setExpanded] = useState(false);
-  // 推文翻译(issue #84):哪几段需要翻译由 X 的 lang 加中文启发式判定;AI 不可用时整条底栏不出现。
-  // 逐卡状态按原文签名取——重新加载拿到新正文 / 新引用时,旧译文不挂到新原文下(检视 R1-02)
-  const trSources = useMemo(
-    () => (translateEnabled ? socialTranslationSources(article, ext) : {}),
-    [article, ext, translateEnabled],
-  );
+  const { preferChinese } = useTitlePreference();
+  // 哪几段需要翻译由 X 的 lang 加中文启发式判定(issue #84)。逐卡状态按原文签名取——重新加载拿到新正文 /
+  // 新引用时,旧译文不挂到新原文下(检视 R1-02)
+  const trSources = useMemo(() => socialTranslationSources(article, ext), [article, ext]);
   const trSig = useMemo(() => socialSignatureOf(trSources), [trSources]);
-  const translatable = Boolean(trSig);
   const tr = currentSocialTranslation(translation, trSig);
-  const trOpen = tr?.status === 'done' && tr.open;
 
   // 转推者 / 原作者、头像与正文的取法见 postAuthorOf(长按预览卡共用)
-  const { reposted, authorName, authorHandle, avatarUrl, text } = postAuthorOf(article, ext, source, sourceName);
+  const { reposted, authorName, authorHandle, avatarUrl, text: originalText } = postAuthorOf(article, ext, source, sourceName);
   const quoted = ext.quoted && typeof ext.quoted === 'object' ? ext.quoted : null;
   const mediaUrls = reposted?.media_urls?.length ? reposted.media_urls : ext.media_urls;
+
+  // 显示哪种语言(issue #349):译文原位替换原文。有译文就按「优先显示中文」偏好直接显示中文,读者在这张卡上
+  // 切过就听这张卡的;没有译文显示原文,AI 可用时底栏给「译为中文」。判定在 utils/socialTranslate.socialCardView
+  const view = useMemo(() => socialCardView({
+    cached: socialCachedZh(article),
+    entry: tr,
+    preferChinese,
+    aiEnabled: translateEnabled,
+    translatable: Boolean(trSig),
+    searchQuery,
+    original: socialOriginalTexts(article, ext),
+  }), [article, ext, tr, preferChinese, translateEnabled, trSig, searchQuery]);
+  const text = (view.showZh && view.zh.text) || originalText;
+  const quotedZh = view.showZh ? view.zh.quoted : null;
+  // 换过语言之后,换的那一下淡入;首次渲染不动(渲染期派生状态,React 认可的写法)
+  const [langSeen, setLangSeen] = useState(view.showZh);
+  const [swapped, setSwapped] = useState(false);
+  if (langSeen !== view.showZh) {
+    setLangSeen(view.showZh);
+    setSwapped(true);
+  }
 
   // 折叠(issue #346):字数只决定进不进折叠态;「显示更多」看折叠态是否真的截掉了内容(量出来的 cut),
   // 排得下的长推文不出按钮。判定口径在 utils/socialClamp
@@ -366,7 +404,11 @@ const SocialPost = memo(function SocialPost({
           </div>
 
           {text && (
-            <p ref={textRef} className={`social-text${clamped ? ' is-clamped' : ''}${clamped && cut ? ' is-cut' : ''}`}>
+            <p
+              key={view.showZh && view.zh.text ? 'zh' : 'orig'}
+              ref={textRef}
+              className={`social-text${clamped ? ' is-clamped' : ''}${clamped && cut ? ' is-cut' : ''}${swapped ? ' is-swap' : ''}`}
+            >
               {searchQuery ? highlightMatch(text, searchQuery) : text}
             </p>
           )}
@@ -376,23 +418,13 @@ const SocialPost = memo(function SocialPost({
             </button>
           )}
 
-          {/* 主推译文:原文一字不动,译文在「显示更多」之后、媒体之前,细线隔开并标明是 AI 译文 */}
-          {trOpen && tr.text && (
-            <div className="social-tr">
-              <div className="social-tr-head">
-                <Sparkles aria-hidden="true" />
-                <span className="social-tr-label ai-grad-text">译文</span>
-              </div>
-              <p className="social-tr-text">{tr.text}</p>
-            </div>
-          )}
-
           <SocialMedia urls={mediaUrls} />
-          <SocialQuote quoted={quoted} translation={trOpen ? tr.quoted : null} />
-          {translatable && (
+          <SocialQuote quoted={quoted} zhText={quotedZh} swapped={swapped} />
+          {(view.status || view.action) && (
             <SocialTranslateRow
               article={article}
-              translation={tr}
+              view={view}
+              message={tr?.message || ''}
               withQuote={'quoted' in trSources}
               onToggle={onToggleTranslation}
             />
@@ -438,7 +470,8 @@ export default function SocialFlow({
   emptyHint = '暂无动态',
   // 空态的第一个动作(issue #230 批 4a,审计 M-41;conventions §1):{ label, onClick },不给就只有一句话
   emptyAction = null,
-  // 推文翻译(issue #84):AI 可用才出底栏;translations 是 useReaderState 的逐卡状态
+  // 推文翻译:translateEnabled = AI 可用(没有译文的推文才需要它,有译文的照常换语言);
+  // translations 是 useReaderState 的逐卡状态(issue #84 / #349)
   translateEnabled = false,
   translations = {},
   onToggleTranslation,

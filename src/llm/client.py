@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime as dt
 import json
 import logging
 import re
@@ -69,6 +70,22 @@ class LLMHTTPError(LLMError):
 
 class LLMNotConfigured(LLMError):
     """大模型未配置（缺 base_url/api_key/model）。"""
+
+
+class LLMSpendingExpired(LLMError):
+    """The configured bounded run may no longer submit a new paid request."""
+
+
+def _check_spending_authorization(config: LLMConfig) -> None:
+    deadline = config.paid_authorized_until
+    if not deadline:
+        return
+    try:
+        ends = dt.datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+        if ends.utcoffset() is None or dt.datetime.now(dt.timezone.utc) >= ends:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise LLMSpendingExpired("LLM 付费调用授权已到期或截止配置无效") from None
 
 
 class LLMIncompleteOutput(LLMError):
@@ -194,6 +211,7 @@ async def chat_completion(
     http_client: Optional[httpx.AsyncClient] = None,
     require_complete: bool = False,
     response_meta: Optional[Dict[str, Any]] = None,
+    allow_protocol_fallback: bool = True,
 ) -> str:
     """调用 chat completions，返回 choices[0].message.content。
 
@@ -201,6 +219,7 @@ async def chat_completion(
     - 其它 4xx：直接抛 LLMError（不重试）。
     - response_json=True：附带 response_format={"type":"json_object"}；若端点不
       支持（返回 400），自动去掉该字段重试一次（degrade gracefully）。
+    - allow_protocol_fallback=False：禁止 400 协议降级与重定向重发，供持久单次请求使用。
     - usage_meta：提供时把响应里的 token usage 交给已注册的计量 recorder（可选、不阻断）。
     - http_client：可选的共享连接（见 client_session）；传入时本函数不负责其生命周期。
     - require_complete：翻译等完整输出任务使用，仅接受 finish_reason=stop；
@@ -221,6 +240,7 @@ async def chat_completion(
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
             require_complete=require_complete, response_meta=response_meta,
+            allow_protocol_fallback=allow_protocol_fallback,
         )
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=True) as client:
         return await _chat_completion_on(
@@ -228,6 +248,7 @@ async def chat_completion(
             max_tokens=max_tokens, response_json=response_json,
             max_retries=max_retries, usage_meta=usage_meta,
             require_complete=require_complete, response_meta=response_meta,
+            allow_protocol_fallback=allow_protocol_fallback,
         )
 
 
@@ -243,6 +264,7 @@ async def _chat_completion_on(
     usage_meta: Optional[UsageMeta],
     require_complete: bool = False,
     response_meta: Optional[Dict[str, Any]] = None,
+    allow_protocol_fallback: bool = True,
 ) -> str:
     url = _endpoint(config)
     headers = {
@@ -279,11 +301,15 @@ async def _chat_completion_on(
     # 在降级后直接耗尽循环抛「LLM 请求失败: None」(issue #69 检视 F5;vision_ping 恒显式关思考,必现)。
     attempt = 0
     while True:
+        _check_spending_authorization(config)
         attempt += 1
         if response_meta is not None:
             response_meta["http_attempts"] += 1
         try:
-            resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking))
+            # A 307/308 redirect can replay a paid POST inside HTTPX without
+            # returning to this loop. Durable single-call consumers forbid it.
+            request_options = {} if allow_protocol_fallback else {"follow_redirects": False}
+            resp = await client.post(url, headers=headers, json=_build_payload(want_json, want_thinking), **request_options)
         except httpx.HTTPError as exc:
             last_error = exc
             logger.warning("LLM 请求异常 (%s/%s) [%s | %s]: %s",
@@ -343,7 +369,7 @@ async def _chat_completion_on(
                 _maybe_record_usage(usage_meta, error_usage, config.model)
                 raise LLMHTTPError(resp.status_code, f"HTTP {resp.status_code}: {body_preview}")
         # response_format 不被支持时，去掉后重发一次(不计入重试次数)
-        if resp.status_code == 400 and want_json:
+        if allow_protocol_fallback and resp.status_code == 400 and want_json:
             logger.info("端点疑似不支持 response_format，降级为普通模式重试 [%s | %s]",
                         config.base_url, config.model)
             want_json = False
@@ -353,7 +379,7 @@ async def _chat_completion_on(
             continue
 
         # 思考模式参数不被支持时，去掉后重发一次(配置是 opt-in,但换端点后旧覆盖可能残留;不计入重试次数)
-        if resp.status_code == 400 and want_thinking:
+        if allow_protocol_fallback and resp.status_code == 400 and want_thinking:
             logger.warning("端点疑似不支持思考模式参数(thinking/reasoning_effort)，去掉后重试 [%s | %s]",
                            config.base_url, config.model)
             want_thinking = False

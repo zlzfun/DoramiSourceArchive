@@ -10322,9 +10322,9 @@ input[type="radio"] {
   .social-quote-text { margin-top: 4px; font-size: 13px; line-height: 1.55; color: var(--dorami-muted); }
   :where(.m-shell, .m-page, .m-read, .m-sheet) .social-quote-text { font-size: 12.5px; } /* m-keep #279-b1 */
 
-  /* ── 推文翻译(issue #84,样页 docs/design/social-translate):原文一字不动,译文追加在下方 ──
-     底栏是卡片最后一行(媒体与引用推之后):翻译管整张卡片,入口就在整张卡片末尾;
-     「显示更多」紧贴正文只管正文折叠。开合都在底栏,位置不随状态移动。 */
+  /* ── 推文翻译(issue #84 的底栏,issue #349 改为译文原位替换原文、一次只显示一种语言)──
+     底栏是卡片最后一行(媒体与引用推之后):语言开关管整张卡片,入口就在整张卡片末尾;
+     「显示更多」紧贴正文只管正文折叠。换语言都在底栏,位置不随状态移动。 */
   .social-tr-row {
     display: flex;
     flex-wrap: wrap;
@@ -10350,7 +10350,7 @@ input[type="radio"] {
   .social-tr-btn:hover:not(:disabled) { color: var(--dorami-ink); }
   .social-tr-btn:hover:not(:disabled) svg { stroke: url(#ai-grad) var(--dorami-accent); }
   .social-tr-btn:disabled { cursor: default; color: var(--dorami-faint); }
-  /* 已译标记:✦ + 「已译为中文」,后接「收起」 */
+  /* 已译标记:✦ + 「已译为中文」 · 「原文」(切回原文) */
   .social-tr-mark {
     display: inline-flex;
     align-items: center;
@@ -10360,8 +10360,9 @@ input[type="radio"] {
     color: var(--dorami-faint);
   }
   .social-tr-mark svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
-  .social-tr-hide { margin-left: 6px; font-size: 12px; line-height: 20px; color: var(--dorami-faint); }
-  .social-tr-hide:hover { color: var(--dorami-ink-2); text-decoration: underline; }
+  .social-tr-sep { margin-inline: 2px; }
+  .social-tr-hide { font-size: 12px; line-height: 20px; color: var(--dorami-muted); }
+  .social-tr-hide:hover { color: var(--dorami-ink); text-decoration: underline; }
   /* 失败 / 额度用尽:就地一句说明;失败的说明与「重试」是一句话,收成一组 */
   .social-tr-err { display: inline-flex; align-items: center; gap: 6px; }
   .social-tr-note { font-size: 12px; line-height: 20px; color: var(--dorami-faint); }
@@ -10369,51 +10370,15 @@ input[type="radio"] {
   .social-tr-retry { font-size: 12px; font-weight: 600; line-height: 20px; color: var(--dorami-accent); }
   :where(.m-shell, .m-page, .m-read, .m-sheet) .social-tr-retry { font-size: 12.5px; } /* m-keep #279-b1 */
   .social-tr-retry:hover { text-decoration: underline; }
-  /* 主推译文:细线隔开,小标签标明是 AI 译文 */
-  .social-tr {
-    margin-top: 10px;
-    padding-top: 9px;
-    border-top: 1px solid var(--dorami-border-soft);
-    animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
-  }
-  .social-tr-head {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    line-height: 18px;
-    color: var(--dorami-faint);
-  }
-  .social-tr-head svg { width: 12px; height: 12px; flex: none; stroke: url(#ai-grad) var(--dorami-accent); }
-  .social-tr-label { font-weight: 600; }
-  .social-tr-text {
-    margin-top: 4px;
-    font-size: 15px;
-    line-height: 1.7;
-    color: var(--dorami-ink-2);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  :where(.m-shell, .m-page, .m-read, .m-sheet) .social-tr-text { font-size: 13.5px; } /* m-keep #279-b1 */
-  .social-post.is-read .social-tr-text { color: var(--dorami-muted); }
-  /* 引用推译文:卡内细线隔开,与引用原文同级(引用卡整体是次一级内容) */
-  .social-quote-tr {
-    display: block;
-    margin-top: 8px;
-    padding-top: 7px;
-    border-top: 1px solid var(--dorami-border-soft);
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--dorami-muted);
-    animation: social-tr-in var(--motion-medium) var(--motion-ease) both;
-  }
-  :where(.m-shell, .m-page, .m-read, .m-sheet) .social-quote-tr { font-size: 12.5px; } /* m-keep #279-b1 */
+  /* 换语言的那一下:换上来的那段文字淡入(主推与引用推同一拍);首次渲染不带这个类 */
+  .social-text.is-swap,
+  .social-quote-text.is-swap { animation: social-tr-in var(--motion-medium) var(--motion-ease) both; }
   @keyframes social-tr-in {
     from { opacity: 0; transform: translateY(-2px); }
     to { opacity: 1; transform: none; }
   }
-  :root[data-motion="reduce"] .social-tr,
-  :root[data-motion="reduce"] .social-quote-tr { animation: none; }
+  :root[data-motion="reduce"] .social-text.is-swap,
+  :root[data-motion="reduce"] .social-quote-text.is-swap { animation: none; }
 
   .reader-social-end { padding: 26px 0 10px; text-align: center; font-size: 12px; color: var(--dorami-faint); }
 
@@ -14391,6 +14356,7 @@ input[type="radio"] {
 :where(.m-shell, .m-page, .m-read, .m-sheet) .bp-item-sum { line-height: 1.8; } /* m-keep #279-b1 */
 .bp-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 14px; font-size: 13px; color: var(--dorami-faint); }
 .bp-item-meta .bp-src { gap: 7px; }
+.bp-interest-topics { margin: 12px 0 0; line-height: 1.7; color: var(--dorami-accent-ink); overflow-wrap: anywhere; }
 /* 分数前的中点与其它分隔同高:inline-flex 居中,否则 13px 的点落在 17px 数字的基线上看着像句点 */
 .bp-score { display: inline-flex; align-items: center; font-family: var(--font-score); font-size: 17px; font-weight: 600; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
 .bp-fav {
@@ -16250,3 +16216,7 @@ a.rowact-btn:focus-visible { outline: 2px solid var(--dorami-accent); outline-of
   .reader-shell .reader-col-read .reader-pane-bar::after { animation: reader-bar-shade linear both; animation-timeline: --reader-scroll; animation-range: 0px 72px; }
 }
 @keyframes reader-bar-shade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Reader tag groups share tag styling; headings distinguish article and personal topics. */
+.reader-tag-groups { display: block; }
+.reader-side-k + .reader-pane-tags { margin-top: 10px; }

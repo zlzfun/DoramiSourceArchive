@@ -130,6 +130,11 @@ class TaxonomyDeploymentConfig:
 
     mode: str = "manual"
     catalog_path: str = str(PROJECT_ROOT / "config" / "taxonomy-v1-approved-catalog.json")
+    governance_enabled: bool = False
+    exact_merge_enabled: bool = False
+    review_enabled: bool = False
+    review_ai_enabled: bool = False
+    feishu_config_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,6 +194,11 @@ class LLMConfig:
     timeout_seconds: int = 60
     temperature: float = 0.3
     max_tokens: int = 4096
+    # Independent durable interest-verifier ceiling; legacy installations stay at 1800.
+    interest_max_output_tokens: int = 1800
+    # INI-only interest overrides; empty inherits the existing effective aux route.
+    interest_model: str = ""
+    interest_thinking_mode: str = ""
     map_concurrency: int = 4
     # 思考模式(opt-in,仅支持该参数的端点可设,如 DeepSeek V4 系):
     # "" = 不发送任何思考参数(默认,兼容一切 OpenAI 兼容端点);
@@ -204,6 +214,20 @@ class LLMConfig:
     # (图片 → 结构化文字说明)使用;空 = 视觉能力整体关闭,所有理解链路退回纯文本、
     # 与未配置前逐字一致。DeepSeek 取 deepseek-flash(V4.1-Flash 原生多模态)。
     vision_model: str = ""
+    # Optional bounded-run fence. Every HTTP attempt rechecks it; KV edits cannot
+    # extend a deployment's spending authorization.
+    paid_authorized_until: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self.interest_max_output_tokens) is not int or not 1 <= self.interest_max_output_tokens <= 8192:
+            raise ValueError("interest_max_output_tokens must be an integer between 1 and 8192")
+        if not isinstance(self.interest_model, str) or not isinstance(self.interest_thinking_mode, str):
+            raise ValueError("interest model and thinking mode must be strings")
+        mode = self.interest_thinking_mode.strip().lower()
+        if mode not in {"", "disabled", "low", "high", "max"}:
+            raise ValueError("invalid interest_thinking_mode")
+        object.__setattr__(self, "interest_model", self.interest_model.strip())
+        object.__setattr__(self, "interest_thinking_mode", mode)
 
     @property
     def configured(self) -> bool:
@@ -235,6 +259,19 @@ class LLMConfig:
         if not aux or aux == self.model:
             return self
         return replace(self, model=aux, thinking_mode="")
+
+    def for_interest(self) -> "LLMConfig":
+        """Resolve only interest verification; blank overrides retain legacy aux behavior.
+
+        Clear aux on the returned override so repeated routing cannot undo it.
+        Blank effort inherits the effective effort, including explicit disabled.
+        """
+        effective = self.for_aux()
+        if not self.interest_model and not self.interest_thinking_mode:
+            return effective
+        return replace(effective, model=self.interest_model or effective.model,
+                       thinking_mode=self.interest_thinking_mode or effective.thinking_mode,
+                       aux_model="")
 
 
 @dataclass(frozen=True)
@@ -1119,6 +1156,11 @@ def load_config() -> AppConfig:
                     fallback=str(PROJECT_ROOT / "config" / "taxonomy-v1-approved-catalog.json"),
                 )
             ),
+            governance_enabled=parser.getboolean("taxonomy", "governance_enabled", fallback=False),
+            exact_merge_enabled=parser.getboolean("taxonomy", "exact_merge_enabled", fallback=False),
+            review_enabled=parser.getboolean("taxonomy", "review_enabled", fallback=False),
+            review_ai_enabled=parser.getboolean("taxonomy", "review_ai_enabled", fallback=False),
+            feishu_config_path=parser.get("taxonomy", "feishu_config_path", fallback="").strip(),
         ),
         network=NetworkConfig(
             disable_ca_bundle=parser.getboolean("network", "disable_ca_bundle", fallback=True),
@@ -1716,10 +1758,14 @@ def load_config() -> AppConfig:
             timeout_seconds=parser.getint("llm", "timeout_seconds", fallback=60),
             temperature=parser.getfloat("llm", "temperature", fallback=0.3),
             max_tokens=parser.getint("llm", "max_tokens", fallback=4096),
+            interest_max_output_tokens=parser.getint("llm", "interest_max_output_tokens", fallback=1800),
+            interest_model=parser.get("llm", "interest_model", fallback=""),
+            interest_thinking_mode=parser.get("llm", "interest_thinking_mode", fallback=""),
             map_concurrency=parser.getint("llm", "map_concurrency", fallback=4),
             thinking_mode=(os.getenv("DORAMI_LLM_THINKING_MODE") or parser.get("llm", "thinking_mode", fallback="")).strip(),
             aux_model=(os.getenv("DORAMI_LLM_AUX_MODEL") or parser.get("llm", "aux_model", fallback="")).strip(),
             vision_model=(os.getenv("DORAMI_LLM_VISION_MODEL") or parser.get("llm", "vision_model", fallback="")).strip(),
+            paid_authorized_until=(os.getenv("DORAMI_LLM_PAID_AUTHORIZED_UNTIL") or parser.get("llm", "paid_authorized_until", fallback="")).strip(),
         ),
         x_api=XApiConfig(
             bearer_token=(

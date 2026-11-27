@@ -121,7 +121,7 @@ def _run_worker(storage, article_id: str, payload: dict) -> None:
 
 def test_news_ruler_unchanged_and_podcast_prompts_are_byte_identical_to_v6():
     assert prompts.ARTICLE_ANALYSIS_SCORING_VERSION == "news-value-v2"
-    assert prompts.ARTICLE_ANALYSIS_PROMPT_VERSION == "article-analysis-v7"
+    assert prompts.ARTICLE_ANALYSIS_PROMPT_VERSION == "article-analysis-v8"
     assert prompts.CONTENT_VALUE_SCORING_VERSION == "content-value-v2"
     assert _sha(prompts.NEWS_VALUE_ONLY_SYSTEM_PROMPT) == V6_ARTICLE_SHA256
     assert _sha(prompts.PODCAST_ANALYSIS_SYSTEM_PROMPT) == V6_PODCAST_SHOW_NOTES_SHA256
@@ -230,7 +230,7 @@ def test_full_analysis_persists_content_value_with_its_own_version(storage):
     with Session(storage.engine) as session:
         record = session.get(ArticleAnalysisRecord, "full")
         assert (record.quality_score, record.prompt_version, record.scoring_version) == (
-            5.4, "article-analysis-v7", "news-value-v2",
+            5.4, "article-analysis-v8", "news-value-v2",
         )
         assert (record.content_kind, record.content_value, record.content_value_version) == (
             "tutorial", 7.3, "content-value-v2",

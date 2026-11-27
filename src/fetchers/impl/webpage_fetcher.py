@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from fetchers.base import BaseFetcher
+from fetchers.impl.publication_window import PublicationWindow, CoverageReport, parameter_schema, point_proof
 from fetchers.impl.article_extractor import (
     DETAIL_HARD_CAP,
     compact_text,
@@ -764,6 +765,10 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     web_backend_enabled = True
     default_limit = 18
 
+    @classmethod
+    def get_parameter_schema(cls):
+        return super().get_parameter_schema() + parameter_schema()
+
     def _parse_listing_datetime(self, raw_value: str) -> str:
         raw_value = (raw_value or "").strip()
         if not raw_value:
@@ -836,13 +841,14 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
     max_listing_pages = 10
     coverage_window_hours = 72
 
-    async def _listing_pages(self, client):
+    async def _listing_pages(self, client, *, max_pages=None):
+        max_pages = self.max_listing_pages if max_pages is None else max_pages
         response = await self._safe_get(client, self.listing_url)
         if response is None:
             raise RuntimeError(f"IT之家 AI 分类页请求失败: {self.listing_url}")
         soup = BeautifulSoup(response.text, "html.parser")
         previous_cursor = None
-        for page in range(self.max_listing_pages):
+        for page in range(max_pages):
             items = self._list_items(soup)
             if not items:
                 raise RuntimeError("IT之家 AI 列表结构异常: 未找到文章列表")
@@ -857,7 +863,7 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             cursor = int(datetime.fromisoformat(dated[-1]).timestamp() * 1000)
             if previous_cursor is not None and cursor >= previous_cursor:
                 raise RuntimeError("IT之家 AI 分页时间游标未向前推进")
-            if page + 1 >= self.max_listing_pages:
+            if page + 1 >= max_pages:
                 raise RuntimeError("IT之家 AI 达到分页安全上限，覆盖尚未完成")
             previous_cursor = cursor
             url = f"https://next.ithome.com/category/domainpage?domain=next&subdomain=ai&ot={cursor}"
@@ -876,6 +882,61 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             if count == 0:
                 return
             soup = BeautifulSoup(f'<ul class="bl">{html_text}</ul>', "html.parser")
+
+    async def _discover_window_entries(self, client, window, report):
+        chosen, seen = [], set()
+        ordinal = 0
+        try:
+            async for items, page_url in self._listing_pages(client, max_pages=window.max_pages):
+                report.pages += 1
+                entries = self._article_entries(items, page_url)
+                new_count, dates = 0, []
+                for item, title_link, url in entries:
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    new_count += 1
+                    ordinal += 1
+                    node = item.select_one(".c[data-ot]")
+                    raw = str(node.get("data-ot") or "") if node else ""
+                    value = self._parse_listing_datetime(raw)
+                    try:
+                        if datetime.fromisoformat(raw).tzinfo is None:
+                            value = ""
+                    except ValueError:
+                        value = ""
+                    aid = self._content_id(url)
+                    if not value:
+                        report.partial("date_unknown")
+                        report.observe(aid, url, {"raw_date": raw, "date_precision": "unknown"},
+                                       "date_unknown", page=report.pages, ordinal=ordinal)
+                        continue
+                    stamp = datetime.fromisoformat(value)
+                    dates.append(stamp)
+                    proof = point_proof(raw, stamp, "millisecond", "source_iso_offset")
+                    status = "in_window" if window.contains(stamp) else "outside_window"
+                    report.observe(aid, url, proof, status, page=report.pages, ordinal=ordinal)
+                    if status == "in_window":
+                        chosen.append((item, title_link, url))
+                if not new_count:
+                    report.partial("repeated_page")
+                    break
+                # Existing chronological endpoint: finish the entire boundary
+                # page; archive duplicates never cause an early stop.
+                if dates and min(dates) < window.after:
+                    report.discovery_complete = True
+                    break
+            else:
+                report.discovery_complete = True  # explicit empty API page
+        except RuntimeError as exc:
+            report.partial("listing_incomplete")
+            self.logger.warning("IT之家 publication window: %s", exc)
+        existing = await self._lookup_existing_content_flags(row["article_id"] for row in report.items)
+        report.mark_archive(existing)
+        new_entries = [entry for entry in chosen if self._content_id(entry[2]) not in existing]
+        if len(new_entries) > window.limit:
+            report.partial("limit_reached")
+        return new_entries[:window.limit]
 
     async def _discover_listing_entries(self, client, limit):
         chosen = []
@@ -913,6 +974,10 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
         return chosen
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        self.coverage_report = None
+        window = PublicationWindow.from_params(kwargs, self.default_limit)
+        report = CoverageReport(self.source_id, window) if window else None
+        self.coverage_report = report
         limit = self._entry_limit(kwargs.get("limit"))
         fetch_detail = self._bool_param(kwargs.get("fetch_detail"))
         detail_max_chars = self._positive_int_param(kwargs.get("detail_max_chars"), self.default_detail_max_chars)
@@ -920,14 +985,33 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
             return
         # Complete discovery before yielding: a later list failure must not leave
         # already-saved rows outside the pipeline's successful analysis hooks.
-        entries = await self._discover_listing_entries(client, limit)
+        entries = (await self._discover_window_entries(client, window, report) if window
+                   else await self._discover_listing_entries(client, limit))
+        coverage = report.summary() if report else None
         for item, title_link, url in entries:
             title = self._clean_text(title_link.get_text(" ", strip=True)) or str(title_link.get("title") or "")
             summary_node = item.select_one(".m")
             summary = self._clean_text(summary_node.get_text(" ", strip=True) if summary_node else "")[:500]
             content_node = item.select_one(".c")
             raw_publish_date = str(content_node.get("data-ot") or "") if content_node else ""
-            publish_date = self._parse_listing_datetime(raw_publish_date) or self._extract_datetime(f"{title} {summary}")
+            publish_date = self._parse_listing_datetime(raw_publish_date)
+            if report is not None:
+                try:
+                    stamp = datetime.fromisoformat(publish_date)
+                    if stamp.tzinfo is None or not window.contains(stamp):
+                        raise ValueError("invalid_window_survivor")
+                except ValueError:
+                    report.partial("emission_date_invalid")
+                    aid = self._content_id(url)
+                    for row in report.items:
+                        if row["article_id"] == aid:
+                            row["status"] = "date_unknown"
+                            row["date_proof"] = {"raw_date": raw_publish_date, "date_precision": "unknown"}
+                    coverage = report.summary()
+                    continue
+                proof = point_proof(raw_publish_date, stamp, "millisecond", "source_iso_offset")
+            else:
+                publish_date = publish_date or self._extract_datetime(f"{title} {summary}")
             tags = [self._clean_text(tag.get_text(" ", strip=True)) for tag in item.select(".tags a")]
             tags = [tag for tag in tags if tag]
             image_node = item.select_one("a.img img")
@@ -963,6 +1047,9 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                     "summary": summary,
                     "listing_source": "ithome_ai_category_html",
                     "listing_publish_date": raw_publish_date,
+                    **({"publication_window": dict(coverage), "body_status": "body_extracted_unreviewed" if detail["text"] else "summary_only",
+                       "publication_date_proof": proof}
+                       if report else {}),
                     "tags": tags,
                     "media_url": media_url,
                     "detail_fetched": detail_fetched,
@@ -972,6 +1059,8 @@ class IThomeAiWebFetcher(BaseWebPageListFetcher):
                     "detail_source_url": detail.get("url", ""),
                 },
             )
+        if report is not None:
+            report.finish(self.logger)
 
 
 class QwenBlogWebFetcher(BaseWebPageListFetcher):

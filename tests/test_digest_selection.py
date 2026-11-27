@@ -3,12 +3,15 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from models.analysis_contracts import (  # noqa: E402
     ContentGenre,
     DigestArticleCandidateDTO,
     InterestStance,
+    InterestRef,
     UserInterestDTO,
 )
 from services.digest_selection import (  # noqa: E402
@@ -49,29 +52,63 @@ def _candidate(
     )
 
 
-def test_interest_is_capped_at_half_and_quality_fills_the_rest():
+def test_high_value_interest_matches_do_not_consume_promotion_slots():
     candidates = [
-        _candidate(i, score=9.5 - i * 0.05, tags=("agent",)) for i in range(8)
+        _candidate(i, source=f"s{i}", score=9.5 - i * 0.05, tags=("agent",)) for i in range(8)
     ] + [
-        _candidate(i, score=8.8 - (i - 8) * 0.05, tags=("other",)) for i in range(8, 16)
+        _candidate(i, source=f"s{i}", score=8.8 - (i - 8) * 0.05) for i in range(8, 16)
     ]
-    interests = [UserInterestDTO(
-        tag_code="agent", stance=InterestStance.FOLLOW
-    )]
-
-    selected = select_digest_articles(candidates, interests)
+    selected = select_digest_articles(candidates, [UserInterestDTO(tag_code="agent")])
 
     assert len(selected) == 10
-    assert sum(item.lane == "interest" for item in selected) == 5
-    assert sum(item.lane == "quality" for item in selected) == 5
-    assert all(item.matched_interest_codes == ("agent",) for item in selected[:5])
-    assert "命中你的兴趣" in selected[0].selection_reason
+    assert all(item.lane == "quality" for item in selected)
+    assert sum(bool(item.matched_interest_codes) for item in selected) == 8
+    assert all(item.selection_contribution['ranking'] == 'none' for item in selected)
 
 
-def test_interest_ceiling_applies_to_actual_sparse_output():
+def test_interest_promotes_at_most_three_and_protects_the_top_seven():
     candidates = [
-        *[_candidate(i, score=9.5 - i * 0.05, tags=("agent",)) for i in range(5)],
-        _candidate(9, score=8.0, tags=("other",)),
+        _candidate(i, source=f"q{i}", score=9.5 - i * 0.1) for i in range(10)
+    ] + [
+        _candidate(i, source=f"i{i}", score=6.5 - (i - 10) * 0.1, tags=("agent",)) for i in range(10, 15)
+    ]
+    selected = select_digest_articles(candidates, [UserInterestDTO(tag_code="agent")])
+
+    assert len(selected) == 10
+    assert [item.article_id for item in selected if item.lane == "quality"] == [f"a{i:02d}" for i in range(7)]
+    assert [item.article_id for item in selected if item.lane == "interest"] == ["a10", "a11", "a12"]
+    assert all(item.selection_contribution['ranking'] == 'interest_lane' for item in selected if item.lane == 'interest')
+    assert selected == select_digest_articles(reversed(candidates), [UserInterestDTO(tag_code="agent")])
+
+
+@pytest.mark.parametrize("ratio, promoted", [(0.0, 0), (0.3, 3), (1.0, 5)])
+def test_promotion_budget_changes_only_the_tail_of_the_value_baseline(ratio, promoted):
+    quality = [_candidate(i, source=f"q{i}", score=9.5 - i * 0.1) for i in range(10)]
+    matches = [_candidate(i, source=f"m{i}", score=6.0, tags=("agent",)) for i in range(10, 15)]
+    selected = select_digest_articles(
+        quality + matches, [UserInterestDTO(tag_code="agent")],
+        policy=DigestSelectionPolicy(interest_max_ratio=ratio),
+    )
+    assert len(selected) == 10
+    assert sum(item.lane == "interest" for item in selected) == promoted
+    assert {f"a{i:02d}" for i in range(10 - promoted)} <= {item.article_id for item in selected}
+
+
+def test_below_threshold_interest_never_displaces_value_or_fills_a_slot():
+    candidates = [_candidate(i, source=f"q{i}", score=7.0) for i in range(10)]
+    candidates += [_candidate(11, score=4.99, tags=("agent",)),
+                   _external(12, score=5.99, tags=("agent",))]
+    selected = select_digest_articles(candidates, [UserInterestDTO(tag_code="agent")])
+    assert len(selected) == 10
+    assert all(item.lane == "quality" for item in selected)
+    assert not {"a11", "a12"} & {item.article_id for item in selected}
+
+
+@pytest.mark.parametrize("quality_count, expected_interests", [(1, 0), (3, 1), (6, 2), (7, 3)])
+def test_interest_ceiling_applies_to_actual_sparse_output(quality_count, expected_interests):
+    candidates = [
+        *[_external(i, source=f"external-{i}", score=9.5 - i * 0.05, tags=("agent",)) for i in range(5)],
+        *[_candidate(10 + i, score=8.0, tags=("other",)) for i in range(quality_count)],
     ]
 
     selected = select_digest_articles(
@@ -79,9 +116,27 @@ def test_interest_ceiling_applies_to_actual_sparse_output():
         [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)],
     )
 
-    assert len(selected) == 2
-    assert sum(item.lane == "interest" for item in selected) == 1
-    assert sum(item.lane == "quality" for item in selected) == 1
+    assert len(selected) == quality_count + expected_interests
+    assert sum(item.lane == "interest" for item in selected) == expected_interests
+    assert sum(item.lane == "quality" for item in selected) == quality_count
+
+
+def test_formal_and_custom_interests_share_one_thirty_percent_cap():
+    custom = InterestRef(kind="custom", id="1")
+    candidates = [
+        _candidate(1, score=6.9, tags=("agent",)),
+        _candidate(2, score=6.8).model_copy(update={"custom_interest_refs": (custom,)}),
+        _candidate(3, score=6.7, tags=("agent",)).model_copy(update={"custom_interest_refs": (custom,)}),
+        _candidate(4, score=6.6).model_copy(update={"custom_interest_refs": (custom,)}),
+        *[_candidate(i, source=f"quality-{i}", score=8.5) for i in range(5, 15)],
+    ]
+    selected = select_digest_articles(candidates, [
+        UserInterestDTO(tag_code="agent"), UserInterestDTO(custom_interest_id=1),
+    ])
+
+    assert len(selected) == 10
+    assert [item.article_id for item in selected if item.lane == "interest"] == ["a01", "a02", "a03"]
+    assert "a04" not in {item.article_id for item in selected}  # 额外推荐共享配额，同篇多兴趣只占一位
 
 
 def test_cross_lane_same_event_keeps_the_representative_not_the_larger_set():
@@ -92,6 +147,8 @@ def test_cross_lane_same_event_keeps_the_representative_not_the_larger_set():
         _candidate(2, score=9.0, tags=("agent",)),
         _candidate(3, score=8.5, tags=("other",), event=7),
         _candidate(4, score=8.0),
+        _candidate(5, score=7.8),
+        _candidate(6, score=7.6),
     ]
 
     selected = select_digest_articles(
@@ -99,8 +156,8 @@ def test_cross_lane_same_event_keeps_the_representative_not_the_larger_set():
         [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)],
     )
 
-    assert [item.article_id for item in selected] == ["a01", "a04"]
-    assert [item.lane for item in selected] == ["interest", "quality"]
+    assert [item.article_id for item in selected] == ["a01", "a02", "a04", "a05", "a06"]
+    assert all(item.lane == "quality" for item in selected)
 
 
 def test_same_event_collapses_to_the_representative_by_official_then_non_social_then_score():
@@ -303,14 +360,17 @@ def test_external_candidates_need_the_higher_floor_and_an_interest_hit():
         _external(2, source="ext-a", score=5.8, tags=("agent",)),          # 订阅外命中但 < 6.0 → 不进
         _external(3, source="ext-b", score=6.4, tags=("agent",)),          # 订阅外命中 ≥ 6.0 → 兴趣通道
         _external(4, source="ext-c", score=9.9, tags=("other",)),          # 订阅外不命中 → 永不进(质量通道只看订阅)
+        _candidate(5, source="sub-b", score=5.1),
+        _candidate(6, source="sub-c", score=5.0),
     ]
 
     selected = select_digest_articles(candidates, interests)
 
-    assert [item.article_id for item in selected] == ["a03", "a01"]
-    assert selected[0].lane == "interest"
-    assert "来自你未订阅的「ext-b」" in selected[0].selection_reason
-    assert "按新闻价值入选" in selected[0].selection_reason
+    assert {item.article_id for item in selected} == {"a03", "a01", "a05", "a06"}
+    promoted = next(item for item in selected if item.article_id == "a03")
+    assert promoted.lane == "interest"
+    assert "来自你未订阅的「ext-b」" in promoted.selection_reason
+    assert "按新闻价值入选" in promoted.selection_reason
 
 
 def test_subscribed_interest_hits_rank_ahead_of_external_ones():
@@ -318,7 +378,7 @@ def test_subscribed_interest_hits_rank_ahead_of_external_ones():
     candidates = [
         _external(1, source="ext", score=9.8, tags=("agent",)),
         _candidate(2, source="sub", score=6.1, tags=("agent",)),
-    ] + [_candidate(i, source=f"q{i}", score=7.0, tags=("other",)) for i in range(3, 6)]
+    ] + [_candidate(i, source=f"q{i}", score=7.0, tags=("other",)) for i in range(3, 13)]
 
     selected = select_digest_articles(candidates, interests)
 
@@ -329,7 +389,7 @@ def test_subscribed_interest_hits_rank_ahead_of_external_ones():
 
 def test_external_per_source_cap_is_hard_and_never_relaxed():
     interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
-    # 一个高产的订阅外来源命中 5 篇 ≥ 6.0;订阅内只有 2 篇质量稿 → 目标 10 达不到,
+    # 一个高产的订阅外来源命中 5 篇 ≥ 6.0;订阅内只有 6 篇质量稿 → 目标 10 达不到,
     # 订阅内的每源上限会被放宽,订阅外的仍钉在 2
     candidates = [
         _external(i, source="hf-papers", score=8.0 - i * 0.1, tags=("agent",)) for i in range(1, 6)
@@ -370,21 +430,24 @@ def test_interest_tag_codes_drive_matching():
         update={"interest_tag_codes": ("agent",)}
     )
 
-    selected = select_digest_articles([weak_hit, strong_hit], interests)
+    selected = select_digest_articles([weak_hit, strong_hit, _candidate(4), _candidate(5)], interests)
 
     lanes = {item.article_id: item.lane for item in selected}
-    assert lanes == {"a01": "quality", "a03": "interest"}
+    assert lanes == {"a01": "quality", "a03": "quality", "a04": "quality", "a05": "quality"}
+    strong = next(item for item in selected if item.article_id == "a03")
+    assert strong.matched_interest_codes == ("agent",)
+    assert strong.selection_contribution['ranking'] == 'none'
 
 
-def test_interest_only_policy_lifts_the_ratio_and_keeps_the_half_size():
+def test_interest_only_policy_lifts_the_ratio_and_keeps_the_allocation_size():
     from services.digest_selection import interest_only_policy
 
     interests = [UserInterestDTO(tag_code="agent", stance=InterestStance.FOLLOW)]
     candidates = [_external(i, source=f"e{i}", score=9.0 - i * 0.1, tags=("agent",)) for i in range(1, 9)]
 
-    assert select_digest_articles(candidates, interests) == []  # 没有质量半可配 → 50% 上限下选不出
+    assert select_digest_articles(candidates, interests) == []  # 没有新闻价值稿可配，不能突破比例上限
     only = select_digest_articles(candidates, interests, policy=interest_only_policy(DigestSelectionPolicy()))
-    assert len(only) == 5
+    assert len(only) == 3
     assert all(item.lane == "interest" for item in only)
 
 
@@ -398,8 +461,6 @@ def test_policy_rejects_out_of_range_external_knobs():
 
 
 # ── 「深度阅读」「播客精选」(issue #178 第三波) ──
-
-import pytest  # noqa: E402
 
 from models.analysis_contracts import SelectionLane  # noqa: E402
 from services.digest_selection import (  # noqa: E402

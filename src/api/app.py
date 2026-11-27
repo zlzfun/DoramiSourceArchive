@@ -83,6 +83,7 @@ from api.routers import interests as interests_router
 from api.routers import personal_briefs as personal_briefs_router
 from api.routers import admin_reader_briefs as admin_reader_briefs_router
 from api.routers import taxonomy as taxonomy_router
+from api.routers import taxonomy_review as taxonomy_review_router
 from api.routers import analysis_ops as analysis_ops_router
 from api.routers import articles as articles_router
 from api.routers.articles import _maybe_rewind_daily_brief_cursor  # noqa: F401 -- compatibility export
@@ -616,6 +617,9 @@ async def lifespan(app: FastAPI):
     reload_ranking_schedule()
     # 事件热点榜 07:00 日快照(issue #121)同样全角色注册:previous_rank 在 reader 节点现算。
     reload_event_board_schedule()
+    # Local interests and taxonomy maintenance do not depend on collection or
+    # article-analysis LLM availability.
+    reload_interest_governance_schedule()
     if scheduler.state == STATE_STOPPED:
         scheduler.start()
         print("⏰ APScheduler 定时调度引擎已启动！")
@@ -663,11 +667,13 @@ async def lifespan(app: FastAPI):
     # issue #343:读者改完兴趣 / 订阅后静置一满就编——记意向的地方把到点时刻交给调度器;随 lifespan 登记与撤销。
     personal_digest_refresh_service.set_preference_due_hook(schedule_preference_refresh)
 
-    from services import translation_jobs, title_translation
+    from services import social_translation, translation_jobs, title_translation
     from services.briefs_runtime import BriefRuntime
 
     app.state.briefs_runtime = BriefRuntime(db_sink.engine)
     title_worker = asyncio.create_task(title_translation.worker_loop(db_sink.engine))
+    # 推文预译(issue #349):与标题 worker 一样不分运行角色,只处理本机权威的新推文
+    social_worker = asyncio.create_task(social_translation.worker_loop(db_sink))
     translation_worker = (asyncio.create_task(translation_jobs.worker_loop(db_sink.engine))
                           if runtime_reader_enabled() else None)
     try:
@@ -679,7 +685,8 @@ async def lifespan(app: FastAPI):
     finally:
         await app.state.briefs_runtime.close()
         title_worker.cancel()
-        await asyncio.gather(title_worker, return_exceptions=True)
+        social_worker.cancel()
+        await asyncio.gather(title_worker, social_worker, return_exceptions=True)
         if translation_worker is not None:
             translation_worker.cancel()
             await asyncio.gather(translation_worker, return_exceptions=True)
@@ -1944,6 +1951,7 @@ app.include_router(interests_router.router)
 app.include_router(personal_briefs_router.router)
 app.include_router(admin_reader_briefs_router.router)
 app.include_router(taxonomy_router.router)
+app.include_router(taxonomy_review_router.router)
 app.include_router(analysis_ops_router.router)
 app.include_router(articles_router.router)
 app.include_router(monitoring_router.router)
@@ -3021,19 +3029,20 @@ async def execute_collection_job(job_id: int):
 CRON_MISFIRE_GRACE_SECONDS = 300
 
 
-def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any]) -> bool:
+def add_cron_job(job_id: str, callback, cron_expr: str, args: List[Any], *, timezone: str | None = None) -> bool:
     """注册 / 覆盖一个 cron 类任务;表达式非法(非 5 段或字段越界)返回 False、不抛,调用方据此摘除旧注册。
 
     幂等:同 id 已注册且 trigger 与 args 都未变时原样保留——replace 会把 next_run_time 重置为「现在起算」,
     采集任务 CRUD 每次热重载都替换一遍会让无关任务在触发边界漏掉当次执行(PR-0 检视 F2)。
     """
-    trigger = parse_cron_expr(cron_expr)
+    trigger = parse_cron_expr(cron_expr, timezone=timezone)
     if trigger is None:
         return False
     existing = scheduler.get_job(job_id)
     if (
         existing is not None
         and str(getattr(existing, "trigger", None)) == str(trigger)
+        and str(getattr(existing.trigger, "timezone", None)) == str(trigger.timezone)
         and tuple(getattr(existing, "args", ()) or ()) == tuple(args)
     ):
         return True
@@ -3120,6 +3129,7 @@ def load_tasks_to_scheduler():
         sync_collection_job_schedules(session)
     # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
     reload_daily_brief_schedule()
+    reload_interest_governance_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
     # 同步写入的文章(带同步印记)不在本机分析,用上游同步来的结果。
     # 两个 worker 都在执行时读取数据库 feature flag，默认关闭且支持热切换。
@@ -3183,18 +3193,118 @@ async def execute_paper_fulltext_job():
         _dorami_logger.warning("论文全文任务异常；未完成租约将在后续批次恢复", exc_info=True)
 
 
+def reload_interest_governance_schedule():
+    """Reconcile only this workflow's jobs, on reader and collector nodes alike."""
+    _ensure_interval_job(
+        "custom_interest_matches", execute_custom_interest_matches_job,
+        minutes=1, max_instances=1, coalesce=True,
+    )
+    jobs = (
+        ("candidate_governance", settings.taxonomy.governance_enabled,
+         execute_candidate_governance_job),
+        ("taxonomy_review_proposals", settings.taxonomy.review_enabled,
+         execute_taxonomy_review_proposals_job),
+        ("candidate_relevance_retag", settings.taxonomy.governance_enabled or settings.taxonomy.review_enabled,
+         execute_candidate_relevance_retag_job),
+    )
+    for job_id, enabled, callback in jobs:
+        if enabled:
+            _ensure_interval_job(job_id, callback, minutes=5, max_instances=1, coalesce=True)
+        elif scheduler.get_job(job_id) is not None:
+            scheduler.remove_job(job_id)
+    digest_id = "taxonomy_review_digest"
+    digest_retry_id = "taxonomy_review_digest_retry"
+    if settings.taxonomy.review_enabled and settings.taxonomy.feishu_config_path:
+        add_cron_job(digest_id, execute_taxonomy_review_digest_job, "0 18 * * *", [], timezone="Asia/Shanghai")
+        _ensure_interval_job(
+            digest_retry_id, execute_taxonomy_review_digest_job,
+            minutes=5, max_instances=1, coalesce=True,
+            misfire_grace_time=CRON_MISFIRE_GRACE_SECONDS,
+        )
+    else:
+        for job_id in (digest_id, digest_retry_id):
+            if scheduler.get_job(job_id) is not None:
+                scheduler.remove_job(job_id)
+
+
+def execute_candidate_governance_job():
+    if not settings.taxonomy.governance_enabled:
+        return
+    from services.candidate_governance import run_governance_cycle
+
+    started = time.monotonic()
+    try:
+        with Session(db_sink.engine) as session:
+            counts = run_governance_cycle(
+                session, limit=100,
+                apply_exact=(settings.taxonomy.exact_merge_enabled
+                             and taxonomy_service.auto_activation_enabled(session)),
+            )
+        _dorami_logger.info("candidate_governance elapsed_ms=%d counts=%s", (time.monotonic() - started) * 1000, counts)
+    except Exception:
+        _dorami_logger.warning("候选治理调度失败；未完成项等待后续轮次", exc_info=True)
+
+
+def execute_custom_interest_matches_job():
+    from services.custom_interests import run_match_cycle
+    from services.interest_governance_llm import make_interest_verifier
+
+    started = time.monotonic()
+    try:
+        counts = run_match_cycle(db_sink.engine, limit=200, semantic_verifier=make_interest_verifier(db_sink.engine))
+        _dorami_logger.info("custom_interest_matches elapsed_ms=%d counts=%s", (time.monotonic() - started) * 1000, counts)
+    except Exception:
+        _dorami_logger.warning("个人兴趣匹配调度失败；未完成项等待后续轮次", exc_info=True)
+
+
+async def execute_candidate_relevance_retag_job():
+    if not (settings.taxonomy.governance_enabled or settings.taxonomy.review_enabled):
+        return
+    from services.candidate_retag import run_relevance_retag_cycle
+    from services.interest_governance_llm import make_retag_evaluator
+
+    try:
+        evaluator = make_retag_evaluator(db_sink.engine)
+        if evaluator is not None:
+            await run_relevance_retag_cycle(db_sink.engine, evaluator, limit=10)
+    except Exception:
+        _dorami_logger.warning("标签相关性核验未完成；请查看持久任务记录")
+
+
+def execute_taxonomy_review_proposals_job():
+    if not settings.taxonomy.review_enabled:
+        return
+    from services.taxonomy_review import refresh_review_proposals
+    from services.interest_governance_llm import make_taxonomy_adviser
+
+    try:
+        with Session(db_sink.engine) as session:
+            refresh_review_proposals(session, limit=100, adviser=make_taxonomy_adviser(db_sink.engine))
+    except Exception:
+        _dorami_logger.warning("新概念提案调度失败；未完成项等待后续轮次", exc_info=True)
+
+
+async def execute_taxonomy_review_digest_job():
+    if not settings.taxonomy.review_enabled or not settings.taxonomy.feishu_config_path:
+        return
+    from services.feishu_notifications import load_feishu_config
+    from services.taxonomy_review import send_daily_review_digest
+
+    try:
+        notification_config = load_feishu_config(settings.taxonomy.feishu_config_path)
+        await send_daily_review_digest(db_sink.engine, notification_config)
+    except Exception:
+        # Do not log exception text: configuration or HTTP failures may carry
+        # private file contents or a credential-bearing webhook URL.
+        _dorami_logger.warning("新概念审核通知未完成；请检查私密配置与投递记录")
+
+
 async def execute_article_analysis_job():
     """Recover/scan/claim article analysis without coupling it to ingestion."""
 
     def _resolve_config():
         with Session(db_sink.engine) as session:
             return daily_brief_service.resolve_llm_config(session)
-
-    def _activate_candidates():
-        with Session(db_sink.engine) as session:
-            # 同步来的词表只读:自动激活只在自己治理 taxonomy 的节点上跑。
-            if not sync_consumer_policy.taxonomy_governed_remotely(session):
-                taxonomy_service.run_auto_activation_cycle(session)
 
     try:
         llm_config = await asyncio.to_thread(_resolve_config)
@@ -3213,10 +3323,6 @@ async def execute_article_analysis_job():
             )
         # Podcast 全文处理自动入队已拆成独立的 podcast_landing 增量轮次
         # (issue #68),不再在这里全表重放。
-        # Candidate aggregation commits with each article.  Automatic promotion
-        # runs only afterwards, outside those transactions, and remains inert
-        # unless the explicit governance switch is enabled.
-        await asyncio.to_thread(_activate_candidates)
     except Exception as exc:  # noqa: BLE001 - scheduler jobs never stop collection
         _dorami_logger.warning("文章分析调度失败: %s", exc)
 

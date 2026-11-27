@@ -36,6 +36,7 @@ export const ANALYSIS_PROJECTION_KEYS = [
   'paper',
   // 兴趣标注随分析轮询刷新:pending 篇拿到标签后,命中胶囊不必等整列重载(codex 检视 P2)
   'interest_hits',
+  'interest_matches',
   // 自动标题翻译(issue #218)入库后才有,与分析同样落地在后:随打开时的详情回读与既有分析轮询顺带刷新,
   // 不为标题另开请求或轮询
   'title_zh',
@@ -44,6 +45,9 @@ export const ANALYSIS_PROJECTION_KEYS = [
 export function withFreshAnalysis(article, incoming) {
   if (!article || !incoming) return article;
   const next = { ...article };
-  for (const key of ANALYSIS_PROJECTION_KEYS) next[key] = incoming[key];
+  for (const key of ANALYSIS_PROJECTION_KEYS) {
+    if (key === 'interest_matches' && !Object.hasOwn(incoming, key)) delete next[key];
+    else next[key] = incoming[key];
+  }
   return next;
 }

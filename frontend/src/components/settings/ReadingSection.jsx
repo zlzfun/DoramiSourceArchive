@@ -9,9 +9,10 @@ const ROW_OPTIONS = [
   { id: 'even', name: '一律等高' },
 ];
 
-// 阅读(issue #218):标题语言偏好。开 = 有中文译名的标题显示中文、阅读页保留原题小字;关 = 一律原题。
-// 只管标题,正文语言仍由阅读页的「原语言 / 中文」切换决定。偏好自持于 context(账号存服务端,游客存本机),
-// 桌面设置柜与移动设置栈两处渲染同一组件,无需穿 props。
+// 阅读:「优先显示中文」(issue #218 起是标题,issue #349 扩到推文)。开 = 有中文译名的标题显示中文(阅读页
+// 保留原题小字)、有译文的推文直接显示中文(卡片底栏可切回原文);关 = 一律原文。文章正文的语言仍由阅读页的
+// 「原语言 / 中文」切换决定。偏好自持于 context(账号存服务端,游客存本机),桌面设置柜与移动设置栈两处
+// 渲染同一组件,无需穿 props。
 // desktop(桌面设置柜才传):多一行「列表条目」——桌面列表缺省按分值收放,手机卡片不受影响,
 // 所以移动设置栈不出这一行。只存本机。
 export default function ReadingSection({ desktop = false }) {
@@ -34,14 +35,14 @@ export default function ReadingSection({ desktop = false }) {
     <>
     <div className="sett-row">
       <span className="sett-id">
-        <span className="sett-lbl">默认显示中文标题</span>
+        <span className="sett-lbl">优先显示中文</span>
       </span>
       <span className="sett-ctl">
         <button
           type="button"
           role="switch"
           aria-checked={preferChinese}
-          aria-label="默认显示中文标题"
+          aria-label="优先显示中文"
           onClick={() => setPreferChinese(!preferChinese)}
           className={`ledger-switch ${preferChinese ? 'is-on' : ''}`}
         />

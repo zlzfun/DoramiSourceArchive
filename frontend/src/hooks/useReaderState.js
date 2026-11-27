@@ -1,3 +1,5 @@
+import { authGeneration } from '../api';
+import { blockedInterestQuery, canFilterCustomInterests, resolveInterestNavigation as resolveNavigation } from '../utils/readerInterestQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useArticleTranslation } from './useArticleTranslation';
 import { looksChinese } from '../utils/readerText';
@@ -17,9 +19,12 @@ import {
 import { copyText } from '../utils/clipboard';
 import {
   currentSocialTranslation,
+  socialCachedZh,
+  socialCardView,
+  socialOriginalTexts,
+  socialToggledEntry,
   nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
-  socialQuotaActive,
   socialQuotaUntil,
   socialTranslationSignature,
 } from '../utils/socialTranslate';
@@ -43,6 +48,7 @@ import { createListRegistry, markReadMatcher } from '../utils/articleList';
 import { SOURCE_ROLES, sourceRoleOf } from '../sourceTaxonomy';
 import { usePolling } from './usePolling';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useTitlePreference } from './useTitlePreference';
 import { useListLoader, useListWindow } from './useArticleList';
 import {
   fetchReaderSources,
@@ -131,6 +137,8 @@ export function useReaderState({
   const [sources, setSources] = useState([]);
   const [subscribedIds, setSubscribedIds] = useState(() => new Set());
   const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourcesLoadState, setSourcesLoadState] = useState(null);
+  const sourcesRequestRef = useRef({ seq: 0 });
   const [activeSourceId, setActiveSourceId] = useState(null); // null = 当前容器的聚合流
   // ── 左栏一根轴(issue #27 五稿):scope = { axis, favorite };下钻项是 activeSourceId / activeTagId。
   //    点源 / 按 id 打开一篇 = 临时进入来源轴(不落盘);回聚合(goContainerAll / goView)读回记住的。 ──
@@ -138,6 +146,7 @@ export function useReaderState({
   // 游客(issue #213):需要账号的写操作在这里统一拦下,弹登录提示而不发请求——
   // 桌面、移动壳、早报、发现页的调用点都经过这些处理函数,一处守住。
   const isGuest = account?.role === 'guest';
+  const sessionKey = `${scopeUser}:${authGeneration()}`;
   const [storedScope, setScopeState] = useState(() => readStoredScope(scopeUser, 'article'));
   // 能力位关闭时兴趣轴不可达:记住的兴趣轴就地回落到订阅轴(不改写存储,重新开启即恢复);
   // 手机壳(aggregateOnly)同理回落到订阅全集。已是订阅全集时原样返回(身份不变,跨版式不重拉列表)
@@ -151,20 +160,59 @@ export function useReaderState({
   const favOnly = scope.favorite;
   // 兴趣轴的下钻项(关注标签 id);与 activeSourceId 互斥(切轴即清)
   const [activeTagId, setActiveTagId] = useState(null);
+  const [activeCustomInterestId, setActiveCustomInterestId] = useState(null);
+  const [customInterests, setCustomInterests] = useState([]);
+  const [interestsLoadState, setInterestsLoadState] = useState(null);
+  const discoveryDecisionRef = useRef(null);
+  const [interestCapabilities, setInterestCapabilities] = useState(null);
+  const [interestUnion, setInterestUnion] = useState(false);
+  const [interestRevision, setInterestRevision] = useState(null);
+  const interestsRequestRef = useRef({ seq: 0, controller: null });
   // 关注的标签 = 兴趣轴的列表(v3.56 起兴趣只有关注一极);
   // 兴趣页保存后由 refreshInterests 刷新
   const [followedTags, setFollowedTags] = useState([]);
   const refreshInterests = useCallback(async () => {
-    if (!interestAxisEnabled) return; // 端点在能力位关闭时 403,不必打
+    const ownerKey = sessionKey;
+    const state = interestsRequestRef.current;
+    if (state.ownerKey !== ownerKey) { setFollowedTags([]); setCustomInterests([]); }
+    state.ownerKey = ownerKey;
+    setInterestsLoadState({ ownerKey, status: 'loading' });
+    state.controller?.abort();
+    const seq = ++state.seq;
+    if (!interestAxisEnabled || isGuest) {
+      setFollowedTags([]); setCustomInterests([]); setInterestCapabilities(null); setInterestRevision(null);
+      setInterestsLoadState({ ownerKey, status: 'disabled' });
+      return;
+    }
+    const controller = new AbortController();
+    state.controller = controller;
     try {
-      const data = await fetchInterests();
-      setFollowedTags((data.items || [])
-        .filter((it) => it.tag?.id)
-        .map((it) => ({ id: it.tag.id, kind: it.tag.kind, name: it.tag.name_zh || it.tag.name_en || String(it.tag.id) })));
-    } catch { /* 非关键路径:失败保持上次已知值 */ }
-  }, [interestAxisEnabled]);
-  useEffect(() => { refreshInterests(); }, [refreshInterests]);
-  const hasInterests = followedTags.length > 0;
+      const data = await fetchInterests({ signal: controller.signal });
+      if (seq !== state.seq || state.ownerKey !== ownerKey || controller.signal.aborted) return;
+      setFollowedTags((data.items || []).filter((it) => it.tag?.id)
+        .map((it) => ({ id: it.tag.id, code: it.tag.code, kind: it.tag.kind, name: it.tag.name_zh || it.tag.name_en || String(it.tag.id) })));
+      setCustomInterests(Array.isArray(data.custom_items) ? data.custom_items : []);
+      setInterestCapabilities(data.capabilities || null);
+      if (canFilterCustomInterests(data.capabilities)) setInterestUnion(true);
+      setInterestRevision(data.revision ?? null);
+      setInterestsLoadState({ ownerKey, status: 'ready' });
+    } catch (error) {
+      if (error.name !== 'AbortError' && seq === state.seq && state.ownerKey === ownerKey) {
+        setInterestCapabilities(null); setCustomInterests([]);
+        setInterestsLoadState({ ownerKey, status: 'error' });
+      }
+    }
+  }, [interestAxisEnabled, isGuest, sessionKey]);
+  useEffect(() => {
+    refreshInterests();
+    const state = interestsRequestRef.current;
+    return () => { state.seq += 1; state.controller?.abort(); };
+  }, [refreshInterests]);
+  const hasInterests = followedTags.length > 0 || customInterests.some((item) => item.status === 'active');
+  const resolveInterestNavigation = (ref) => resolveNavigation(ref, { tags: followedTags, custom: customInterests, capabilities: interestCapabilities });
+  const activeCustomInterest = customInterests.find((item) => String(item.id) === activeCustomInterestId);
+  const customInterestUnavailable = Boolean(activeCustomInterestId)
+    && (!canFilterCustomInterests(interestCapabilities) || activeCustomInterest?.status !== 'active');
   // 兴趣轴分组(与源栏的角色分组同一形制:组头 + 行),按目录面分组,词汇与兴趣页一致
   const interestGroups = useMemo(() => {
     const meta = [['topic', '主题'], ['industry', '行业'], ['entity', '实体']];
@@ -191,7 +239,10 @@ export function useReaderState({
   // 都推进它,让慢网下尚未返回的早报卡打开作废,不再后到覆盖读者的直接导航(codex 检视 P2)
   const openSeqRef = useRef(0);
   // (useCallback 而非裸箭头:React Compiler 把渲染作用域裸函数里的 ref 写视作渲染期修改)
-  const supersedePendingOpen = useCallback(() => { openSeqRef.current += 1; }, []);
+  const supersedePendingOpen = useCallback(() => {
+    openSeqRef.current += 1;
+    discoveryDecisionRef.current = sessionKey;
+  }, [sessionKey]);
   const openDiscover = useCallback((opts) => {
     supersedePendingOpen();
     // 直接挂 onClick 时 opts 是事件对象,没有 shape 键 → 取当前容器
@@ -226,7 +277,9 @@ export function useReaderState({
     setSearchOpen(true);
     setSearchInputState(search.label);
     setTagSearch(search);
-  }, [supersedePendingOpen]);
+    setActiveCustomInterestId(null);
+    if (activeCustomInterestId) setScopeState((prev) => ({ ...prev, axis: 'subscribed' }));
+  }, [supersedePendingOpen, activeCustomInterestId]);
 
   // ── 容器模型(Folo 语义):文章/播客/社交是三个内容宇宙,各自渲染形态不同 ──
   // 'article'(默认) | 'podcast' | 'social'。选中源=在容器内收窄(mode 与 activeSourceId
@@ -327,21 +380,44 @@ export function useReaderState({
   const prefetchTimerRef = useRef(null);
   const prefetchingIdsRef = useRef(new Set());
 
+  const revokeArticleAccess = useCallback((id) => {
+    bodyCacheRef.current.delete(id); summaryCacheRef.current.delete(id);
+    setArticles((items) => items.filter((item) => item.id !== id));
+    listRegistry.patch(id, (item) => ({ ...item, content: null, interest_matches: [], interest_hits: [] }));
+    if (activeIdRef.current === id) {
+      activeIdRef.current = null;
+      setActiveArticle(null); setActiveBody(null); setActiveSummary(null); setActiveBodyLoading(false);
+    }
+  }, [setArticles, listRegistry]);
+
   // ── 源目录 ──
   const loadSources = useCallback(async () => {
+    const state = sourcesRequestRef.current;
+    const ownerKey = sessionKey;
+    state.ownerKey = ownerKey;
+    const seq = ++state.seq;
     setSourcesLoading(true);
+    setSourcesLoadState({ ownerKey, status: 'loading' });
     try {
       const data = await fetchReaderSources();
+      if (seq !== state.seq || state.ownerKey !== ownerKey) return;
       setSources(data.sources || []);
       setSubscribedIds(new Set(data.subscribed_source_ids || []));
+      setSourcesLoadState({ ownerKey, status: 'ready' });
     } catch (error) {
+      if (seq !== state.seq || state.ownerKey !== ownerKey) return;
+      setSourcesLoadState({ ownerKey, status: 'error' });
       showToast(error.message || '获取内容源目录失败', 'error');
     } finally {
-      setSourcesLoading(false);
+      if (seq === state.seq && state.ownerKey === ownerKey) setSourcesLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, sessionKey]);
 
-  useEffect(() => { loadSources(); }, [loadSources]);
+  useEffect(() => {
+    loadSources();
+    const state = sourcesRequestRef.current;
+    return () => { state.seq += 1; };
+  }, [loadSources]);
 
   // 合集目录(策展注册表直出,低频变化):挂载拉一次;失败静默——合集是发现页的
   // 增强视图,目录取不到时「源」视图完整可用,不值得打断。
@@ -498,10 +574,16 @@ export function useReaderState({
 
   const hasNoSubscriptions = !sourcesLoading && subscribedSources.length === 0;
 
-  // 零订阅时自动进入发现页,引导用户添加第一个订阅
+  // 同一会话的两个目录都已确认后，仅为尚未选择阅读范围的用户引导一次。
+  // 网络错误不是空兴趣；后续刷新不能覆盖用户已经进行的导航。
   useEffect(() => {
-    if (hasNoSubscriptions) openDiscover({ shape: 'all' });
-  }, [hasNoSubscriptions, openDiscover]);
+    if (discoveryDecisionRef.current === sessionKey || initialArticleId
+      || sourcesLoadState?.ownerKey !== sessionKey || sourcesLoadState.status !== 'ready'
+      || interestsLoadState?.ownerKey !== sessionKey
+      || !['ready', 'disabled'].includes(interestsLoadState.status)) return;
+    discoveryDecisionRef.current = sessionKey;
+    if (hasNoSubscriptions && !hasInterests) openDiscover({ shape: 'all' });
+  }, [sessionKey, initialArticleId, sourcesLoadState, interestsLoadState, hasNoSubscriptions, hasInterests, openDiscover]);
 
   // ── hover 预取正文(A4):150ms 去抖;命中缓存/进行中/无 id 都不发 ──
   const cancelPrefetch = useCallback(() => {
@@ -520,7 +602,7 @@ export function useReaderState({
       prefetchTimerRef.current = null;
       if (bodyCacheRef.current.has(id) || prefetchingIdsRef.current.has(id)) return;
       prefetchingIdsRef.current.add(id);
-      fetchArticle(id)
+      fetchArticle(id, { withInterest: true })
         .then((data) => { bodyCacheRef.current.set(id, data?.content || ''); })
         .catch(() => { /* 预取失败静默:点击时正常路径兜底 */ })
         .finally(() => { prefetchingIdsRef.current.delete(id); });
@@ -571,7 +653,7 @@ export function useReaderState({
     setActiveBody(knownBody ?? null);
     setActiveBodyLoading(knownBody === undefined);
     // 正文缓存不代表导读状态仍新鲜:换篇再回来也必须回读详情。
-    fetchArticle(id)
+    fetchArticle(id, { withInterest: true })
       .then((data) => {
         const body = data?.content || '';
         bodyCacheRef.current.set(id, body);
@@ -596,6 +678,11 @@ export function useReaderState({
         }
       })
       .catch((error) => {
+        if (error.name === 'AbortError') return;
+        if (error.status === 403 || error.status === 404) {
+          revokeArticleAccess(id);
+          return;
+        }
         if (activeIdRef.current === id) {
           // 状态回读失败也保留已经可读的正文,不因新增回读把缓存文章清空。
           setActiveBody(knownBody ?? null);
@@ -603,7 +690,7 @@ export function useReaderState({
           showToast(error.message || (knownBody === undefined ? '获取文章正文失败' : '状态刷新失败，请稍后重试'), 'error');
         }
       });
-  }, [showToast, supersedePendingOpen, setArticles, listRegistry]);
+  }, [showToast, supersedePendingOpen, setArticles, listRegistry, revokeArticleAccess]);
 
   // ── AI · 要点摘要(结果双层缓存:服务端 extensions_json + 本会话 Map)──
   const handleSummarize = useCallback(async () => {
@@ -630,7 +717,7 @@ export function useReaderState({
     const id = requestedId || activeIdRef.current;
     if (!id) return null;
     try {
-      const data = await fetchArticle(id);
+      const data = await fetchArticle(id, { withInterest: true });
       setActiveArticle((current) => (
         current?.id === id ? withFreshAnalysis(current, data) : current
       ));
@@ -639,10 +726,11 @@ export function useReaderState({
       )));
       listRegistry.patch(id, (item) => withFreshAnalysis(item, data));
       return data;
-    } catch {
+    } catch (error) {
+      if (error.status === 403 || error.status === 404) revokeArticleAccess(id);
       return null;
     }
-  }, [setArticles, listRegistry]);
+  }, [setArticles, listRegistry, revokeArticleAccess]);
 
   // ── 内容类型筛选(issue #178)──
   // 只在文章容器出现,单选。选中值绑定在「当时的作用域」上:切容器 / 源 / 轴 / 收藏 / 标签后
@@ -650,7 +738,7 @@ export function useReaderState({
   // 返回原作用域不复活旧筛选(codex R1 #3)。不必在每个导航入口逐一清零;
   // 作用域 key 不变的导航(按 id 打开同源文章)在 openArticleById 里显式清除。
   // 选项来自列表首页附带的分面计数(kind_facets,不含 kind 自身的同一范围),不从当前页推导。
-  const kindScopeKey = JSON.stringify([mode, activeSourceId, activeTagId, scope.axis, scope.favorite]);
+  const kindScopeKey = JSON.stringify([mode, activeSourceId, activeTagId, activeCustomInterestId, scope.axis, scope.favorite]);
   const [kindChoice, setKindChoice] = useState(EMPTY_KIND_CHOICE);
   const reconciledKindChoice = reconcileKindChoice(kindChoice, kindScopeKey);
   if (reconciledKindChoice !== kindChoice) setKindChoice(reconciledKindChoice);
@@ -671,8 +759,8 @@ export function useReaderState({
   // ── 文章列表(主列表实例;列表本身在 hooks/useArticleList,issue #230 批 3a 拆出,手机推入页另起一个实例)──
   // 查询对象的身份 = 作用域:任一字段(含 scope 对象本身)换了即清场重拉,与拆分前 loadArticles 的依赖同一组
   const listQuery = useMemo(
-    () => ({ activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter }),
-    [activeSourceId, activeTagId, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter],
+    () => ({ activeSourceId, activeTagId, activeCustomInterestId, interestCapabilities, interestRevision, sessionKey, interestUnion, customInterestUnavailable, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter }),
+    [activeSourceId, activeTagId, activeCustomInterestId, interestCapabilities, interestRevision, sessionKey, interestUnion, customInterestUnavailable, mode, scope, tagSearch, searchQuery, unreadOnly, kindFilter, podcastGuideFilter],
   );
   // 换作用域清场:清右栏(深链落地那一次保留——分享深链要「切作用域 + 选中该篇」一次完成,
   // 而清场会把刚 selectArticle 的右栏立刻抹掉);新内容增量检测重新起算
@@ -704,7 +792,12 @@ export function useReaderState({
     }
   }, []);
   const onListFresh = useCallback(() => setFreshCount(0), []);
-  const { loadArticles, handleLoadMore, hasMore, refreshReadState } = useListLoader(listWindow, {
+  const onListReplaced = useCallback(() => {
+    prevScopeUnreadRef.current = null;
+    if (activeIdRef.current) refreshActiveArticle(activeIdRef.current);
+  }, [refreshActiveArticle]);
+  const interestListUnavailable = blockedInterestQuery(listQuery);
+  const { loadArticles, handleLoadMore, hasMore, refreshReadState, pageFailed } = useListLoader(listWindow, {
     query: listQuery,
     hidden: activeSourceHidden,
     showToast,
@@ -714,6 +807,7 @@ export function useReaderState({
     selectedIdRef: activeIdRef,
     onPolled: onListPolled,
     onWindowFresh: onListFresh,
+    onWindowReplaced: onListReplaced,
     onScopeReset: onListScopeReset,
   });
   // 分面只认当前作用域的那一份(切范围后旧计数不残留到新列表头)
@@ -982,7 +1076,7 @@ export function useReaderState({
   // 批次封顶,只有写满时发起实例在列的可乐观清点,其余实例(与没写满时的发起实例)按服务端读态静默校准;
   // 只看未读的实例(含发起者)一律重拉。
   const markListAllRead = async (plan, { listArticles = [] } = {}) => {
-    if (markingRead || !plan) return;
+    if (markingRead || !plan || plan.customInterestId || (plan.interest && !plan.tagId && interestUnion)) return;
     setMarkingRead(true);
     try {
       const data = plan.interest
@@ -1032,12 +1126,14 @@ export function useReaderState({
     });
   };
   // 主列表的范围(桌面列头 / 手机内容 Tab 页头的那枚钮;onClick 直接挂,忽略事件参数)
-  const handleMarkAllRead = () => markListAllRead(
+  const canMarkAllRead = !activeCustomInterestId && !(scope.axis === 'interest' && !activeTagId && interestUnion);
+  const handleMarkAllRead = () => canMarkAllRead && markListAllRead(
     {
       sourceId: activeSourceId,
       shape: mode,
       interest: scope.axis === 'interest' && !activeSourceId,
       tagId: activeTagId,
+      customInterestId: activeCustomInterestId,
     },
     { listArticles: articles },
   );
@@ -1064,6 +1160,7 @@ export function useReaderState({
   };
 
   // 刷新新到内容:重拉列表 + 未读统计(提示条点击)
+  const retryInterestList = () => interestListUnavailable ? refreshInterests() : loadArticles(0, false);
   const handleRefreshFresh = () => {
     loadArticles(0, false);
     loadUnreadCounts();
@@ -1118,19 +1215,21 @@ export function useReaderState({
     }
   };
 
-  // 推文翻译开合:已译过的只在本地开合(不再请求);首次 / 失败后重试 / 原文已变才发请求。服务端有缓存,
-  // 收起后换页回来再点也只是一次 HTTP、零模型调用。额度用尽(429)当天留在 quota 态,不给重试。
-  const toggleSocialTranslation = useCallback((article) => {
+  // 推文换语言。view 是调用方(那张卡 / 它的菜单)按自己所在列表算好的翻译视图(utils/socialTranslate.socialCardView)——
+  // 这里不重新推导:同一条推文在搜索结果与订阅推入页里的默认语言可以不同,开关替谁推导都会和另一处对不上。
+  // 有译文(随列表带回的,或本次会话翻出来的)只在本地切,不发请求;没有译文才向 AI 要——首次 / 失败后重试 /
+  // 原文已变。额度用尽(429)当天留在 quota 态,不给重试。
+  const toggleSocialTranslation = useCallback((article, view) => {
     const id = article?.id;
+    if (!id || !view) return;
     const sig = socialTranslationSignature(article);
-    if (!id || !sig) return;
-    let entry = currentSocialTranslation(socialTranslationsRef.current[id], sig);
-    if (entry?.status === 'quota' && !socialQuotaActive(entry)) entry = null;
-    if (entry?.status === 'loading' || entry?.status === 'quota') return;
-    if (entry?.status === 'done') {
-      setSocialTranslations((prev) => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open } }));
+    const toggled = socialToggledEntry(view, sig);
+    if (toggled) {
+      // 记下这张卡的选择:之后它不再跟偏好走,直到原文变了(签名对不上)或页面重载
+      setSocialTranslations((prev) => ({ ...prev, [id]: toggled }));
       return;
     }
+    if (view.action !== 'request') return;
     // 回包只在该卡仍是同一签名的 loading 时落地:原文中途变了 / 旧请求晚到都不覆盖新状态(检视 R1-02);
     // next 为 null 表示回到可点状态(移除该卡条目)
     const settle = (next) => setSocialTranslations((prev) => {
@@ -1222,19 +1321,35 @@ export function useReaderState({
     return items;
   };
 
-  const buildSocialMenuItems = (article) => {
+  // 菜单里的翻译视图与那张卡同一口径。context.searchQuery = 这条推文所在列表实例的搜索词:
+  // 主列表不传(用主列表的),订阅推入页是另一个列表实例、没有搜索,要显式传空串。
+  const { preferChinese } = useTitlePreference();
+  const socialViewFor = (article, context = {}) => {
+    const sig = socialTranslationSignature(article);
+    return socialCardView({
+      cached: socialCachedZh(article),
+      entry: currentSocialTranslation(socialTranslations[article?.id], sig),
+      preferChinese,
+      aiEnabled,
+      translatable: Boolean(sig),
+      searchQuery: context.searchQuery ?? searchQuery,
+      original: socialOriginalTexts(article),
+    });
+  };
+
+  const buildSocialMenuItems = (article, context = {}) => {
     const unread = isArticleUnread(article);
     const fav = favoriteIds.has(article.id);
-    // 翻译项与卡片底栏同一个开关(issue #84):译文开着时是「收起译文」;状态按原文签名取,原文变了视为未翻译
-    const trSig = aiEnabled ? socialTranslationSignature(article) : '';
-    const tr = currentSocialTranslation(socialTranslations[article.id], trSig);
-    const translateItems = trSig
+    // 语言项与卡片底栏同一个开关(issue #84 / #349):显示中文时是「显示原文」,否则「译为中文」;
+    // 没有译文、也要不到(AI 不可用 / 这条不需要翻译)时不出这一项
+    const view = socialViewFor(article, context);
+    const translateItems = view.action || view.status
       ? [{
         key: 'translate',
-        label: tr?.status === 'done' && tr.open ? '收起译文' : '译为中文',
+        label: view.action === 'original' ? '显示原文' : '译为中文',
         icon: Sparkles,
-        disabled: tr?.status === 'loading' || socialQuotaActive(tr),
-        onClick: () => toggleSocialTranslation(article),
+        disabled: view.status === 'loading' || view.status === 'quota',
+        onClick: () => toggleSocialTranslation(article, view),
       }]
       : [];
     return [
@@ -1255,7 +1370,7 @@ export function useReaderState({
     setDiscover(false);
     applyMode(v); // 轴与收藏按容器记住,点容器钮不重置它——只清下钻项与搜索
     setActiveSourceId(null);
-    setActiveTagId(null);
+    setActiveTagId(null); setActiveCustomInterestId(null);
     setSearchOpen(false);
     setGuideChoice({ key: '', value: '' });
     setSearchInput('');
@@ -1266,7 +1381,7 @@ export function useReaderState({
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(sourceId);
-    setActiveTagId(null);
+    setActiveTagId(null); setActiveCustomInterestId(null);
     const nextMode = shapeOfSource(sourceId);
     setMode(nextMode);
     setScopeState({ ...readStoredScope(scopeUserRef.current, nextMode), axis: 'subscribed' });
@@ -1278,7 +1393,20 @@ export function useReaderState({
     setDiscover(false);
     setActiveSourceId(null);
     setActiveTagId(tagId);
+    setActiveCustomInterestId(null);
     setScopeState((prev) => ({ ...prev, axis: 'interest' }));
+  };
+  const goInterest = (ref, article = null) => {
+    const target = resolveInterestNavigation(ref);
+    if (!target || !interestAxisEnabled || isGuest) return false;
+    if (article) alignModeToArticle(article);
+    else if (modeRef.current === 'social') { modeRef.current = 'article'; applyMode('article'); }
+    supersedePendingOpen(); setDiscover(false);
+    setActiveSourceId(null); setSearchInput(''); setSearchOpen(false);
+    setActiveTagId(target.kind === 'tag' ? target.id : null);
+    setActiveCustomInterestId(target.kind === 'custom' ? target.id : null);
+    setScopeState({ axis: 'interest', favorite: false });
+    return true;
   };
   // 站内分享深链:分享出来的 #/reader/a/{id},进来直接开这篇。
   // 等 sources 到位再执行——要靠 shapeOfSource 把容器切到这篇所属的宇宙(文章/动态/社交),
@@ -1303,7 +1431,7 @@ export function useReaderState({
     if (!articleId) return false;
     const seq = ++openSeqRef.current;
     try {
-      const article = await fetchArticle(articleId);
+      const article = await fetchArticle(articleId, { withInterest: true });
       if (seq !== openSeqRef.current) return null;
       if (!article?.id) throw new Error('empty');
       const ctx = deepLinkCtxRef.current;
@@ -1311,7 +1439,7 @@ export function useReaderState({
       deepLinkKeepRef.current = true; // 通知作用域清场 effect:这次切换保留右栏(见 useLayoutEffect)
       setDiscover(false);
       setActiveSourceId(article.source_id || null);
-      setActiveTagId(null);
+      setActiveTagId(null); setActiveCustomInterestId(null);
       setGuideChoice({ key: '', value: '' });
       setKindChoice(EMPTY_KIND_CHOICE); // 导航到具体一篇:退出类型筛选,作用域 key 不变时也不留旧筛选
       const nextMode = ctx.shapeOfSource(article.source_id);
@@ -1342,7 +1470,7 @@ export function useReaderState({
   // Folo 语义——收藏是与「全部」并列的一级过滤,不再挂在列头逐源。
   // 只撤来源 / 兴趣下钻、读回记住的轴(不动发现页与在途的按 id 打开;换版式进手机时 ReaderWorkspace 直接用它)
   const dropNarrowing = () => {
-    setActiveSourceId(null); setActiveTagId(null);
+    setActiveSourceId(null); setActiveTagId(null); setActiveCustomInterestId(null);
     setScopeState(readStoredScope(scopeUserRef.current, modeRef.current)); // 离开下钻:恢复记住的轴
   };
   const goContainerAll = () => {
@@ -1365,7 +1493,7 @@ export function useReaderState({
     supersedePendingOpen();
     setDiscover(false);
     setActiveSourceId(null);
-    setActiveTagId(null);
+    setActiveTagId(null); setActiveCustomInterestId(null);
     const next = { ...scope, axis };
     writeStoredScope(scopeUserRef.current, modeRef.current, next);
     setScopeState(next);
@@ -1394,11 +1522,13 @@ export function useReaderState({
   const interestAxis = scope.axis === 'interest';
   const listTitle = activeSourceId
     ? (sourceNameMap[activeSourceId] || activeSourceId)
+    : activeCustomInterestId
+      ? (customInterestUnavailable ? '兴趣暂不可用' : activeCustomInterest.name)
     : activeTagId
       ? (tagNameMap[activeTagId] || '兴趣')
       : (interestAxis ? '兴趣' : '订阅');
   const listSubtitle = [
-    interestAxis && !activeTagId && '全站',
+    interestAxis && !activeTagId && !activeCustomInterestId && '全站',
     scope.favorite && '收藏',
   ].filter(Boolean).join(' · ');
   // 条目的「未订阅」标记只在兴趣轴(全站范围)有意义;单源预览由订阅横幅承担
@@ -1486,10 +1616,12 @@ export function useReaderState({
     // 视图 / 导航
     mode, activeSourceId, favOnly, discover, openDiscover, closeDiscover, discoverShape, setDiscoverShape,
     socialView, podcastView, railActive, listTitle, listSubtitle,
-    goView, goSource, goTag, goContainerAll, dropNarrowing, alignModeToArticle,
+    goView, goSource, goTag, goInterest, resolveInterestNavigation, goContainerAll, dropNarrowing, alignModeToArticle,
     // 内容类型筛选(issue #178)
     kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
     // 左栏一根轴(issue #27 五稿)
+    listWindowRevision: listWindow.windowRevision, interestListUnavailable, pageFailed, retryInterestList,
+    activeCustomInterestId, customInterestUnavailable, customInterests, interestCapabilities, interestRevision, sessionKey, canMarkAllRead,
     scope, setAxis, toggleFavoriteScope, activeTagId, activeTagName, interestGroups, hasInterests, refreshInterests,
     interestAxisEnabled, showUnsubscribedMark, showInterestHit,
     activeSourceHidden, activeUnsubscribed, grouping,

@@ -12,6 +12,27 @@ from sqlalchemy import (
     inspect,
     text,
 )
+from models.taxonomy_governance import (
+    CandidateGovernanceStateRecord,
+    CandidateGovernanceActionRecord,
+)
+from models.custom_interests import (
+    UserInterestConditionRecord,
+    UserInterestStateRecord,
+    InterestArticleMatchRecord,
+    InterestMatchJobRecord,
+    InterestSemanticScanRecord,
+    InterestSemanticRequestRecord,
+)
+from models.taxonomy_review import (
+    ReviewProposalRecord,
+    ReviewProposalMemberRecord,
+    ReviewProposalRevisionRecord,
+    ReviewInboxRecord,
+    ReviewNotificationOutboxRecord,
+    ReviewNotificationBatchRecord,
+    ReviewNotificationAttemptRecord,
+)
 
 
 class ObjectBlobRecord(SQLModel, table=True):
@@ -155,6 +176,45 @@ class TitleTranslationCallRecord(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("status IN ('reserved','settled','unknown','released')", name="ck_title_translation_call_status"),
         Index("ix_title_translation_calls_budget", "day", "status"),
+    )
+    id: str = Field(primary_key=True)
+    article_id: str
+    day: str
+    reserved_tokens: int
+    status: str = "reserved"
+    recorded: bool = False
+    created_at: float
+
+
+class SocialTranslationJobRecord(SQLModel, table=True):
+    """推文预译待办(issue #349):与推文同事务落库,只在本机权威节点派发,不参与 Archive Sync。
+
+    ``source_fp`` 是需要翻译的那几段原文(主推 / 引用推)的指纹,与译文缓存
+    ``translation_zh_social.fp`` 同口径;原文变了即换指纹重排。``lease_until`` / ``lease_token`` 是派发中的
+    占用:多个应用进程同时只放行一个自动请求,续租、发布与收尾都认 token;进程退出后到期自动回到可领取。
+    """
+    __tablename__ = "social_translation_jobs"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','running','succeeded','failed','skipped')", name="ck_social_translation_job_status"),
+        Index("ix_social_translation_jobs_due", "status", "retry_at"),
+    )
+    article_id: str = Field(primary_key=True, foreign_key="articles.id", ondelete="CASCADE")
+    source_fp: str
+    status: str = "pending"
+    attempts: int = 0
+    retry_at: float = 0
+    lease_until: float = 0
+    lease_token: str = ""
+    updated_at: float
+    error: str = ""
+
+
+class SocialTranslationCallRecord(SQLModel, table=True):
+    """推文预译的费用预留(issue #349):独立于读者翻译额度,也独立于标题自动翻译的预算。"""
+    __tablename__ = "social_translation_calls"
+    __table_args__ = (
+        CheckConstraint("status IN ('reserved','settled','unknown','released')", name="ck_social_translation_call_status"),
+        Index("ix_social_translation_calls_budget", "day", "status"),
     )
     id: str = Field(primary_key=True)
     article_id: str
@@ -2980,11 +3040,14 @@ class BailianTtsCallRecord(SQLModel, table=True):
             name="ck_bailian_tts_usage",
         ),
         Index("ix_bailian_tts_scope_period", "account_scope", "budget_period"),
+        Index("ix_bailian_tts_scope_day", "account_scope", "budget_day"),
     )
     id: str = Field(primary_key=True)
     episode_id: str = Field(index=True)
     account_scope: str
     budget_period: str
+    # Shanghai authorization day; blank legacy dates are conservatively unknown.
+    budget_day: str = ""
     created_at: str
     status: str = "reserved"
     reserved_characters: int

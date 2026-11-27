@@ -35,6 +35,7 @@ from models.analysis_contracts import (
     PERSONAL_DIGEST_VALUE_WINDOW_DAYS_LIMIT,
     SelectionLane,
     UserInterestDTO,
+    InterestRef,
 )
 from services.article_time import parse_article_time
 from services.content_classification import CONTENT_PRIMARY_KINDS, PERSONAL_DIGEST_GENRE_SECTIONS
@@ -124,9 +125,9 @@ class DigestSelectionPolicy:
 def interest_only_policy(policy: DigestSelectionPolicy) -> DigestSelectionPolicy:
     """Policy for a reader with interests but no subscriptions(v3.54).
 
-    There is no quality lane to fill the other half, so the edition is just the
-    interest allocation(at most ``interest_slots`` items)with the 50% ceiling
-    lifted——otherwise a half that has no counterpart could never be filled.
+    There is no quality lane to fill the remainder, so the edition is just the
+    interest allocation(at most ``interest_slots`` items)with the configured ceiling
+    lifted so readers without subscriptions can still receive an edition.
     Thresholds and the external per-source cap are unchanged.
     """
 
@@ -199,6 +200,14 @@ def interest_codes_of(candidate: DigestArticleCandidateDTO) -> tuple[str, ...]:
     return candidate.tag_codes
 
 
+def interest_keys_of(candidate: DigestArticleCandidateDTO) -> tuple[str, ...]:
+    return (*interest_codes_of(candidate), *(ref.key for ref in candidate.custom_interest_refs))
+
+
+def _custom_refs(keys):
+    return tuple(InterestRef(kind="custom", id=key.split(":", 1)[1]) for key in keys if key.startswith("custom:"))
+
+
 def eligible_for_selection(
     candidate: DigestArticleCandidateDTO,
     *,
@@ -211,7 +220,7 @@ def eligible_for_selection(
         return candidate.quality_score >= policy.min_quality_score
     if candidate.quality_score < policy.external_min_quality_score:
         return False
-    return any(code in followed for code in interest_codes_of(candidate))
+    return any(code in followed for code in interest_keys_of(candidate))
 
 
 def _collapse_same_event(
@@ -232,7 +241,7 @@ def _collapse_same_event(
 
 
 def _followed_map(interests: Iterable[UserInterestDTO]) -> dict[str, int]:
-    return {interest.tag_code: 1 for interest in interests}
+    return {interest.ref.key: 1 for interest in interests}
 
 
 def _ranked(
@@ -242,7 +251,7 @@ def _ranked(
 ) -> list[_RankedCandidate]:
     rows: list[_RankedCandidate] = []
     for candidate in candidates:
-        matched = tuple(sorted(code for code in set(interest_codes_of(candidate)) if code in followed))
+        matched = tuple(sorted(code for code in set(interest_keys_of(candidate)) if code in followed))
         rows.append(_RankedCandidate(
             candidate=candidate,
             matched_codes=matched,
@@ -358,9 +367,8 @@ def _choose_at_cap(
             limit -= 1
 
     if quality_first:
-        # Reserve the requested interest allocation, then fill any unused slots
-        # from quality.  Trying both lane orders prevents one high-ranked
-        # cross-lane duplicate from hiding an otherwise legal larger set.
+        # Protect the head of the complete value baseline before considering
+        # extra interest promotions, then restore unused baseline slots.
         take(quality_rows, SelectionLane.QUALITY.value, max(0, target - interest_limit))
         take(interest_rows, SelectionLane.INTEREST.value, interest_limit)
         take(quality_rows, SelectionLane.QUALITY.value, target - len(selected))
@@ -400,7 +408,7 @@ def select_digest_articles(
     """Select one deterministic edition set.
 
     Hard rules are never relaxed: minimum score, same-event uniqueness and
-    the interest-share ceiling.  Only the per-source cap is relaxed, one step at a
+    the interest-promotion ceiling. Only the per-source cap is relaxed, one step at a
     time, when it is the reason the target cannot otherwise be reached.
     Same-event candidates collapse to one representative(官方 > 非社交 > 分数 > 更早,
     issue #103)**before** the lanes are built, so the lane order never picks a
@@ -409,9 +417,10 @@ def select_digest_articles(
     v3.54「订阅 ∪ 兴趣」: candidates flagged ``subscribed=False`` are admitted only
     into the interest lane, must clear ``external_min_quality_score`` and share a
     hard ``external_per_source_max`` that the relaxation loop never touches;
-    subscribed matches rank ahead of external ones.  The quality lane remains
-    subscription-only(the caller never passes external non-matching rows,and
-    ``eligible_for_selection`` drops them anyway).
+    subscribed matches rank ahead of external ones. The quality baseline uses
+    every subscribed candidate, including interest matches. Only additions from
+    outside that full baseline consume the interest allocation. Thus a valuable
+    article cannot be excluded simply because it also matches an interest.
     """
 
     policy = policy or DigestSelectionPolicy()
@@ -422,9 +431,7 @@ def select_digest_articles(
     ])
     rows = _ranked(eligible, followed, topic_codes_by_article or {})
     interest_rows = sorted((row for row in rows if row.matched_codes), key=_sort_interest)
-    # A matching article belongs to the interest allocation even if its quality is
-    # high; otherwise the quality lane could silently exceed the 50% product cap.
-    quality_rows = sorted((row for row in rows if not row.matched_codes), key=_sort_quality)
+    quality_rows = sorted((row for row in rows if row.candidate.subscribed), key=_sort_quality)
     interest_rows, interest_adjustments = _coverage_order(
         interest_rows,
         policy=policy,
@@ -447,25 +454,30 @@ def select_digest_articles(
     selected: list[tuple[_RankedCandidate, str]] = []
     used_cap = policy.per_source_max
     for source_cap in range(policy.per_source_max, maximum_cap + 1):
+        baseline = _choose_at_cap(
+            (), quality_rows, target=policy.target_items, interest_limit=0,
+            source_cap=source_cap, external_source_cap=policy.external_per_source_max,
+        )
+        baseline_ids = {row.candidate.article_id for row, _lane in baseline}
+        promotion_rows = [row for row in interest_rows if row.candidate.article_id not in baseline_ids]
         valid_attempts: list[list[tuple[_RankedCandidate, str]]] = []
         for actual_interest_limit in range(interest_limit, -1, -1):
-            for quality_first in (False, True):
-                candidate_attempt = _choose_at_cap(
-                    interest_rows,
-                    quality_rows,
-                    target=policy.target_items,
-                    interest_limit=actual_interest_limit,
-                    source_cap=source_cap,
-                    external_source_cap=policy.external_per_source_max,
-                    quality_first=quality_first,
-                )
-                interest_count = sum(
-                    lane == SelectionLane.INTEREST.value for _row, lane in candidate_attempt
-                )
-                if interest_count <= math.floor(
-                    len(candidate_attempt) * policy.interest_max_ratio + 1e-9
-                ):
-                    valid_attempts.append(candidate_attempt)
+            candidate_attempt = _choose_at_cap(
+                promotion_rows,
+                [row for row, _lane in baseline],
+                target=policy.target_items,
+                interest_limit=actual_interest_limit,
+                source_cap=source_cap,
+                external_source_cap=policy.external_per_source_max,
+                quality_first=True,
+            )
+            interest_count = sum(
+                lane == SelectionLane.INTEREST.value for _row, lane in candidate_attempt
+            )
+            if interest_count <= math.floor(
+                len(candidate_attempt) * policy.interest_max_ratio + 1e-9
+            ):
+                valid_attempts.append(candidate_attempt)
         attempt = max(
             valid_attempts,
             key=lambda value: (
@@ -497,7 +509,8 @@ def select_digest_articles(
         result.append(DigestSelectionDTO(
             article_id=candidate.article_id,
             lane=lane,
-            matched_interest_codes=row.matched_codes,
+            matched_interest_codes=tuple(c for c in row.matched_codes if not c.startswith("custom:")),
+            matched_interest_refs=_custom_refs(row.matched_codes),
             selection_reason=_selection_reason(
                 row,
                 lane,
@@ -506,6 +519,7 @@ def select_digest_articles(
                 source_display_names or {},
             ),
             coverage_adjustments=tuple(adjustments),
+            selection_contribution=_selection_contribution(candidate, row.matched_codes, lane),
         ))
     return result
 
@@ -565,6 +579,32 @@ def _value_reason(
     return f"来自你订阅的「{source_name}」，按{value_label}入选。"
 
 
+def _selection_contribution(candidate, matched, lane):
+    lane = str(getattr(lane, 'value', lane))
+    refs = [{'kind': 'custom', 'id': key[7:]} if key.startswith('custom:')
+            else {'kind': 'tag', 'id': key} for key in matched]
+    return {'version': 1, 'admission': 'interest_union' if not candidate.subscribed and refs else 'none',
+            'ranking': 'interest_lane' if lane == 'interest' else 'none',
+            'selected_lane': lane, 'contributor_refs': refs}
+
+
+def value_lane_eligible(candidates, interests=(), *, lane, policy, excluded_article_ids=()):
+    """Actual pre-ranking eligibility checkpoint; never replay the selector."""
+    followed = _followed_map(interests)
+    excluded = set(excluded_article_ids)
+    rows = []
+    for candidate in candidates:
+        if candidate.article_id in excluded or not value_lane_accepts(candidate, lane):
+            continue
+        if candidate.content_value is None or candidate.content_value < policy.min_value - 1e-9:
+            continue
+        matched = tuple(sorted(code for code in set(interest_keys_of(candidate)) if code in followed))
+        if not candidate.subscribed and not matched:
+            continue
+        rows.append((candidate, matched))
+    return rows
+
+
 def select_value_lane(
     candidates: Iterable[DigestArticleCandidateDTO],
     interests: Iterable[UserInterestDTO] = (),
@@ -587,18 +627,8 @@ def select_value_lane(
         raise ValueError("select_value_lane 只接受 read / listen 两个分区")
     if policy.max_items <= 0:
         return []
-    followed = _followed_map(interests)
-    excluded = set(excluded_article_ids)
-    rows: list[tuple[DigestArticleCandidateDTO, tuple[str, ...]]] = []
-    for candidate in candidates:
-        if candidate.article_id in excluded or not value_lane_accepts(candidate, lane_value):
-            continue
-        if candidate.content_value is None or candidate.content_value < policy.min_value - 1e-9:
-            continue
-        matched = tuple(sorted(code for code in set(interest_codes_of(candidate)) if code in followed))
-        if not candidate.subscribed and not matched:
-            continue
-        rows.append((candidate, matched))
+    rows = value_lane_eligible(candidates, interests, lane=lane_value, policy=policy,
+                               excluded_article_ids=excluded_article_ids)
     rows.sort(key=lambda row: (
         -float(row[0].content_value or 0.0),
         -_published_timestamp(row[0].publish_date),
@@ -622,11 +652,13 @@ def select_value_lane(
         result.append(DigestSelectionDTO(
             article_id=candidate.article_id,
             lane=lane_value,
-            matched_interest_codes=matched,
+            matched_interest_codes=tuple(c for c in matched if not c.startswith("custom:")),
+            matched_interest_refs=_custom_refs(matched),
             selection_reason=_value_reason(
                 candidate, matched, tag_display_names=tags, source_display_names=names
             ),
             coverage_adjustments=(),
+            selection_contribution=_selection_contribution(candidate, matched, lane_value),
         ))
     return result
 

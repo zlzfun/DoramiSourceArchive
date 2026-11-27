@@ -204,7 +204,7 @@ export function ScoreMargin({ article, podcast = false, tags = null, motionInten
           {second.reason && <p>{second.reason}</p>}
         </div>
       )}
-      {tags && <div className="reader-side-blk">{tags}</div>}
+      {tags}
     </aside>
   );
 }

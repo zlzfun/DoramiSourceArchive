@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import datetime as dt
 import os
 import re
 from dataclasses import dataclass, field, fields
@@ -36,6 +37,9 @@ class BailianSpeechConfig:
     tts_chunk_chars: int = 500
     tts_monthly_budget_minor: int = 0
     tts_per_run_budget_minor: int = 0
+    # Optional additional controls. Zero/empty preserve pre-existing deployments.
+    tts_daily_budget_minor: int = 0
+    tts_entitlement_ends_at: str = ""
     tts_receipt_root: str = "data/bailian-speech"
     tts_cache_max_bytes: int = 536870912
     result_host_suffixes: tuple[str, ...] = ("oss-ap-southeast-1.aliyuncs.com",)
@@ -86,9 +90,17 @@ class BailianSpeechConfig:
             "asr_daily_audio_seconds_limit",
             "tts_monthly_budget_minor",
             "tts_per_run_budget_minor",
+            "tts_daily_budget_minor",
         ):
             if type(getattr(self, name)) is not int or getattr(self, name) < 0:
                 raise ValueError(f"Bailian {name} must be nonnegative")
+        if self.tts_entitlement_ends_at:
+            try:
+                deadline = dt.datetime.fromisoformat(self.tts_entitlement_ends_at)
+                if deadline.utcoffset() is None:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError("Bailian TTS entitlement must be a timezone-aware ISO timestamp") from None
         if self.asr_quota_timezone != "Asia/Singapore":
             raise ValueError("Bailian speech quota timezone must be Asia/Singapore")
         if not self.result_host_suffixes or any(

@@ -1056,9 +1056,10 @@ def test_d16_d18_d20_item_filtering_historical_adaptation_corrupt_detection_and_
                 "display_tags": [],
                 "event_id": 42,
                 "related_sources": [
-                    {"title": "主链接自身应排除", "source_name": "源A", "url": "https://example.com/news/main"},
-                    {"title": "相关1", "source_name": "源B", "url": "https://example.com/news/rel-1"},
-                    {"title": "重复相关1", "source_name": "源C", "url": "https://example.com/news/rel-1"},
+                    {"title": "主链接自身应排除", "source_id": "src-energy", "source_name": "源A", "url": "https://example.com/news/main"},
+                    {"title": "相关1", "source_id": "src-energy", "source_name": "源B", "url": "https://example.com/news/rel-1"},
+                    {"title": "重复相关1", "source_id": "src-energy", "source_name": "源C", "url": "https://example.com/news/rel-1"},
+                    {"title": "无来源身份不可验证权限", "source_name": "旧来源", "url": "https://example.com/news/unverified"},
                 ],
                 "custom_extra": "preserved",
             }),

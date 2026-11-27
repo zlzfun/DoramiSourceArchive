@@ -32,8 +32,9 @@ async function handleApiError(response, defaultMsg) {
   try {
     const data = await response.json();
     if (data.message) msg = data.message;
-    else if (data.detail) msg = typeof data.detail === 'string' ? data.detail : (data.detail.message || JSON.stringify(data.detail));
-    code = typeof data.code === 'string' ? data.code : '';
+    else if (data.detail?.message) msg = data.detail.message;
+    else if (data.detail) msg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    code = typeof data.code === 'string' ? data.code : (typeof data.detail?.code === 'string' ? data.detail.code : '');
   } catch { /* use defaultMsg */ }
   const error = new Error(msg);
   error.status = response.status;
@@ -79,6 +80,19 @@ async function request(path, { method = 'GET', body, errorMsg, ...opts } = {}) {
   }
   if (!res.ok) await handleApiError(res, errorMsg);
   return res.json();
+}
+
+// Reader projections are private to the request's account, including late failures.
+async function readerRequest(path, options) {
+  const generation = authGeneration();
+  try {
+    const data = await request(path, options);
+    if (generation !== authGeneration() || options?.signal?.aborted) throw new DOMException('Session changed', 'AbortError');
+    return data;
+  } catch (error) {
+    if (generation !== authGeneration() || options?.signal?.aborted) throw new DOMException('Session changed', 'AbortError');
+    throw error;
+  }
 }
 
 // 把 filters 对象里的非空项追加到 URLSearchParams（空串/null/undefined 跳过）。
@@ -527,11 +541,12 @@ export function fetchArticles(filters = {}, limit = 100, skip = 0, includeTotal 
   if (includeContent !== undefined) params.append('include_content', includeContent ? 'true' : 'false');
   if (includeExtensions !== undefined) params.append('include_extensions', includeExtensions ? 'true' : 'false');
   withFilters(params, filters);
-  return request(`/articles?${params}`, { ...fetchOptions, errorMsg: '获取文章列表失败' });
+  return readerRequest(`/articles?${params}`, { ...fetchOptions, errorMsg: '获取文章列表失败' });
 }
 
 export function fetchArticle(id, options = {}) {
-  return request(`/articles/${enc(id)}`, { ...options, errorMsg: '获取文章详情失败' });
+  const { withInterest = false, ...requestOptions } = options;
+  return readerRequest(`/articles/${enc(id)}${withInterest ? '?with_interest=true' : ''}`, { ...requestOptions, errorMsg: '获取文章详情失败' });
 }
 
 export function fetchArticleAnalysis(id, options = {}) {
@@ -1006,12 +1021,29 @@ export function confirmOpmlImport(opml, urls) {
 }
 
 // ==================== 我的早报 / 显式兴趣 ====================
-export function fetchInterestCatalog(options = {}) {
-  return request('/reader/interests/catalog', { ...options, errorMsg: '获取兴趣目录失败' });
+export function fetchInterestCatalog({ q = '', cursor = 0, ...options } = {}) {
+  const query = new URLSearchParams({ q, cursor: String(cursor) });
+  return request(`/reader/interests/catalog?${query}`, { ...options, errorMsg: '获取兴趣目录失败' });
+}
+
+export function saveCustomInterest(body, id = null) {
+  return request(`/reader/interests/custom${id == null ? '' : `/${id}`}`, {
+    method: id == null ? 'POST' : 'PUT', body, errorMsg: '保存自定义兴趣失败',
+  });
+}
+
+export function deleteCustomInterest(id, revision) {
+  return request(`/reader/interests/custom/${id}?expected_revision=${revision}`, {
+    method: 'DELETE', errorMsg: '移除自定义兴趣失败',
+  });
+}
+
+export function previewCustomInterest(body) {
+  return request('/reader/interests/custom/preview', { method: 'POST', body, errorMsg: '预览兴趣失败' });
 }
 
 export function fetchInterests(options = {}) {
-  return request('/reader/interests', { ...options, errorMsg: '获取我的兴趣失败' });
+  return readerRequest('/reader/interests', { ...options, errorMsg: '获取我的兴趣失败' });
 }
 
 // 早报页横幅「稍后再说」:只做引导完成的条件迁移,不碰兴趣集合(响应带 brief_rebuild_status)
@@ -1444,4 +1476,28 @@ export function saveRemoteSyncSchedule(payload) {
     body: payload,
     errorMsg: '保存定时同步配置失败',
   });
+}
+
+// Human review inbox and durable notification receipts (#298).
+export function fetchReviewProposals(filters = {}) {
+  const query = withFilters(new URLSearchParams(), filters).toString();
+  return request(`/admin/taxonomy/review-proposals${query ? `?${query}` : ''}`, { errorMsg: '获取审核清单失败' });
+}
+export function fetchReviewProposal(id) {
+  return request(`/admin/taxonomy/review-proposals/${enc(id)}`, { errorMsg: '获取提案失败' });
+}
+export async function aiReviewProposal(id, body) {
+  const result = await request(`/admin/taxonomy/review-proposals/${enc(id)}/ai-review`, {
+    method: 'POST', body, errorMsg: '发起 AI 审核失败',
+  });
+  return pollJob(result.job_id, { defaultError: 'AI 审核未完成' });
+}
+export function decideReviewProposal(id, body) {
+  return request(`/admin/taxonomy/review-proposals/${enc(id)}/decide`, { method: 'POST', body, errorMsg: '处理提案失败' });
+}
+export function groupReviewProposals(body) {
+  return request('/admin/taxonomy/review-proposals/group', { method: 'POST', body, errorMsg: '归组提案失败' });
+}
+export function fetchReviewNotifications() {
+  return request('/admin/taxonomy/review-notifications', { errorMsg: '获取投递记录失败' });
 }

@@ -1,3 +1,5 @@
+import CurrentInterestMatches from '../CurrentInterestMatches';
+import { normalizeInterestMatches } from '../../utils/interestMatches';
 import { useLayoutEffect, useRef, useState } from 'react';
 import {
   CheckCheck,
@@ -70,6 +72,7 @@ export default function MobileArticlePage({
   ondemand = {},   // 点播能力位(issue #137):{podcast, article}
   showToast,
   onBack,
+  onOpenInterest = null,
   onLeaveForSearch = null, // 标签检索离开正文页的专用出口(不走早报返回,也不播收回动效)
 }) {
   const {
@@ -145,7 +148,7 @@ export default function MobileArticlePage({
     ? podcastListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.podcast === true })
     : articleListenEntries(activeArticle, { aiEnabled, ondemandEnabled: ondemand.article === true });
   const durationOnEntry = listenList.some((entry) => entry.track === 'original');
-  // 标题语言(issue #218):只看「默认显示中文标题」偏好,不随正文的译文 / 原文切换
+  // 标题语言(issue #218):只看「优先显示中文」偏好,不随正文的译文 / 原文切换
   const paneTitle = titleView(activeArticle, preferChinese);
   const tags = displayAnalysisTags(activeArticle);
 
@@ -307,19 +310,32 @@ export default function MobileArticlePage({
               />
             </div>
           )}
-          {tags.length > 0 && (
-            <div className="reader-pane-foot"><div className="reader-pane-tags">
-              {tags.map((tag, index) => (
-                <AnalysisTagChip
-                  key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
-                  tag={tag}
-                  onSearch={(selectedTag) => {
-                    searchForTag(selectedTag);
-                    (onLeaveForSearch || onBack)();
-                  }}
-                />
-              ))}
-            </div></div>
+          {(tags.length > 0 || (!rs.isGuest && normalizeInterestMatches(activeArticle, { basis: 'current' }).length > 0)) && (
+            <div className="reader-pane-foot reader-tag-groups">
+              {tags.length > 0 && <section className="reader-side-blk" aria-label="文章标签">
+                <div className="reader-side-k">文章标签</div>
+                <div className="reader-pane-tags">
+                  {tags.map((tag, index) => (
+                    <AnalysisTagChip
+                      key={`${tag.type || 'canonical'}-${tag.id || tag.code || tag.candidate_id || index}`}
+                      tag={tag}
+                      onSearch={(selectedTag) => {
+                        searchForTag(selectedTag);
+                        (onLeaveForSearch || onBack)();
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>}
+              {!rs.isGuest && normalizeInterestMatches(activeArticle, { basis: 'current' }).length > 0 && (
+                <section className="reader-side-blk" aria-label="我的兴趣点">
+                  <div className="reader-side-k">我的兴趣点</div>
+                  <div className="reader-pane-tags">
+                    <CurrentInterestMatches article={activeArticle} mobile capabilities={rs.interestCapabilities} onOpenInterest={onOpenInterest} />
+                  </div>
+                </section>
+              )}
+            </div>
           )}
         </header>
         <div className="m-read-body">

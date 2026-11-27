@@ -321,7 +321,9 @@ async def translate_shared(
         await asyncio.to_thread(_release, engine, article_id, token)
 
 
-def _pick(engine):
+def _pick(engine, *, article_ids=None):
+    from services.worker_scope import scoped_ids
+    article_ids = scoped_ids(article_ids)
     with Session(engine) as session:
         if not _enabled(session) or not accounts.ai_beta_global_enabled(session):
             return None
@@ -336,6 +338,7 @@ def _pick(engine):
             return None
         job = session.exec(select(Job).where(
             Job.status.in_(("pending", "running")), Job.retry_at <= time.time(), Job.attempts < MAX_ATTEMPTS,
+            Job.article_id.in_(article_ids) if article_ids is not None else True,
         ).order_by(Job.updated_at).limit(1)).first()
         if job is None:
             return None

@@ -36,6 +36,8 @@ VALID_PURPOSES = (
     # v3.52.1(issue #33 §4):个人早报条目标题批量翻译(系统任务,不进读者预算三处)
     "personal_digest_title",
     "auto_title_translate",  # Shared system title cache; separate from reader quota.
+    # issue #349:推文入库即译(系统任务,归 system,不进读者预算三处;独立的每日 token 上限)
+    "auto_social_translate",
     # issue #69:文章配图识别(视觉模型)。全站共享缓存,不进读者预算三处——worker 归
     # system,日报归触发者,问答按需归提问读者(只作成本可见,不限额)
     "image_insight",
@@ -49,6 +51,11 @@ VALID_PURPOSES = (
     "podcast_premium_blog",
     "podcast_premium_narration",
     "article_ondemand_narration",
+    # Scheduled #298 matching/advice: token visibility; bounded by worker batches,
+    # not a second reader-initiated generation quota charge.
+    "custom_interest_match",
+    "taxonomy_review_advice",
+    "taxonomy_relevance_retag",
 )
 
 SYSTEM_USERNAME = "system"

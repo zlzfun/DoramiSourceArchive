@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -28,15 +28,22 @@ from services import accounts as accounts_service
 from services import personal_digest as digest_service
 from services import personal_digest_refresh as digest_refresh
 from services import personal_digest_titles as digest_titles
+from services import reader_interests as reader_interest_service
+from services import custom_interests as custom_interest_service
 from services.article_analysis import source_allows_analysis
 from services.article_time import in_time_window
 from services.source_naming import friendly_source_name
 
 
+def _private_response(response: Response):
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['Vary'] = 'Cookie'
+
+
 router = APIRouter(
     prefix="/api/reader/briefs",
     tags=["personal-briefs"],
-    dependencies=[Depends(deps.require_reader)],
+    dependencies=[Depends(deps.require_reader), Depends(_private_response)],
 )
 
 _logger = logging.getLogger("dorami.personal_digest")
@@ -124,13 +131,50 @@ def serialize_edition(
     落后,列表端点也不必为每行多查。
     """
     items = []
+    custom_summary = []
     if include_items:
         rows = session.exec(
             select(PersonalDigestItemRecord)
             .where(PersonalDigestItemRecord.edition_id == edition.id)
             .order_by(PersonalDigestItemRecord.position)
         ).all()
-        items = [_serialize_item(row) for row in rows]
+        article_rows = {article.id: article for article in session.exec(select(ArticleRecord).where(
+            ArticleRecord.id.in_([row.article_id for row in rows]))).all()}
+        articles = {aid: article.source_id for aid, article in article_rows.items()}
+        allowed = custom_interest_service.readable_source_ids(
+            session, edition.owner_username, list(articles.values()))
+        items = []
+        frozen = _parse_json(edition.interest_snapshot_json, [])
+        readable_articles = [a for a in article_rows.values() if a.source_id in allowed]
+        assets = custom_interest_service.evidence_assets(session, readable_articles)
+        evidence_cache = {(a.id, version): custom_interest_service.evidence_snapshot(
+            session, a, assets=assets, binding_version=version)
+            for a in readable_articles for version in (1, 2)}
+        projection_context = reader_interest_service.frozen_context(session, edition.owner_username)
+        for row in rows:
+            source_id = articles.get(row.article_id)
+            if source_id is None or source_id not in allowed:
+                continue
+            item = reader_interest_service.strip_private_evidence(_serialize_item(row))
+            snapshot = item.get("snapshot") or {}
+            if snapshot.get("source_id") and snapshot["source_id"] != source_id:
+                continue
+            related = snapshot.get("related_sources", [])
+            if related:
+                related_allowed = custom_interest_service.readable_source_ids(session, edition.owner_username,
+                    [link.get("source_id") for link in related if isinstance(link, dict)])
+                snapshot["related_sources"] = [link for link in related if isinstance(link, dict)
+                    and link.get("source_id") in related_allowed]
+            features = _parse_json(row.ranking_features_json, {})
+            item["matched_interest_refs"] = features.get("custom_interest_refs", [])
+            article = article_rows[row.article_id]
+            item['interest_matches'] = reader_interest_service.frozen_matches(session, edition.owner_username,
+                item, features, frozen, article, cache=evidence_cache, context=projection_context)
+            item['interest_evidence'] = {m['ref']['id']: m['evidence'] for m in item['interest_matches']
+                                         if m['ref']['kind'] == 'custom'}
+            items.append(item)
+        if edition.owner_username != accounts_service.GUEST_USERNAME:
+            custom_summary = reader_interest_service.frozen_custom_summary(frozen, items, projection_context)
     return {
         "id": edition.id,
         "report_date": edition.report_date,
@@ -163,6 +207,7 @@ def serialize_edition(
             else None
         ),
         "items": items,
+        **({"custom_interest_summary": custom_summary} if custom_summary else {}),
         **(_freshness_fields(session, edition) if include_freshness else {}),
     }
 

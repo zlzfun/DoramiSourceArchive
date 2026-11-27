@@ -222,6 +222,7 @@ def _attempt(
     execution_kind: str = "provider",
     settings_fingerprint: str = "f" * 64,
     provider_usage_plan: ProviderUsagePlan | None = None,
+    provider_name: str = "provider-spy",
 ):
     process = session.get(PodcastProcessingRecord, claim.processing_id)
     assert process is not None
@@ -246,7 +247,7 @@ def _attempt(
         claim,
         input_hash=input_hash or expected_input_hash,
         settings_fingerprint=settings_fingerprint,
-        provider_name="provider-spy",
+        provider_name=provider_name,
         model_name="asr-model",
         provider_revision="2026-09",
         provider_request_key=f"provider-request:{suffix}",
@@ -3917,3 +3918,174 @@ def test_settlement_integrity_race_never_reuses_another_attempt_ledger(
         ).one()
         assert loser_reservation.status == "reserved"
         assert session.exec(select(func.count(PodcastCostLedgerRecord.id))).one() == 1
+
+
+def _bailian_window_policy():
+    from config_bailian import BailianSpeechConfig
+
+    cfg = BailianSpeechConfig(
+        account_scope="legacy-window-test",
+        asr_entitlement_ends_at=(NOW + dt.timedelta(hours=2)).isoformat(),
+        asr_daily_audio_seconds_limit=100,
+        asr_price_minor=1,
+        asr_price_units=1000,
+    )
+    return PodcastStagePolicy(RecordingPolicy({"asr"}).config, bailian_speech=cfg)
+
+
+def _seed_legacy_bailian_hold(session, policy, monkeypatch, *, suffix="1", units=60,
+                             plan_overrides=None):
+    """Run the old planner to persist an authentic pre-fix short-window hold."""
+    from services import bailian_asr
+
+    plan = bailian_asr.usage_plan(
+        policy.bailian_speech, audio_duration_ms=units * 1000, now=NOW
+    )
+    legacy = replace(plan, **{
+        "window_end_at": NOW + dt.timedelta(hours=2), **(plan_overrides or {})
+    })
+    _enqueue(session, policy, episode_id=f"episode-{suffix}",
+             idempotency_key=f"legacy-window-process-{suffix}", requested_target="transcript")
+    claim = claim_next_processing(session, worker_id=f"legacy-{suffix}",
+                                  lease_seconds=60, policy=policy, now=NOW)
+    assert claim is not None
+    # Simulate the old trusted planner only while creating historical fixtures.
+    # The production canonical planner is restored before any new request.
+    with monkeypatch.context() as old:
+        old.setattr(bailian_asr, "usage_plan", lambda *args, **kwargs: legacy)
+        attempt = _attempt(session, claim, policy, suffix=suffix,
+                           estimate=legacy.estimated_cost_minor,
+                           provider_usage_plan=legacy, provider_name="aliyun-bailian")
+    return claim, attempt, plan
+
+
+@pytest.mark.parametrize("new_units,accepted", [(40, True), (41, False)])
+def test_bailian_legacy_pending_hold_counts_and_exact_key_cannot_replay(
+    engine, monkeypatch, new_units, accepted
+):
+    policy = _bailian_window_policy()
+    with Session(engine) as session:
+        claim, attempt, plan = _seed_legacy_bailian_hold(session, policy, monkeypatch)
+        original = session.exec(select(PodcastBudgetReservationRecord)).one().model_dump()
+        session.rollback()
+        # Even before submission, the same key cannot reinterpret its old end.
+        with pytest.raises(PodcastProcessingConflict, match="idempotency key"):
+            _attempt(session, claim, policy, provider_name="aliyun-bailian",
+                     estimate=plan.estimated_cost_minor, provider_usage_plan=plan)
+        assert session.exec(select(PodcastBudgetReservationRecord)).one().model_dump() == original
+        session.rollback()
+        _enqueue(session, policy, episode_id="episode-2", idempotency_key="natural-day-new",
+                 requested_target="transcript")
+        second = claim_next_processing(session, worker_id="natural-day-new", lease_seconds=60,
+                                       policy=policy, now=NOW)
+        new_plan = replace(plan, reserved_units=new_units)
+        kwargs = dict(suffix="2", provider_name="aliyun-bailian",
+                      estimate=new_plan.estimated_cost_minor, provider_usage_plan=new_plan)
+        if accepted:
+            _attempt(session, second, policy, **kwargs)
+        else:
+            with pytest.raises(PodcastProviderQuotaExceeded, match="configured cap"):
+                _attempt(session, second, policy, **kwargs)
+        current = session.get(PodcastBudgetReservationRecord, original["id"])
+        assert current.model_dump() == original
+        assert session.get(PodcastStageAttemptRecord, attempt.id).submission_state == "prepared"
+        assert len(session.exec(select(PodcastStageAttemptRecord)).all()) == (2 if accepted else 1)
+
+
+def test_bailian_legacy_settled_and_unknown_hold_sum_without_rewriting(engine, monkeypatch):
+    policy = _bailian_window_policy()
+    with Session(engine) as session:
+        first, attempt, plan = _seed_legacy_bailian_hold(session, policy, monkeypatch)
+        mark_provider_submission(session, first, attempt_id=attempt.id,
+                                 provider_task_id="legacy-settled", policy=policy,
+                                 now=NOW + dt.timedelta(seconds=2))
+        ledger = settle_attempt_cost(
+            session, first, attempt_id=attempt.id, settlement_key="legacy-settled",
+            actual_cost_minor=1,
+            usage=NormalizedUsage(cost_minor=1, audio_duration_ms=60_000,
+                                  billed_audio_duration_ms=40_000),
+            policy=policy, now=NOW + dt.timedelta(seconds=3),
+        )
+        ledger_snapshot = ledger.model_dump()
+        second, pending, _ = _seed_legacy_bailian_hold(
+            session, policy, monkeypatch, suffix="2", units=30
+        )
+        mark_provider_submission(session, second, attempt_id=pending.id,
+                                 request_unknown=True, policy=policy,
+                                 now=NOW + dt.timedelta(seconds=3))
+        originals = {r.id: r.model_dump() for r in session.exec(select(PodcastBudgetReservationRecord))}
+        session.rollback()
+        capacity = podcast_processing_service._require_provider_usage_capacity
+        # 40 settled + 30 unknown hold leaves exactly 30 of the 100-second cap.
+        capacity(session, replace(plan, reserved_units=30), provider_name="aliyun-bailian", stage="asr")
+        with pytest.raises(PodcastProviderQuotaExceeded, match="configured cap"):
+            capacity(session, replace(plan, reserved_units=31), provider_name="aliyun-bailian", stage="asr")
+        assert {r.id: r.model_dump() for r in session.exec(select(PodcastBudgetReservationRecord))} == originals
+        assert session.get(PodcastCostLedgerRecord, ledger.id).model_dump() == ledger_snapshot
+        assert session.get(PodcastStageAttemptRecord, pending.id).submission_state == "request_unknown"
+        session.rollback()
+        with pytest.raises(PodcastProviderReconciliationRequired, match="prior provider"):
+            _attempt(session, second, policy, suffix="unknown-new-key",
+                     provider_name="aliyun-bailian", estimate=plan.estimated_cost_minor,
+                     provider_usage_plan=plan)
+
+
+def test_bailian_legacy_window_overage_keeps_scope_frozen(engine, monkeypatch):
+    policy = _bailian_window_policy()
+    with Session(engine) as session:
+        claim, attempt, plan = _seed_legacy_bailian_hold(session, policy, monkeypatch)
+        mark_provider_submission(session, claim, attempt_id=attempt.id,
+                                 provider_task_id="legacy-overage", policy=policy,
+                                 now=NOW + dt.timedelta(seconds=2))
+        settle_attempt_cost(
+            session, claim, attempt_id=attempt.id, settlement_key="legacy-overage",
+            actual_cost_minor=1, usage=NormalizedUsage(cost_minor=1, audio_duration_ms=61_000),
+            policy=policy, now=NOW + dt.timedelta(seconds=3),
+        )
+        with pytest.raises(PodcastProviderQuotaExceeded, match="frozen"):
+            podcast_processing_service._require_provider_usage_capacity(
+                session, replace(plan, reserved_units=1),
+                provider_name="aliyun-bailian", stage="asr",
+            )
+
+
+@pytest.mark.parametrize("mismatch", [
+    "isi", "other_provider", "other_stage", "non_bailian_scope", "empty_account_scope",
+    "start", "extended_end", "price", "price_units", "revision", "minimum",
+    "wrong_period", "noncanonical_period", "noncanonical_start", "noncanonical_end",
+])
+def test_bailian_legacy_window_compatibility_rejects_other_definitions(engine, monkeypatch, mismatch):
+    policy = _bailian_window_policy()
+    legacy_changes = {}
+    if mismatch == "non_bailian_scope":
+        legacy_changes["quota_scope"] = "aliyun-isi-asr-trial"
+    elif mismatch == "empty_account_scope":
+        legacy_changes["quota_scope"] = "bailian-asr:"
+    elif mismatch in {"start", "noncanonical_start"}:
+        legacy_changes["window_start_at"] = NOW - dt.timedelta(hours=1)
+    elif mismatch == "extended_end":
+        legacy_changes["window_end_at"] = NOW + dt.timedelta(hours=9)
+    elif mismatch == "price":
+        legacy_changes["unit_price_cny_minor"] = 2
+    elif mismatch == "price_units":
+        legacy_changes["price_unit_count"] = 2000
+    elif mismatch == "revision":
+        legacy_changes["pricing_revision"] = "other-price"
+    elif mismatch == "minimum":
+        legacy_changes["minimum_units"] = 1
+    elif mismatch in {"wrong_period", "noncanonical_period"}:
+        legacy_changes["quota_period"] = "2026-09-04" if mismatch == "wrong_period" else "20260905"
+    with Session(engine) as session:
+        _, _, plan = _seed_legacy_bailian_hold(
+            session, policy, monkeypatch, plan_overrides=legacy_changes
+        )
+        if mismatch in {"non_bailian_scope", "empty_account_scope", "wrong_period", "noncanonical_period", "noncanonical_start"}:
+            plan = replace(plan, **legacy_changes)
+        elif mismatch == "noncanonical_end":
+            plan = replace(plan, window_end_at=plan.window_end_at + dt.timedelta(hours=1))
+        provider = {"isi": "aliyun-isi", "other_provider": "provider-spy"}.get(mismatch, "aliyun-bailian")
+        stage = "tts" if mismatch == "other_stage" else "asr"
+        with pytest.raises(PodcastProcessingConflict, match="different definition"):
+            podcast_processing_service._require_provider_usage_capacity(
+                session, plan, provider_name=provider, stage=stage
+            )

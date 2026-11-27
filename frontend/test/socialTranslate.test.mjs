@@ -5,9 +5,13 @@ import {
   currentSocialTranslation,
   nextSocialQuotaExpiry,
   purgeExpiredSocialQuota,
+  socialCachedZh,
+  socialCardView,
+  socialOriginalTexts,
   socialQuotaActive,
   socialQuotaUntil,
   socialTextNeedsTranslation,
+  socialToggledEntry,
   socialTranslatable,
   socialTranslationParts,
   socialTranslationSignature,
@@ -96,4 +100,121 @@ test('到恢复时刻清掉 quota,未到的保留,并给出最早恢复时刻', 
   assert.equal(purgeExpiredSocialQuota(purged, now), purged);
   assert.equal(nextSocialQuotaExpiry(map), now - 1);
   assert.equal(nextSocialQuotaExpiry({ c: map.c }), null);
+});
+
+// ── 卡片显示哪种语言(issue #349)──
+
+const ZH = { text: '新模型发布了', quoted: null };
+const done = (open, extra = {}) => ({ status: 'done', open, text: '会话里翻出来的译文', quoted: null, ...extra });
+
+test('随列表带回的译文:坏形状、全空都当没有', () => {
+  assert.deepEqual(socialCachedZh({ social_zh: { text: ' 译文 ', quoted: null } }), { text: ' 译文 ', quoted: null });
+  assert.deepEqual(socialCachedZh({ social_zh: { text: null, quoted: '引用译文' } }), { text: null, quoted: '引用译文' });
+  for (const bad of [undefined, null, 'x', {}, { text: '', quoted: '  ' }, { text: 1, quoted: [] }]) {
+    assert.equal(socialCachedZh({ social_zh: bad }), null, JSON.stringify(bad));
+  }
+});
+
+test('有译文:开着偏好直接显示中文,关着显示原文,换语言都不需要 AI', () => {
+  assert.deepEqual(
+    socialCardView({ cached: ZH, preferChinese: true }),
+    { zh: ZH, showZh: true, status: null, action: 'original' },
+  );
+  assert.deepEqual(
+    socialCardView({ cached: ZH, preferChinese: false, aiEnabled: false, translatable: true }),
+    { zh: ZH, showZh: false, status: null, action: 'chinese' },
+  );
+});
+
+test('读者在这张卡上切过,就听这张卡的,不再跟偏好', () => {
+  assert.equal(socialCardView({ cached: ZH, entry: done(false), preferChinese: true }).showZh, false);
+  assert.equal(socialCardView({ cached: ZH, entry: done(false), preferChinese: true }).action, 'chinese');
+  assert.equal(socialCardView({ cached: ZH, entry: done(true), preferChinese: false }).showZh, true);
+  // 会话里翻出来的译文优先于随列表带回的
+  assert.equal(socialCardView({ cached: ZH, entry: done(true), preferChinese: true }).zh.text, '会话里翻出来的译文');
+  // 没有列表译文、只靠手动翻译的:关着偏好也照样显示刚翻出来的中文
+  assert.equal(socialCardView({ entry: done(true), preferChinese: false }).showZh, true);
+});
+
+test('没有译文:AI 可用且需要翻译才给「译为中文」,否则底栏不出现', () => {
+  const none = { zh: null, showZh: false, status: null };
+  assert.deepEqual(socialCardView({ aiEnabled: true, translatable: true }), { ...none, action: 'request' });
+  assert.deepEqual(socialCardView({ aiEnabled: false, translatable: true }), { ...none, action: null });
+  assert.deepEqual(socialCardView({ aiEnabled: true, translatable: false }), { ...none, action: null });
+});
+
+test('向 AI 要译文的过渡态:翻译中 / 额度用尽不可再点,失败可重试,额度恢复后回到可点', () => {
+  const base = { aiEnabled: true, translatable: true };
+  assert.deepEqual(
+    socialCardView({ ...base, entry: { status: 'loading' } }),
+    { zh: null, showZh: false, status: 'loading', action: null },
+  );
+  assert.deepEqual(
+    socialCardView({ ...base, entry: { status: 'error' } }),
+    { zh: null, showZh: false, status: 'error', action: 'request' },
+  );
+  const active = socialCardView({ ...base, entry: { status: 'quota', until: Date.now() + 60_000 } });
+  assert.equal(active.status, 'quota');
+  assert.equal(active.action, null);
+  const expired = socialCardView({ ...base, entry: { status: 'quota', until: Date.now() - 1 } });
+  assert.equal(expired.status, null);
+  assert.equal(expired.action, 'request');
+  // 请求还在途、列表刷新带回了译文:直接按偏好显示,不再停在过渡态
+  assert.equal(socialCardView({ ...base, cached: ZH, entry: { status: 'loading' } }).showZh, true);
+});
+
+test('只有引用推需要翻译:主推保持原文,引用推换成中文', () => {
+  const view = socialCardView({ cached: { text: null, quoted: '引用推的译文' }, preferChinese: true });
+  assert.equal(view.showZh, true);
+  assert.equal(view.zh.text, null);
+  assert.equal(view.zh.quoted, '引用推的译文');
+});
+
+test('搜索:搜的词只在原文里时这张卡默认显示原文,译文里也有就照常显示中文', () => {
+  const original = { text: 'We shipped a new agents SDK for Claude.', quoted: '' };
+  const zh = { text: '我们发布了新的智能体 SDK,支持 Claude。', quoted: null };
+  const base = { cached: zh, preferChinese: true, original };
+  assert.equal(socialCardView({ ...base, searchQuery: 'Agents' }).showZh, false);
+  assert.equal(socialCardView({ ...base, searchQuery: 'Agents' }).action, 'chinese');
+  assert.equal(socialCardView({ ...base, searchQuery: 'claude' }).showZh, true);
+  assert.equal(socialCardView({ ...base, searchQuery: '智能体' }).showZh, true);
+  assert.equal(socialCardView({ ...base, searchQuery: '   ' }).showZh, true);
+  // 读者手动切到中文之后不再被搜索词拉回原文
+  assert.equal(socialCardView({ ...base, searchQuery: 'Agents', entry: done(true) }).showZh, true);
+  // 主推没有译文(本来就是中文)、只译了引用推:搜到主推里的词不算「只在原文里」
+  assert.equal(socialCardView({
+    cached: { text: null, quoted: '引用的译文' }, preferChinese: true, searchQuery: '发布',
+    original: { text: '今天发布了', quoted: 'the quoted post' },
+  }).showZh, true);
+});
+
+test('卡片上的两段原文:转推取原推全文,没有引用推给空串', () => {
+  assert.deepEqual(
+    socialOriginalTexts(article('RT @OpenAI: ChatGPT Voice is now in…', { reposted: { text: 'ChatGPT Voice is now in the desktop app.' } })),
+    { text: 'ChatGPT Voice is now in the desktop app.', quoted: '' },
+  );
+  assert.deepEqual(
+    socialOriginalTexts(article(' main ', { quoted: { text: ' quoted ' } })),
+    { text: 'main', quoted: 'quoted' },
+  );
+});
+
+test('换语言的开关只认调用方给的视图:同一条推文在两个列表里默认语言不同,各自一点就翻', () => {
+  const original = { text: 'We shipped a new agents SDK.', quoted: '' };
+  const zh = { text: '我们发布了新的智能体 SDK。', quoted: null };
+  // 搜索结果里这张卡显示原文,订阅推入页(没有搜索)里显示中文
+  const inSearch = socialCardView({ cached: zh, preferChinese: true, original, searchQuery: 'agents' });
+  const inFlow = socialCardView({ cached: zh, preferChinese: true, original, searchQuery: '' });
+  assert.equal(inSearch.showZh, false);
+  assert.equal(inFlow.showZh, true);
+  // 各自点一下:搜索结果里换成中文,推入页里换成原文——开关不替调用方重新推导
+  assert.deepEqual(socialToggledEntry(inSearch, 'sig'), { status: 'done', open: true, sig: 'sig', text: zh.text, quoted: null });
+  assert.deepEqual(socialToggledEntry(inFlow, 'sig'), { status: 'done', open: false, sig: 'sig', text: zh.text, quoted: null });
+  // 点过之后两处都听这张卡的
+  const entry = socialToggledEntry(inFlow, 'sig');
+  assert.equal(socialCardView({ cached: zh, entry, preferChinese: true, original, searchQuery: 'agents' }).showZh, false);
+  assert.equal(socialCardView({ cached: zh, entry, preferChinese: true, original, searchQuery: '' }).showZh, false);
+  // 没有译文的视图不产生本地条目(要走请求)
+  assert.equal(socialToggledEntry(socialCardView({ aiEnabled: true, translatable: true }), 'sig'), null);
+  assert.equal(socialToggledEntry(null, 'sig'), null);
 });

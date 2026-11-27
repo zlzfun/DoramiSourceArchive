@@ -28,6 +28,7 @@ import { titleView } from '../utils/titleDisplay';
 import { useTitlePreference } from '../hooks/useTitlePreference';
 import { scrollBehavior } from '../motion';
 import DisplayTitle from './DisplayTitle';
+import { interestSelectionLabel, normalizeInterestMatches } from '../utils/interestMatches';
 import { qualityScoreText, scoreTierClass, scoreDisclaimer, SCORE_DIMENSION_LABELS } from '../utils/analysis';
 import { scoreDimensionOf, scoreOf } from '../utils/briefScore';
 import { enterBrief, leaveBrief, swapInBrief } from '../utils/spatialMotion';
@@ -63,7 +64,6 @@ const HISTORY_LIMIT = 100;
 const TOP_SLOP = 24;
 const PAST_CHIPS = 7;
 
-const tagName = (tag) => tag?.name_zh || tag?.name_en || tag?.label || tag?.code || '';
 const weekdayOf = (key) => {
   const d = new Date(`${key}T00:00:00`);
   return Number.isNaN(d.getTime()) ? '' : `周${WEEKDAY_CHARS[d.getDay()]}`;
@@ -80,19 +80,9 @@ function dayNameOf(key, todayKey) {
   return dateTextOf(key);
 }
 
-// 兴趣命中的标签名:matched_interest_codes → 快照 tags 反查;老快照无 code 时从理由句里取「」内文字
-function interestLabelOf(item, snapshot) {
-  const codes = item.matched_interest_codes || [];
-  if (codes.length === 0) return '';
-  const hit = [...(snapshot.tags || []), ...(snapshot.display_tags || [])].find((tag) => tag.code === codes[0]);
-  if (hit) return tagName(hit);
-  const matched = /「([^」]+)」/.exec(item.selection_reason || snapshot.selection_reason || '');
-  return matched ? matched[1] : '';
-}
-
 // 选篇理由(v3.54 §3):四个词回答同一个问题「它为什么在这」。前两个是「为你」的证据(accent),
 // 后两个只是诚实交代(faint)。「今日最重要」一类说过头的词不用——一篇 6 分稿叫不出「最重要」。
-function whyOf(item, snapshot, interest) {
+function whyOf(item, snapshot, matches = []) {
   if (item.selection_lane === 'breaking') {
     const basis = item.breaking?.basis;
     const count = item.breaking?.source_count || 0;
@@ -100,9 +90,10 @@ function whyOf(item, snapshot, interest) {
     return { cls: 'is-breaking', icon: true, text: detail ? `重大事件 · ${detail}` : '重大事件', title: item.selection_reason || snapshot.selection_reason || '今日重大事件' };
   }
   if (snapshot.is_latest_update) return { cls: 'is-fallback', text: '最新更新', title: item.selection_reason || snapshot.selection_reason || '' };
-  if (interest) return { cls: 'is-interest', text: `兴趣 · ${interest}`, title: item.selection_reason || snapshot.selection_reason || '命中你的兴趣' };
+  // An incidental match never replaces the actual quality/value/breaking lane.
+  if (item.selection_lane === 'interest') return { cls: 'is-interest', text: interestSelectionLabel(item, matches), title: item.selection_reason || snapshot.selection_reason || '' };
   const byValue = VALUE_LANES.has(item.selection_lane);
-  return { cls: '', text: byValue ? '内容价值入选' : '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
+  return { cls: '', text: byValue ? (interestSelectionLabel(item, matches) || '内容价值入选') : '新闻价值入选', title: item.selection_reason || snapshot.selection_reason || '' };
 }
 
 // 头条:有「重大事件」取第一条;否则取新闻通道里分数最高的一条(同分取靠前);只有深度阅读 / 播客精选时取其中最高分。
@@ -128,14 +119,14 @@ function pickHeadline(groups, degraded) {
 }
 
 // 一条的展示要素:标题(按偏好选中文译名或原题)、摘要、来源、分数与维度、理由、订阅态——海报头条与板块条目共用
-function viewOf(item, source, preferChinese) {
+function viewOf(item, source, preferChinese, guest = false) {
   const snapshot = item.snapshot || {};
   const dimension = scoreDimensionOf(item);
   const shownScore = scoreOf(item);
-  const interest = interestLabelOf(item, snapshot);
+  const interests = guest ? [] : normalizeInterestMatches(item);
   const sourceName = snapshot.source_name || source?.name || snapshot.source_id || '未知来源';
   // 中文标题(v3.52.1,issue #33 §4):编排后补的 title_zh 作主标题,原标题降为其下小字;
-  // 「默认显示中文标题」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
+  // 「优先显示中文」关闭时只显示快照原题(issue #218,只选不改,版面快照不动)
   const titles = titleView(snapshot, preferChinese);
   return {
     snapshot,
@@ -145,8 +136,8 @@ function viewOf(item, source, preferChinese) {
     scoreTier: scoreTierClass(shownScore),   // issue #54
     // 评分依据随维度(issue #178 第二波):内容价值有自己的理由
     reason: (dimension === 'content' ? snapshot.content_value_reason : snapshot.score_reason) || snapshot.score_reason || '',
-    interest,
-    why: whyOf(item, snapshot, interest),
+    interests,
+    why: whyOf(item, snapshot, interests),
     // one_sentence_summary 自 v3.45.1 取缔;历史 edition 快照仍带该键,保留回退读取
     summary: snapshot.summary || snapshot.one_sentence_summary || '',
     sourceName,
@@ -180,6 +171,14 @@ function WhyMark({ why }) {
       {why.text}
     </span>
   );
+}
+
+// Only names from this edition's owner-scoped projection appear on the card.
+function BriefInterestMark({ view, guest = false }) {
+  if (guest) return null;
+  const names = [...new Set(view.interests.map((match) => match.name))];
+  if (!names.length) return null;
+  return <p className="bp-interest-topics text-sm">有你感兴趣的内容</p>;
 }
 
 // issue #103「另见 N 篇」:同一事件的其它报道(编排时的不可变快照,只含读者可见来源);
@@ -243,9 +242,9 @@ function FavoriteButton({ articleId, favoriteIds, onToggleFavorite, label = fals
 
 // 板块条目。手机档(issue #230 批 3b,样页拍板 13 / 14):不带英文原标题与收藏星(收藏走长按动作单与正文页),
 // 分数挪到元信息行尾;整卡可点(标题按钮 ::after 拉伸)、可长按(press = useLongPress 的绑定),anchored = 动作单正指着它
-function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps, mobile = false, press = null, anchored = false }) {
+function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps, mobile = false, press = null, anchored = false, interestProps = {} }) {
   const { preferChinese } = useTitlePreference();
-  const view = viewOf(item, source, preferChinese);
+  const view = viewOf(item, source, preferChinese, interestProps.guest);
   const { snapshot } = view;
   const related = relatedOf(snapshot);
   const [showRelated, setShowRelated] = useState(false);
@@ -272,11 +271,12 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
           <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
         )}
         {!mobile && score}
-        <WhyMark why={view.why} />
+        {view.why.cls === 'is-breaking' && <WhyMark why={view.why} />}
         <BriefPodcastGuide item={item} source={source} {...guideProps} />
         <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         {mobile ? score : <FavoriteButton articleId={item.article_id} favoriteIds={favoriteIds} onToggleFavorite={onToggleFavorite} />}
       </div>
+      <BriefInterestMark view={view} {...interestProps} />
       <RelatedList links={related} open={showRelated} />
     </article>
   );
@@ -285,9 +285,9 @@ function BriefItem({ item, source, flash, onOpen, onSubscribeSource, favoriteIds
 // 手机档头条(issue #230 批 3b,样页第 1 轮返修第 2 条):整块可点——标题按钮的 ::after 铺满头条块,按下整块压暗一档、缩到 0.99;
 // 摘要下只有文字级「全文 ›」提示(没有实底「阅读全文」与收藏钮,收藏走长按);英文原标题保留(拍板 14 只撤板块条目的);
 // 评分栏在可点块之外。可长按(press),anchored = 动作单正指着它。
-function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, guideProps, press = null, anchored = false }) {
+function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource, guideProps, press = null, anchored = false, interestProps = {} }) {
   const { preferChinese } = useTitlePreference();
-  const view = viewOf(item, source, preferChinese);
+  const view = viewOf(item, source, preferChinese, interestProps.guest);
   const { snapshot } = view;
   const related = relatedOf(snapshot);
   const [showRelated, setShowRelated] = useState(false);
@@ -308,11 +308,11 @@ function MobileHeadline({ item, kicker, source, flash, onOpen, onSubscribeSource
           {snapshot.publish_date && (
             <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
           )}
-          {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
           <BriefPodcastGuide item={item} source={source} {...guideProps} />
           <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
         </p>
         {view.summary && <p className="bp-sum">{view.summary}</p>}
+        <BriefInterestMark view={view} {...interestProps} />
         <RelatedList links={related} open={showRelated} />
         <span className="bp-more" aria-hidden="true">全文<ChevronRight aria-hidden="true" /></span>
       </div>
@@ -349,9 +349,9 @@ export function BriefPeek({ item, source = null }) {
   );
 }
 
-function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps }) {
+function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeSource, favoriteIds, onToggleFavorite, guideProps, interestProps = {} }) {
   const { preferChinese } = useTitlePreference();
-  const view = viewOf(item, source, preferChinese);
+  const view = viewOf(item, source, preferChinese, interestProps.guest);
   const { snapshot } = view;
   const selectionReason = item.selection_reason || snapshot.selection_reason || '';
   const related = relatedOf(snapshot);
@@ -373,11 +373,11 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
             {snapshot.publish_date && (
               <span className="bp-time" title={formatDateTime(snapshot.publish_date)}>{formatRelativeTime(snapshot.publish_date, '')}</span>
             )}
-            {view.why.cls === 'is-interest' && <WhyMark why={view.why} />}
             <BriefPodcastGuide item={item} source={source} {...guideProps} />
             <RelatedChip links={related} open={showRelated} onToggle={() => setShowRelated((value) => !value)} />
           </p>
           {view.summary && <p className="bp-sum">{view.summary}</p>}
+          <BriefInterestMark view={view} {...interestProps} />
           <RelatedList links={related} open={showRelated} />
           <div className="bp-actions">
             <button type="button" className="bp-btn is-primary" onClick={() => onOpen(item)}>
@@ -394,7 +394,7 @@ function Headline({ item, kicker, source, flash, restCount, onOpen, onSubscribeS
               <span className={`ai-grad-text ${view.scoreTier}`}>{view.score}</span>
             </p>
             {view.reason && <p className="bp-verdict-reason">{view.reason}</p>}
-            {(selectionReason || view.why.text) && (
+            {!view.interests.length && (selectionReason || view.why.text) && (
               <p className="bp-verdict-why">{selectionReason || view.why.text}</p>
             )}
           </aside>
@@ -456,6 +456,7 @@ export default function PersonalBriefPage({
   onItemMenu = null,
   menuAnchorKey = null,
 }) {
+  const interestProps = { guest };
   const guideProps = { guest, showToast };
   const restoreRef = useRef(restore);
   const [flashId, setFlashId] = useState(null);
@@ -1037,9 +1038,10 @@ export default function PersonalBriefPage({
       },
     );
   } else if (headline && mobile) {
-    const headWhy = whyOf(headline, headline.snapshot || {}, '');
+    const headWhy = whyOf(headline, headline.snapshot || {});
     posterBody = (
       <MobileHeadline
+        interestProps={interestProps}
         item={headline}
         guideProps={guideProps}
         kicker={headline.selection_lane === 'breaking' ? `头条 · ${headWhy.text}` : `头条 · ${headSection}`}
@@ -1052,9 +1054,10 @@ export default function PersonalBriefPage({
       />
     );
   } else if (headline) {
-    const headWhy = whyOf(headline, headline.snapshot || {}, '');
+    const headWhy = whyOf(headline, headline.snapshot || {});
     posterBody = (
       <Headline
+        interestProps={interestProps}
         item={headline}
         guideProps={guideProps}
         kicker={headline.selection_lane === 'breaking' ? headWhy.text : headSection}
@@ -1295,6 +1298,7 @@ export default function PersonalBriefPage({
             <div className="bp-items">
               {group.items.map((item) => (
                 <BriefItem
+                  interestProps={interestProps}
                   key={item.id || item.position}
                   item={item}
                   guideProps={guideProps}

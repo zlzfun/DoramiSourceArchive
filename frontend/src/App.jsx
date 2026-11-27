@@ -44,6 +44,7 @@ const FetchTab = lazy(() => import('./components/FetchTab'));
 const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
 const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
+const TaxonomyReviewPanel = lazy(() => import('./components/admin/TaxonomyReviewPanel'));
 const ReaderWorkspace = lazy(() => import('./components/ReaderWorkspace'));
 // 移动设置栈(Wave3):桌面 880×576 设置柜的页面栈翻译,分区组件同源(components/settings/)。
 const MobileSettings = lazy(() => import('./components/mobile/MobileSettings'));
@@ -169,6 +170,7 @@ function BrandLogo({ logoError, onLogoError, rail = false }) {
 }
 
 export default function App() {
+  const reviewPath = typeof window !== 'undefined' ? window.location.pathname.match(/^\/review\/taxonomy(?:\/(\d+))?\/?$/) : null;
   // 断点变化只换阅读器视图，共同父组件持续持有阅读状态。
   const isMobile = useCompactLayout();
   const [nav, setNav] = useState(navFromHash);
@@ -769,7 +771,7 @@ export default function App() {
     ));
   }, []);
 
-  // 「默认显示中文标题」(issue #218):账号存服务端(乐观切换、失败回滚),游客只存本机;下发给阅读器与设置
+  // 「优先显示中文」(issue #218):账号存服务端(乐观切换、失败回滚),游客只存本机;下发给阅读器与设置
   const titlePreference = useTitlePreferenceState({
     isGuest, user: authState.user, onUserUpdated: handleUserUpdated, showToast,
   });
@@ -858,14 +860,14 @@ export default function App() {
     );
   }
 
-  if (authState.status !== 'authenticated') {
+  if (authState.status !== 'authenticated' || (reviewPath && isGuest)) {
     return (
       <LoginScreen
         logoError={logoError}
         onLogoError={() => setLogoError(true)}
         onLogin={handleLogin}
         onLoginComplete={handleLoginComplete}
-        guestEnabled={guestAccessEnabled}
+        guestEnabled={!reviewPath && guestAccessEnabled}
         onGuestEnter={handleGuestEnter}
       />
     );
@@ -891,6 +893,18 @@ export default function App() {
         <span className="text-sm font-semibold">正在载入工作台</span>
         {arrivalOverlay}
       </div>
+    );
+  }
+
+  if (reviewPath) {
+    return (
+      <main className="app-shell h-[var(--vh-full)] overflow-y-auto p-4 md:p-6 font-sans">
+        <div className="mx-auto grid w-full max-w-5xl gap-4">
+          <div className="flex items-center justify-between gap-3"><a href="/#/admin/analysis" className="action-button action-button-quiet">返回管理台</a><button type="button" className="action-button action-button-quiet" onClick={handleLogout}>退出账号</button></div>
+          {isAdminRole ? <TabBoundary><TaxonomyReviewPanel showToast={showToast} proposalId={reviewPath[1] ? Number(reviewPath[1]) : null} /></TabBoundary> : <p role="alert" className="text-sm">此清单需要管理员账号，请退出后登录管理员账号</p>}
+          <Toast {...toast} onClose={hideToast} />
+        </div>
+      </main>
     );
   }
 
@@ -1111,7 +1125,7 @@ export default function App() {
             <div className={`tab-panel${readerView && (isMobile || !isReaderRole || activeTab === 'reader') ? '' : ' is-off'}`}>
               <TabBoundary>
                 <ReaderWorkspace
-                  key={`${readerEpoch}:${runtimeInfo.account_role || ''}`}
+                  key={`${readerEpoch}:${runtimeInfo.account_role || ''}:${authState.user?.username || ''}:${authGeneration()}`}
                   mobile={isMobile}
                   surfaceActive={readerView && (isMobile || !isReaderRole || activeTab === 'reader')}
                   themePref={theme}

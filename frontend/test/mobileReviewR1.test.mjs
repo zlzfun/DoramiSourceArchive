@@ -34,7 +34,30 @@ test('P1-2 / P2-3:正文那篇的容器在标签检索与换版式时对齐;进�
   const ws = read('components/ReaderWorkspace.jsx');
   assert.match(ws, /useLayoutEffect\(\(\) => \{\s*if \(handoffLayoutRef\.current === mobile\) return;/);
   assert.match(ws, /rs\.alignModeToArticle\(rs\.activeArticle, \{ keepArticle: true \}\)/);
-  assert.match(ws, /!rs\.activeArticle && \(rs\.activeSourceId \|\| rs\.activeTagId\)\) \{\s*rs\.dropNarrowing\(\)/);
+  assert.match(ws, /!rs\.activeArticle && \(rs\.activeSourceId \|\| rs\.activeTagId \|\| rs\.activeCustomInterestId\)\) \{\s*rs\.dropNarrowing\(\)/);
+  const effect = ws.match(/useLayoutEffect\(\(\) => \{([\s\S]*?)\n  \}, \[mobile, rs\]\);/);
+  assert.ok(effect, 'the real layout handoff effect remains available');
+  const runEffect = new Function('handoffLayoutRef', 'mobile', 'rs', effect[1]);
+  const handoff = (mobile, previous, overrides = {}) => {
+    const calls = [];
+    let current = previous;
+    let refWrites = 0;
+    const ref = { get current() { return current; }, set current(value) { current = value; refWrites += 1; } };
+    runEffect(ref, mobile, {
+      activeArticle: null,
+      dropNarrowing: () => calls.push(['drop']),
+      alignModeToArticle: (...args) => calls.push(['align', ...args]),
+      ...overrides,
+    });
+    return { calls, current, refWrites };
+  };
+  for (const key of ['activeSourceId', 'activeTagId', 'activeCustomInterestId']) {
+    assert.deepEqual(handoff(true, false, { [key]: 'selected' }), { calls: [['drop']], current: true, refWrites: 1 }, key);
+  }
+  const article = { id: 'reading', content_type: 'podcast_episode' };
+  assert.deepEqual(handoff(true, false, { activeArticle: article, activeCustomInterestId: '3' }).calls, []);
+  assert.deepEqual(handoff(false, true, { activeArticle: article }).calls, [['align', article, { keepArticle: true }]]);
+  assert.deepEqual(handoff(true, true, { activeCustomInterestId: '3' }), { calls: [], current: true, refWrites: 0 });
 });
 
 test('P2-4:焦点陷阱只认 Tab 真能走到的元素', () => {

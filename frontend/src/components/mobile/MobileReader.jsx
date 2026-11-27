@@ -1,3 +1,5 @@
+import CustomInterestFilter from '../CustomInterestFilter';
+import { canFilterCustomInterests } from '../../utils/readerInterestQuery';
 import PodcastGuideFilter from '../PodcastGuideFilter';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -131,7 +133,7 @@ export default function MobileReader({
     socialView, podcastView,
     goView, goContainerAll, alignModeToArticle,
     kindFilter, setKindFilter, kindFacetItems, podcastGuideFilter, setPodcastGuideFilter,
-    scope, activeTagId, refreshInterests,
+    scope, activeTagId, activeCustomInterestId, interestCapabilities, refreshInterests,
     grouping,
     // 搜索
     searchOpen, searchInput, setSearchInput, searchQuery, toggleSearch,
@@ -157,7 +159,7 @@ export default function MobileReader({
   // 按 id 打开一篇(早报卡 / 榜单 / 播放条 / 深链)会把主列表临时收窄到那篇的来源(useReaderState.openArticleById);
   // 手机内容 Tab 没有来源筛选(收窄都在订阅 Tab 的推入页,issue #230 批 3a),离开正文时把这层收窄撤掉,
   // 回到那个容器的订阅聚合——否则内容 Tab 会悄悄只剩一个来源、又没有任何地方写着
-  const residualNarrowing = Boolean(activeSourceId || activeTagId);
+  const residualNarrowing = Boolean(activeSourceId || activeTagId || activeCustomInterestId);
   const closeArticle = useCallback(() => {
     supersedePendingOpen(); // 返回时作废在途的按 id 打开(早报卡 / 深链),迟到响应不再把页面拉回去
     if (briefReturn?.from === 'rankings') {
@@ -252,7 +254,15 @@ export default function MobileReader({
   };
   // 兴趣段「我的兴趣」:每行读它的条目流,「全部兴趣内容」读全站兴趣命中(InterestPage 的手机嵌入档传上来)
   const readInterestTag = (tag) => openFlow({ kind: 'tag', id: tag.id, name: tag.name_zh, facet: tag.kind });
-  const readInterestAll = (count) => openFlow({ kind: 'interest', count });
+  const readInterestAll = (count) => openFlow({ kind: 'interest', count, union: canFilterCustomInterests(interestCapabilities) });
+  const openMatchedInterest = (ref, article = null) => {
+    const target = rs.resolveInterestNavigation(ref);
+    if (!target) return;
+    const initialMode = article?.source_id ? shapeOfSource(article.source_id) : 'article';
+    setBriefReturn(null); selectArticle(null); closeDiscover(); setTab('subs');
+    if (residualNarrowing) goContainerAll();
+    openFlow({ ...target, initialMode });
+  };
   const tabRef = useRef(mTab);
   useEffect(() => { tabRef.current = mTab; }, [mTab]);
   const onSubsInterestSaved = ({ onboardingCompleted, briefRebuildStatus } = {}) => {
@@ -311,7 +321,7 @@ export default function MobileReader({
         },
       });
     }
-    // 动作单标题随「默认显示中文标题」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
+    // 动作单标题随「优先显示中文」(issue #218);系统分享面板仍带原题(对外内容,分享页也只有原题)
     setSheet({
       title: displayTitle(article, preferChinese),
       items,
@@ -329,16 +339,27 @@ export default function MobileReader({
     items: buildSourceMenuItems(source),
     anchorKey: `source:${source.source_id}`,
   });
-  const openSocialSheet = (article) => setSheet({
+  // flowSearch = 这张卡所在列表实例的搜索词:内容 Tab 用主列表的;订阅推入页是另一个列表实例、没有搜索。
+  // 动作单的语言项与预览卡要和那张卡同一口径(issue #349:搜的词只在原文里时卡片显示原文)
+  const openSocialSheet = (article, flowSearch = searchQuery) => setSheet({
     title: article.title || '推文',
-    items: buildSocialMenuItems(article),
+    items: buildSocialMenuItems(article, { searchQuery: flowSearch }),
     anchorKey: `social:${article.id}`,
-    preview: <SocialPeek article={article} source={sourceMap[article.source_id]} sourceName={sourceNameMap[article.source_id]} />,
+    preview: (
+      <SocialPeek
+        article={article}
+        source={sourceMap[article.source_id]}
+        sourceName={sourceNameMap[article.source_id]}
+        translation={socialTranslations[article.id] || null}
+        searchQuery={flowSearch}
+      />
+    ),
   });
 
   const pressBind = useLongPress(openArticleSheet);
   // 社交卡长按(审计 M-04;批 4a):与文章行同一条路径——iOS 不派发 contextmenu,靠触摸计时
-  const socialPressBind = useLongPress(openSocialSheet);
+  const socialPressBind = useLongPress((article) => openSocialSheet(article));
+  const flowSocialPressBind = useLongPress((article) => openSocialSheet(article, ''));
 
   const listView = contentTab && !socialView;
   // 正文页(push 全屏):文章/动态容器里选中了一篇即入栈;社交流直读不进正文页。
@@ -417,7 +438,7 @@ export default function MobileReader({
   // ── 内容 Tab 的列表位置(批 3a):切去早报 / 订阅 / 榜单时列表不渲染,回来按同一份查询落回原处——推入页与内容 Tab 各记各的。
   //    离开时记下页头下沿第一条的序号与离滚动区顶的距离;回来先落 scrollTop,再按那一条对齐。刚挂载的几帧里版面还有几像素的微动,
   //    浏览器的滚动锚定会跟着把位置挪开约 10px:对齐窗口内先关掉锚定,版面落定后再对齐一次、还原;要在下面的镀层重算之前 ──
-  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, scope, searchQuery, unreadOnly, kindFilter, podcastGuideFilter]);
+  const contentListKey = JSON.stringify([mode, activeSourceId, activeTagId, activeCustomInterestId, rs.interestRevision, rs.sessionKey, scope, searchQuery, unreadOnly, kindFilter, podcastGuideFilter]);
   const contentScrollRef = useRef(null);
   const contentScroller = () => shellRef.current?.querySelector('.m-content :is(.m-list, .reader-social-scroll)') || null;
   const saveContentPlace = () => {
@@ -483,9 +504,11 @@ export default function MobileReader({
 
   // ── 内容 Tab 列表顶一行(拍板 31 第 9 条):只看未读开着时「◉ 只看未读」(页头一像素不动)。
   //    批 2 过渡形态里这一行还列来源 / 收藏 / 兴趣筛选胶囊;批 3a 起这些收窄都在订阅 Tab 的推入页,内容 Tab 只剩订阅聚合 ──
-  const scopeRow = unreadOnly ? (
+  const scopeRow = unreadOnly || (mode === 'article' && rs.customInterests?.length) ? (
     <div className="m-scope" role="group" aria-label="当前筛选">
-      <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>
+      {unreadOnly && <span className="m-only"><CircleDot aria-hidden="true" />只看未读</span>}
+      {mode === 'article' && <CustomInterestFilter items={rs.customInterests} capabilities={interestCapabilities}
+        onChange={(id) => { if (id) openMatchedInterest({ kind: 'custom', id }); }} />}
     </div>
   ) : null;
 
@@ -567,6 +590,8 @@ export default function MobileReader({
       >
         {mTab === 'brief' ? (
           <PersonalBriefPage
+            interestCapabilities={interestCapabilities}
+            onOpenInterest={openMatchedInterest}
             mobile
             mobileLead={avatar}
             sourceMap={sourceMap}
@@ -646,6 +671,9 @@ export default function MobileReader({
               onDiscover={discoverFromSubs}
               interestPanel={personalDigestEnabled && !rs.isGuest ? (
                 <InterestPage
+                  interestCapabilities={interestCapabilities}
+                  onReadCustom={openMatchedInterest}
+                  guest={rs.isGuest}
                   mobile
                   embedded
                   onboarding={onboardingRequired}
@@ -764,7 +792,7 @@ export default function MobileReader({
                 )}
               </div>
             ) : (
-              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`}>
+              <div key={`${activeSourceId ?? '__all__'}|${activeTagId ?? ''}|${activeCustomInterestId ?? ''}|${mode}|${scope.axis}${scope.favorite ? '+f' : ''}|${kindFilter}|${podcastGuideFilter}`}>
                 {listPlan.map((entry) => {
                   const { article } = entry;
                   // 夜航卡(批 4c,样页 c-card / c-day):日期组头在长按包装之外、不吸顶;卡与卡间距由 .m-press 给
@@ -773,6 +801,7 @@ export default function MobileReader({
                       {entry.showLabel && <div className="m-day">{dayLabelOf(entry.dayKey)}</div>}
                       <div className="m-press" {...pressBind(article)}>
                         <ArticleRow
+                          interestCapabilities={interestCapabilities} onOpenInterest={openMatchedInterest} guest={rs.isGuest}
                           article={article}
                           active={false}
                           isUnread={isArticleUnread(article)}
@@ -866,6 +895,9 @@ export default function MobileReader({
               onShapeChange={setDiscoverShape}
               interestsPanel={personalDigestEnabled ? (
                 <InterestPage
+                  interestCapabilities={interestCapabilities}
+                  onReadCustom={openMatchedInterest}
+                  guest={rs.isGuest}
                   mobile
                   embedded
                   onboarding={onboardingRequired}
@@ -893,6 +925,7 @@ export default function MobileReader({
       {/* ── 订阅 Tab 的推入页(批 3a):来源 / 全部 / 收藏 / 兴趣各一条流,独立的列表实例;盖住底栏,正文页叠在它之上 ── */}
       {flow && (
         <MobileSubsFlow
+          onOpenInterest={openMatchedInterest}
           key={pushSpecKey(flow)}
           spec={flow}
           rs={rs}
@@ -900,7 +933,7 @@ export default function MobileReader({
           onBack={closeFlow}
           aiEnabled={aiEnabled}
           pressBind={pressBind}
-          socialPressBind={socialPressBind}
+          socialPressBind={flowSocialPressBind}
           sheetAnchorKey={sheet?.anchorKey || null}
           playingId={playingId}
           playingState={playingState}
@@ -912,6 +945,7 @@ export default function MobileReader({
       {/* ── 正文页(push 全屏,无 TabBar) ── */}
       {readOpen && (
         <MobileArticlePage
+          onOpenInterest={openMatchedInterest}
           rs={readRs}
           guestAccessEnabled={guestAccessEnabled}
           aiEnabled={aiEnabled}

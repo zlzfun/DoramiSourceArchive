@@ -30,7 +30,7 @@
 保留本地预览前必须关闭**全部自动付费入口**，不能只写 `article_analysis_enabled=false`：
 
 - 默认令 `[podcast] processing_enabled=false`。播客全文分析由独立 worker 执行，不受普通文章分析开关控制；同一 tick 还会检查精品导读候选。
-- 显式写入 `auto_title_translation_enabled=false`、`auto_title_translation_daily_tokens=0`。标题 worker 在 reader 角色也会启动，缺失开关默认开启。
+- 显式写入 `auto_title_translation_enabled=false`、`auto_title_translation_daily_tokens=0`。标题 worker 在 reader 角色也会启动，缺失开关默认开启。推文预译（issue #349）同理：`auto_social_translation_enabled=false`、`auto_social_translation_daily_tokens=0`。
 - 停用沙箱采集任务、用户源自动刷新（`user_sources_enabled=false`）和远程同步，保留数据与台账。继续关闭普通文章分析、日报、个人早报和论文自动任务；仅改运行角色不足以阻止全部 LLM 调用。
 - 获准测试单次 ASR 时才临时启用处理，阶段限于 `fetch,asr,local_publish`、目标限于 `transcript`，并确保无其它可运行任务。严格限制新供应商提交次数；旧 TaskId 的轮询与下载不等于授权新任务。
 - 完成后恢复原 ASR 授权期限，关闭处理与自动任务，再保留阅读预览。对照前后台账并跨至少两个 worker tick 验证无新增自动 LLM 调用；不得通过删除台账或更换回执目录来归零用量。

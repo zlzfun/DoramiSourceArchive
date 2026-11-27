@@ -19,6 +19,7 @@ from fetchers.impl.article_extractor import (
     node_to_markdown,
 )
 from fetchers.base import BaseFetcher
+from fetchers.impl.publication_window import PublicationWindow, CoverageReport, parameter_schema, point_proof
 from models.content import BaseContent, RssArticleContent
 
 
@@ -611,7 +612,7 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
     def get_parameter_schema(cls) -> List[Dict[str, Any]]:
         # 参数固化波:去噪门槛(10 分/0 评)与「外链贴不抓正文」是本节点的设计本身
         # (discovery source),固化为类默认,不作用户参数;调整 = 改代码。
-        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}]
+        return [{"field": "limit", "label": "单次获取上限", "type": "number", "default": cls.default_limit}] + parameter_schema()
 
     def _finalize_content_text(self, entry: Any, content_text: str, detail_text: str) -> str:
         # 真抓到了外链正文（用户手动开启详情抓取且成功）→ 保留。
@@ -706,7 +707,7 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         entries = [entry for key, entry in merged.items() if key not in existing]
         return feedparser.FeedParserDict(feed={"title": self.name}, entries=entries, bozo=False)
 
-    def _algolia_entry(self, hit, since):
+    def _algolia_entry(self, hit, since, *, min_points=None, min_comments=None):
         if not isinstance(hit, dict):
             return None
         try:
@@ -717,8 +718,8 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
             title = str(hit.get("title") or "")
             story_text = str(hit.get("story_text") or "")
             link = str(hit.get("url") or "")
-            if (not item_id.isdigit() or stamp <= since or points < self._active_min_points
-                    or comments < self._active_min_comments or not title
+            if (not item_id.isdigit() or stamp <= since or points < (self._active_min_points if min_points is None else min_points)
+                    or comments < (self._active_min_comments if min_comments is None else min_comments) or not title
                     or not (self._ai_brand.search(title) or self._ai_topic.search(f"{title} {story_text} {link}"))):
                 return None
             discussion = f"https://news.ycombinator.com/item?id={item_id}"
@@ -735,6 +736,121 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         except (KeyError, ValueError, TypeError, OverflowError, OSError):
             return None
 
+    async def _run_publication_window(self, client, window):
+        from math import floor, ceil
+        from urllib.parse import urlencode
+        report = CoverageReport(self.source_id, window)
+        self.coverage_report = report
+        merged = {}
+        # Same source policy and stable IDs; window state never lives on the
+        # reusable fetcher. RSS is parsed without the legacy API/dedup override.
+        try:
+            rss = await super()._fetch_parsed_feed(client, self._build_feed_url(
+                self.default_min_points, self.default_min_comments))
+            if not rss.get("version"):
+                raise RuntimeError("invalid_rss")
+            for entry in rss.entries:
+                stamp = self._datetime_from_entry_field(entry, "published")
+                aid = self._entry_id(self.source_id, entry)
+                if stamp is None:
+                    report.partial("rss_date_unknown")
+                    report.observe(aid, entry.get("link", ""), {"raw_date": entry.get("published", ""),
+                                   "date_precision": "unknown"}, "date_unknown", page=0, ordinal=0)
+                elif window.contains(stamp):
+                    merged.setdefault(aid, (entry, point_proof(entry.get("published", ""), stamp, "second"), 0, 0))
+        except (RuntimeError, ValueError) as exc:
+            report.partial("rss_unavailable")
+            self.logger.warning("HN window RSS unavailable: %s", exc)
+        seen_api = set()
+        expected_hits = None
+        for page in range(window.max_pages):
+            report.pages += 1
+            url = self.api_url + "?" + urlencode({
+                "tags": "story", "numericFilters": f"points>={self.default_min_points},num_comments>={self.default_min_comments},created_at_i>={floor(window.after.timestamp())},created_at_i<={ceil(window.before.timestamp())}",
+                "hitsPerPage": 100, "page": page,
+            })
+            try:
+                response = await self._safe_get(client, url)
+                if response is None:
+                    raise ValueError("request_failed")
+                data = response.json()
+                hits, pages, total = data["hits"], data["nbPages"], data["nbHits"]
+                if (not isinstance(hits, list) or type(pages) is not int or pages < 0
+                        or type(total) is not int or total < 0 or data.get("page") != page):
+                    raise ValueError("invalid_payload")
+                if expected_hits is None:
+                    expected_hits = total
+                elif total != expected_hits:
+                    report.partial("api_inventory_changed")
+                if data.get("exhaustiveNbHits") is not True or total > pages * 100:
+                    report.partial("api_result_cap")
+                for offset, hit in enumerate(hits):
+                    if not isinstance(hit, dict) or not str(hit.get("objectID", "")).isdigit():
+                        report.partial("api_item_invalid")
+                        continue
+                    object_id = str(hit["objectID"])
+                    try:
+                        if type(hit.get("created_at_i")) is not int:
+                            raise ValueError("invalid_timestamp")
+                        datetime.fromtimestamp(hit["created_at_i"], timezone.utc)
+                    except (ValueError, OverflowError, OSError):
+                        report.partial("api_date_unknown")
+                        report.observe(self._entry_id(self.source_id, {"id": f"https://news.ycombinator.com/item?id={object_id}"}),
+                                       hit.get("url", ""), {"raw_date": hit.get("created_at_i"), "date_precision": "unknown"},
+                                       "date_unknown", page=page + 1, ordinal=page * 100 + offset + 1)
+                        continue
+                    if object_id in seen_api:
+                        report.partial("api_duplicate_item")
+                        continue
+                    seen_api.add(object_id)
+                    entry = self._algolia_entry(hit, floor(window.after.timestamp()) - 1,
+                                                min_points=self.default_min_points, min_comments=self.default_min_comments)
+                    if entry is None:
+                        continue
+                    stamp = self._datetime_from_entry_field(entry, "published")
+                    if stamp is not None and window.contains(stamp):
+                        aid = self._entry_id(self.source_id, entry)
+                        proof = point_proof(hit.get("created_at_i"), stamp, "second")
+                        # Prefer valid RSS content, while retaining API top ordinal.
+                        old = merged.get(aid)
+                        merged[aid] = (old[0] if old else entry, old[1] if old else proof, page + 1, page * 100 + offset + 1)
+                if page + 1 >= pages:
+                    report.discovery_complete = len(seen_api) == total
+                    if not report.discovery_complete:
+                        report.partial("api_count_mismatch")
+                    break
+                if not hits:
+                    report.partial("api_empty_page")
+                    break
+            except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+                report.partial("api_page_failed")
+                self.logger.warning("HN window page failed: %s", exc)
+                break
+        if not report.discovery_complete:
+            report.partial("page_limit_or_incomplete")
+        ordered = sorted(merged.items(), key=lambda pair: self._entry_sort_timestamp(pair[1][0]) or 0, reverse=True)
+        for aid, (entry, proof, page, ordinal) in ordered:
+            report.observe(aid, entry.get("link", ""), proof, "in_window", page=page, ordinal=ordinal)
+        existing = await self._lookup_existing_content_flags(row["article_id"] for row in report.items)
+        report.counters["api_unique_items_examined"] = len(seen_api)
+        report.mark_archive(existing)
+        new_entries = [(aid, value) for aid, value in ordered if aid not in existing]
+        if len(new_entries) > window.limit:
+            report.partial("limit_reached")
+        coverage = report.summary()
+        for aid, (entry, proof, _, _) in new_entries[:window.limit]:
+            body = self._finalize_content_text(entry, self._entry_content_text(self._entry_html(entry), entry.get("link", "")), "")
+            yield RssArticleContent(
+                id=aid, title=entry.get("title", "未命名 RSS 条目"), source_url=entry.get("link", self.feed_url),
+                publish_date=proof["published_at"], content=body, has_content=bool(body), feed_name=self.name,
+                author=entry.get("author", ""), tags=self._entry_tags(entry), guid=entry.get("id", "") or entry.get("guid", ""),
+                summary=self._clean_text(entry.get("summary", "")), media_url=self._media_url(entry),
+                raw_data={**self._raw_entry(entry), "detail_fetched": False, "detail_text_length": 0,
+                          "body_status": "source_text_unreviewed" if body else "discovery_only",
+                          "publication_date_proof": proof, "publication_window": dict(coverage)},
+            )
+        report.finish(self.logger)
+
     def _build_feed_url(self, min_points: int, min_comments: int) -> str:
         from urllib.parse import urlencode
 
@@ -746,6 +862,12 @@ class HackerNewsAiRssFetcher(PresetRssFetcher):
         return f"{self.base_feed_url}?{urlencode(params)}"
 
     async def _run(self, client: httpx.AsyncClient, **kwargs) -> AsyncGenerator[BaseContent, None]:
+        self.coverage_report = None
+        window = PublicationWindow.from_params(kwargs, self.default_limit)
+        if window is not None:
+            async for item in self._run_publication_window(client, window):
+                yield item
+            return
         min_points = self._positive_int_param(kwargs.get("min_points"), self.default_min_points)
         min_comments = self._positive_int_param(kwargs.get("min_comments"), self.default_min_comments)
         # 父类 PresetRssFetcher._run 会读取 self.feed_url 拼装参数，这里按门槛动态改写。

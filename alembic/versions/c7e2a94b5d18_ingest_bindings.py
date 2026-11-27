@@ -8,7 +8,7 @@
 与混版本窗口无关。downgrade 删表。
 
 Revision ID: c7e2a94b5d18
-Revises: c3e5a91f7d24
+Revises: c298f6100001
 Create Date: 2026-11-25
 """
 
@@ -22,7 +22,7 @@ from alembic import op
 
 
 revision: str = "c7e2a94b5d18"
-down_revision: Union[str, Sequence[str], None] = "c3e5a91f7d24"
+down_revision: Union[str, Sequence[str], None] = "c298f6100001"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
