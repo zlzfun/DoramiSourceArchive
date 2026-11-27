@@ -361,7 +361,8 @@ def resolve_personal_digest_source_ids(session: Session, username: str) -> list[
     # 公共日报是文章容器的主菜,不是早报的素材(issue #74):它本身就是当天几十条资讯的聚合稿,
     # 在新闻价值尺子下分数不低,若留在范围里会稳进质量通道;报头「订阅的 N 个来源」也不该数它。
     # 范围层一刀切,候选查询与兜底列表另有机械双保险。
-    explicit.discard(PUBLIC_DAILY_BRIEF_SOURCE_ID)
+    # issue #72:同一条规则对所有系统源成立(平台自己生成的东西不当早报的素材),名单在策展源目录里。
+    explicit -= source_catalog.system_source_ids()
     if not explicit:
         return []
 
@@ -932,7 +933,7 @@ def _query_candidate_rows(
         query = query.where(ArticleRecord.id.in_(article_ids))
     # 公共日报记录在两个分支都排除:范围解析已把它剔出订阅池,这里是机械双保险(issue #74 之前
     # 只有全站分支排除,订阅了日报的读者会在订阅池里吃到它)。
-    query = query.where(ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID)
+    query = query.where(ArticleRecord.source_id.notin_(sorted(source_catalog.system_source_ids())))
     if source_ids is not None:
         query = query.where(ArticleRecord.source_id.in_(source_ids))
     else:
@@ -1664,7 +1665,7 @@ def _load_latest_fallback(
         )
         .where(
             ArticleRecord.source_id.in_(source_ids),
-            ArticleRecord.source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID,
+            ArticleRecord.source_id.notin_(sorted(source_catalog.system_source_ids())),
         )
     )
     excluded = sorted({str(value) for value in excluded_article_ids if str(value)})

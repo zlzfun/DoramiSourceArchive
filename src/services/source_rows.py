@@ -5,7 +5,7 @@ authority 上成立并保持:
 
 - **镜像行**:62 个预设抓取器类各一行(``origin=catalog``、``source_type=preset``、绑定 = 自身类
   id),目录拥有的字段与类属性逐字段相等;``legacy_export=False``——旧接收端靠注册表认识它们;
-- **系统行**:公共日报 ``dorami_daily_brief``(``origin=system``,无绑定);
+- **系统行**:目录里的每个系统源各一行(公共日报 ``dorami_daily_brief`` 等;``origin=system``,无绑定);
 - **墓碑**:已下线源(目录文件 ``system.toml`` 的 ``[[tombstone]]``)保留身份、标退役;
 - **回填**:只在 ``articles`` / 订阅里出现的 id——公共 id 记 ``origin=legacy``(照旧列出,存量
   不变);``user_rss_*`` 孤儿记私有隔离行(不分析、按「带凭证」处理、不列出、不外发);
@@ -224,9 +224,23 @@ def _reconcile_mirror(
     return "adopted" if adopting else "updated"
 
 
-def _ensure_system_row(session: Session, *, now: str, analysis_default: bool = True) -> str:
-    view = source_catalog._builtin_view(source_catalog.DAILY_BRIEF_SOURCE_ID)
-    row = session.get(SourceConfigRecord, source_catalog.DAILY_BRIEF_SOURCE_ID)
+def _ensure_system_rows(session: Session, *, now: str, analysis_default: bool = True) -> str:
+    """目录里每个系统源各一行;返回汇总结果(有新建 → created,否则有收养 → adopted,否则 unchanged)。"""
+    outcomes = {
+        _ensure_system_row(session, source_id, now=now, analysis_default=analysis_default)
+        for source_id in sorted(source_catalog.system_source_ids())
+    }
+    for outcome in ("created", "adopted"):
+        if outcome in outcomes:
+            return outcome
+    return "unchanged"
+
+
+def _ensure_system_row(
+    session: Session, source_id: str, *, now: str, analysis_default: bool = True
+) -> str:
+    view = source_catalog._builtin_view(source_id)
+    row = session.get(SourceConfigRecord, source_id)
     if row is not None:
         if row.origin != source_catalog.ORIGIN_SYSTEM and not (row.collection_authority_id or "").strip():
             _ledger(session, row.source_id, "adopted", pre_image=_row_snapshot(row), now=now)
@@ -246,7 +260,8 @@ def _ensure_system_row(session: Session, *, now: str, analysis_default: bool = T
         provenance_tier=view.provenance_tier,
         legacy_export=False,
         is_active=True,
-        ai_analysis_enabled=analysis_default,
+        # 节点的缺省(有上游的节点上新建的行分析默认关)与目录条目的 analysis 都同意才开
+        ai_analysis_enabled=analysis_default and source_catalog.system_source_analysis_default(source_id),
         created_at=now,
         updated_at=now,
     ))
@@ -441,7 +456,7 @@ def reconcile_source_rows(session: Session, *, now: Optional[str] = None) -> dic
             continue
         outcome = _reconcile_mirror(session, view, now=now, analysis_default=analysis_default)
         summary["mirror"][outcome] = summary["mirror"].get(outcome, 0) + 1
-    summary["system"] = _ensure_system_row(session, now=now, analysis_default=analysis_default)
+    summary["system"] = _ensure_system_rows(session, now=now, analysis_default=analysis_default)
     summary["tombstones"] = _ensure_tombstone_rows(session, now=now)
     summary["podcast_catalog"] = _mark_podcast_catalog_rows(session, now=now)
     session.flush()
@@ -504,8 +519,8 @@ def ensure_source_row(
         session.add(row)
         _ledger(session, sid, "created", now=now)
         return row
-    if sid == source_catalog.DAILY_BRIEF_SOURCE_ID:
-        _ensure_system_row(session, now=now)
+    if source_catalog.is_system_source(sid):
+        _ensure_system_row(session, sid, now=now)
         session.flush()
         return session.get(SourceConfigRecord, sid)
     shape = source_catalog.shape_from_content_type(content_type)

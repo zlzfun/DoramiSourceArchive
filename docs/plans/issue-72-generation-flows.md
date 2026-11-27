@@ -1,6 +1,6 @@
 # 生成流程:公共日报成为多个流程之一(issue #72)
 
-> 状态:进行中(2026-11-27 样页与 §10 的十二项都已拍板;第一批实现中)。
+> 状态:进行中(2026-11-27 样页与 §10 的十二项都已拍板;第一批已实现,见 §14;第二批未动工)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §13)。分支 `feat/issue-72-product-registry`。
 > 关联:[issue #72](https://github.com/zlzfun/DoramiSourceArchive/issues/72);样页 [`design/issue-72-product-registry/`](../design/issue-72-product-registry/README.md);相邻的两波是三层源模型 [重构方案](./issue-262-source-model-refactor.md)(系统源登记在 `system.toml`)与 [推送绑定](../archive/issue-344-push-binding.md)(源的「获取方式」)。
 
@@ -136,6 +136,7 @@ issue 是 2026-09-14 开的,正文里的几条前提到 2026-11 已经变了,见
 - 泳道的滚动容器高度不随点击变化,滚动条不会在操作中出现或消失。
 - 零说明句:现网面板里「开关即时生效」「还没有生成过日报。配置好模型后点…」这类句子不带过来(守卫 `explanatorySlots`)。
 - 源管理里系统源的获取方式一格从「无抓取」改成「生成」(`utils/sourceAcquisition.js` 加一种取值),检视器里给一个去本页的入口。
+- 数据总览的台账现在按 id 排除日报(`DataTab.jsx` 三处 `exclude_source_ids: 'dorami_daily_brief'`),改成排除全部系统源(第一批没有碰前端)。
 - 用户手册里提到「AI 日报」页签的地方(`docs-site/features/integrations.md`)跟着改名。
 
 ### 6.7 没有做成通用的
@@ -211,8 +212,22 @@ issue 是 2026-09-14 开的,正文里的几条前提到 2026-11 已经变了,见
 - 生产上 GitHub Trending 日榜是否每天在采(§10 第 10 项)。
 - 内网当前的版本,以及它走的是目录投影还是旧投影。
 - 旧接收端对未知系统源行、未知内容类型的实际表现(§7 第 3 条,合入前实测)。
-- 事件层会不会给没有分析行的条目分配事件(读代码时没有看这一处;实现时确认精读不进事件)。
+- ~~事件层会不会给没有分析行的条目分配事件~~:第一批时看了——事件分配只扫有分析行的条目,且内容类型是「汇编」的直接排除(`event_assignment.EXCLUDED_KINDS`);精读不送分析,进不了事件。
 
 ## 13. 检视
 
-未开始。
+### 第一批
+
+待填(Codex 检视后)。
+
+## 14. 实施记录
+
+### 第一批:系统源从一个变成名单(2026-11-27,纯后端)
+
+- **目录**:`[[system]]` 多三个可选键 `icon` / `description` / `analysis`(布尔,缺省 `true`);日报的图标与简介从 `api.sources.DAILY_BRIEF_SOURCE_META` 搬进 `system.toml`,那个常量删了。`source_catalog` 新增 `system_source_ids()` / `is_system_source()` / `system_source_meta()` / `system_source_analysis_default()`。
+- **源行**:启动对账给每个系统源各建一行;`analysis = false` 的建出来就不送分析(有上游的节点上新建的行本来就默认关,两者都同意才开)。对账摘要里的 `system` 仍是一个词(有新建 → `created`)。
+- **不回流,从认日报一个 id 改成认名单的八处**:公共日报候选池、个人早报的范围与候选 / 兜底两处查询、榜单、自定兴趣的可读源、候选治理的取证、Taxonomy bootstrap、话题热度的来源计数、收录保留 id(推送绑定经它,自动跟着)。
+- **取名与目录元数据的八处**(`routers/admin.py` 四处、`app.py` 两处、`routers/reader.py` 一处合并 + 一处注释):改成从目录条目取。
+- **没动的**(日报专属):§5 末列的那些;另外 `reader_defaults` 里默认订阅候选的日报、读者目录里预先列出日报。别的系统源「有了第一期才出现在读者目录」不用另写代码——系统行本来就不进目录的元数据来源,条目聚合时才出现;测试守住了。
+- **与方案 §5 的出入**:表里写的「兴趣信号的取证查询」实际是话题热度上下文(`build_topic_heat_context`)里数来源的那条查询;按内容类型排除的几处(榜单两处、同源判重、类型映射)照方案留到第二批。
+- **发现并留给第二批的**:数据总览台账在前端按 id 排除日报(§6.6 已补)。

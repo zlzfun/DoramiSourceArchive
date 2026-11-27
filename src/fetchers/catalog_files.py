@@ -76,6 +76,8 @@ RESERVED_STEMS = (SYSTEM_STEM, COLLECTIONS_STEM)
 _SYSTEM_TABLES = ("system", "tombstone", "reader_defaults")
 _COLLECTION_TABLES = ("collection",)
 # 代码按 id 引用的系统源(``DAILY_BRIEF_SOURCE_ID``):目录里必须有,少了就是文件被改坏了。
+# 系统源可以不止一个(issue #72);「是不是系统源」一律问目录(``services.source_catalog.system_source_ids``),
+# 这里只列代码里写死了 id 的那些。
 REQUIRED_SYSTEM_IDS = ("dorami_daily_brief",)
 _COLLECTION_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -103,6 +105,10 @@ class SystemEntry:
     owner: str = ""
     scope: str = ""
     tier: str = ""
+    icon: str = ""
+    description: str = ""
+    # 这个源的条目默认送不送入库分析(建源行时的初值;之后管理员可以在源管理里改)
+    analysis: bool = True
 
 
 @dataclass(frozen=True)
@@ -242,10 +248,11 @@ def _string_table(
     required: tuple[str, ...],
     optional: tuple[str, ...] = (),
     lists: tuple[str, ...] = (),
+    flags: tuple[str, ...] = (),
 ) -> tuple[str, dict]:
-    """校验一张「全是字符串(``lists`` 里的键是字符串数组)」的表,返回 (id, 字段)。
+    """校验一张「全是字符串(``lists`` 里的键是字符串数组,``flags`` 里的键是布尔)」的表,返回 (id, 字段)。
 
-    ``id`` 总是必填;``required`` 里的键必须有且非空白;枚举键(``shape``)取值受限。
+    ``id`` 总是必填;``required`` 里的键必须有且非空白;枚举键(``shape``)取值受限;``flags`` 都是可选的。
     """
     where = f"{file_name} 第 {index + 1} 个 [[{kind}]]"
     if not isinstance(raw, dict):
@@ -254,7 +261,7 @@ def _string_table(
     if not isinstance(entry_id, str) or not entry_id.strip() or entry_id != entry_id.strip():
         raise CatalogError(f"{where}:id 必须是首尾不带空白的非空字符串")
     where = f"{file_name} 的 [[{kind}]] {entry_id}"
-    allowed = {"id", *required, *optional, *lists}
+    allowed = {"id", *required, *optional, *lists, *flags}
     missing = [key for key in (*required, *lists) if key not in raw]
     if missing:
         raise CatalogError(f"{where}:缺必填键 {missing}")
@@ -267,6 +274,11 @@ def _string_table(
             continue
         if key in lists:
             fields[key] = _id_list(value, f"{where}:{key}")
+            continue
+        if key in flags:
+            if not isinstance(value, bool):
+                raise CatalogError(f"{where}:{key} 必须是 true 或 false")
+            fields[key] = value
             continue
         if not isinstance(value, str):
             raise CatalogError(f"{where}:{key} 必须是字符串")
@@ -300,7 +312,8 @@ def _load_system(directory: Path) -> tuple[dict[str, SystemEntry], dict[str, Tom
     system: dict[str, SystemEntry] = {}
     for index, raw in enumerate(_tables(document, "system", file_name, required=True)):
         entry_id, fields = _string_table(
-            raw, file_name, "system", index, required=("name", "shape"), optional=("owner", "scope", "tier"),
+            raw, file_name, "system", index, required=("name", "shape"),
+            optional=("owner", "scope", "tier", "icon", "description"), flags=("analysis",),
         )
         if entry_id in system:
             raise CatalogError(f"{file_name} 的 [[system]] {entry_id}:id 重复")

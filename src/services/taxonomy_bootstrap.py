@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 from sqlmodel import Session, select
 
 from models.db import ArticleAnalysisRecord, ArticleRecord, SourceConfigRecord
+from services import source_catalog
 from services.taxonomy import (
     CandidateEvidenceInput,
     activate_taxonomy_version,
@@ -205,7 +206,7 @@ def bootstrap_source_is_eligible(session: Session, source_id: str) -> bool:
     """Return whether a source is public and concrete enough for bootstrap."""
 
     if (
-        source_id == "dorami_daily_brief"
+        source_catalog.is_system_source(source_id)
         or source_id.startswith("generic_")
         or source_id.startswith("user_rss_")
     ):

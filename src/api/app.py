@@ -66,8 +66,8 @@ from api.feed_service import (
 )
 from api.articles_view import apply_article_query_filters  # noqa: F401 -- compatibility export
 from api.sources import (
-    DAILY_BRIEF_SOURCE_ID,
-    DAILY_BRIEF_SOURCE_META,
+    DAILY_BRIEF_SOURCE_ID,  # noqa: F401 -- compatibility export
+    system_source_name,
     _registry_source_meta,
     _friendly_source_name,
     subscription_source_ids,
@@ -4465,10 +4465,7 @@ def ensure_default_subscriptions(username: str) -> None:
         for source_id in reader_defaults_service.default_source_ids(session):
             if source_id in existing:
                 continue
-            if source_id == DAILY_BRIEF_SOURCE_ID:
-                name = DAILY_BRIEF_SOURCE_META["name"]
-            else:
-                name = _friendly_source_name(source_id, registry_meta)
+            name = system_source_name(source_id) or _friendly_source_name(source_id, registry_meta)
             _create_single_source_subscription(session, username, source_id, name)
             # 与一键订阅同语义：播种即初始化未读水位（backlog 式，最近 K 篇成为未读积压），
             # 新账号首屏就有未读可读，而不是一片「全已读」。
@@ -4504,10 +4501,7 @@ def sync_guest_subscriptions() -> bool:
         for source_id in desired:
             if source_id in kept:
                 continue
-            if source_id == DAILY_BRIEF_SOURCE_ID:
-                name = DAILY_BRIEF_SOURCE_META["name"]
-            else:
-                name = _friendly_source_name(source_id, registry_meta)
+            name = system_source_name(source_id) or _friendly_source_name(source_id, registry_meta)
             _create_single_source_subscription(session, owner, source_id, name)
             changed = True
         if changed:

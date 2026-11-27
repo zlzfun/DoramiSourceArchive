@@ -129,6 +129,32 @@ def idle_automatic_social_worker(monkeypatch):
 TEST_PBKDF2_ITERATIONS = 1_000
 
 
+SECOND_SYSTEM_SOURCE_ID = "dorami_test_flow"
+
+
+@pytest.fixture
+def second_system_source(monkeypatch):
+    """往策展源目录里加第二个系统源(issue #72),返回它的 id。
+
+    仓内目录现在只有公共日报一个系统源;「系统源的条目不回流」这条规则各处读的是名单
+    (``services.source_catalog.system_source_ids``)而不是日报的 id,要有第二个才验得出来。
+    这个源的 ``analysis`` 写成 false(默认不送入库分析),与日报相反。
+    """
+    import dataclasses
+
+    from fetchers import catalog_files
+
+    real = catalog_files.loaded()
+    entry = catalog_files.SystemEntry(
+        id=SECOND_SYSTEM_SOURCE_ID, name="测试流程", shape="article", owner="dorami",
+        scope="aggregator", tier="tier1_curated", icon="🧪", description="测试用的第二个系统源。",
+        analysis=False,
+    )
+    patched = dataclasses.replace(real, system={**real.system, entry.id: entry})
+    monkeypatch.setattr(catalog_files, "loaded", lambda: patched)
+    return entry.id
+
+
 @pytest.fixture
 def captured_log():
     """直接挂在指定记录器上抓日志:``with captured_log(logger) as records``。

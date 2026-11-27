@@ -38,7 +38,7 @@
   - `GET /api/admin/ingest/tokens` 每个令牌带 `bindings`(`source_id` / `name` / `shape` / `open` /
     `admission_status` / `last_pushed_at`);
   - `GET /api/fetchers`(源管理目录)每个源带 `push_bindings`(`actor` / `token_preview` / `is_active` / `last_pushed_at`)。
-- 可以绑定的源:存在、不是读者自定源、不是抓取模板、不是公共日报、未退役。平台自己抓取的源也可以绑
+- 可以绑定的源:存在、不是读者自定源、不是抓取模板、不是系统源(平台自己生成内容的源:公共日报等)、未退役。平台自己抓取的源也可以绑
   (又抓又推;同一条两条路都到时按「同一条社交帖再次到达」与链接合流处理)。已下架的源可以绑,
   推送仍被「已下架」拒收,恢复后生效。吊销的令牌不能再绑。
 - `last_pushed_at` 是这个令牌最近一次有条目被这个源接受(新建、补全或命中重复)的时间。
@@ -243,7 +243,7 @@
 管理员「单条收录」按下面四步认出处、认不出建临时源;令牌推送用同样的认法,但只认它绑定的源、不建源
 (上一节)。
 
-1. 显式 `source_id`:校验存在、非保留(读者自定源 `user_rss_*`、抓取模板 `generic_*`、公共日报、
+1. 显式 `source_id`:校验存在、非保留(读者自定源 `user_rss_*`、抓取模板 `generic_*`、系统源(公共日报等)、
    已下线源)、未退役、未下架,且源形态与 `kind` 一致(文章源只收 `article`、社交源只收
    `social_post`、播客源只收 `podcast_episode`;不符拒收,例如「该来源是社交源,不收文章」)。
 2. 社交:身份键 `x:user_id:…` 优先、`x:handle:…`(小写)次之——命中预设(如 `Kimi_Moonshot` →

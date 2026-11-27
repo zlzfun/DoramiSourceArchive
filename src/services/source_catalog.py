@@ -380,6 +380,43 @@ _SYSTEM_CONTENT_TYPES = {DAILY_BRIEF_SOURCE_ID: "daily_brief"}
 _TOMBSTONE_CONTENT_TYPES = {"social": "social_post", "podcast": "podcast_episode"}
 
 
+def system_source_ids() -> frozenset[str]:
+    """系统源:由本系统自己产出内容的源(公共日报,以及以后的其它生成流程)。
+
+    它们的条目**不回流**——平台自己加工出来的东西不再当素材:不进公共日报候选、个人早报、榜单、兴趣与
+    Taxonomy 的取证,推送也不能往里写。「是不是系统源」一律问这里,不认 ``dorami_`` 前缀、不写死某个 id。
+    日报专属的行为(问答的「日报即索引」、删最新一期回退游标等)仍按 ``DAILY_BRIEF_SOURCE_ID`` 判断。
+    """
+    return frozenset(catalog_files.loaded().system)
+
+
+def is_system_source(source_id: Optional[str]) -> bool:
+    return bool(source_id) and source_id in catalog_files.loaded().system
+
+
+def system_source_meta(source_id: Optional[str]) -> Optional[dict]:
+    """系统源在读者目录与管理面里的展示元数据(名称 / 图标 / 简介 / 条目类型 / 出品方);不是系统源返回 None。
+
+    系统源没有抓取器类,目录元数据不能从注册表来;以前是 ``api.sources.DAILY_BRIEF_SOURCE_META`` 一个常量。
+    """
+    entry = catalog_files.loaded().system.get(source_id or "")
+    if entry is None:
+        return None
+    return {
+        "name": entry.name,
+        "icon": entry.icon,
+        "desc": entry.description,
+        "content_type": _SYSTEM_CONTENT_TYPES.get(entry.id, ""),
+        "source_owner": entry.owner,
+    }
+
+
+def system_source_analysis_default(source_id: str) -> bool:
+    """这个系统源的条目默认送不送入库分析(目录条目的 ``analysis``,缺省送)。"""
+    entry = catalog_files.loaded().system.get(source_id)
+    return True if entry is None else bool(entry.analysis)
+
+
 def tombstone_ids() -> frozenset[str]:
     """已下线的策展源:类与目录条目已删,历史归档仍在。读者目录不回流、收录通道不写入、对账建退役行。"""
     return frozenset(catalog_files.loaded().tombstones)
@@ -404,7 +441,7 @@ def default_subscription_ids() -> tuple[str, ...]:
 
 
 def _builtin_view(source_id: str) -> Optional[SourceView]:
-    """没有行也没有注册表类的内建 id:系统源(公共日报)、下线墓碑、播客目录常量。"""
+    """没有行也没有注册表类的内建 id:系统源(公共日报等)、下线墓碑、播客目录常量。"""
     files = catalog_files.loaded()
     system = files.system.get(source_id)
     if system is not None:

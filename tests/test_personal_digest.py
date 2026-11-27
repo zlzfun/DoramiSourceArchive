@@ -2134,3 +2134,48 @@ def test_event_shown_two_editions_ago_is_still_suppressed_but_three_is_not(stora
         stats = json.loads(result.edition.selection_stats_json)
         assert stats["same_event_previous_day"] == 1
 
+
+
+def test_other_system_sources_are_not_digest_material_either(storage, second_system_source):
+    """issue #72:「平台自己生成的东西不当早报素材」对名单里的每个系统源都成立,不只是公共日报。
+
+    与日报那条用例(issue #74)同形:范围层剔除,候选查询与降级兜底各有一道机械双保险。
+    """
+
+    from services.personal_digest import _load_latest_fallback, load_digest_candidates
+
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", f"{second_system_source},rss_a")])
+        _seed_article(session, 1, source=second_system_source, score=9.5)
+        _seed_article(session, 2, source="rss_a", score=7.0)
+        session.commit()
+
+        assert resolve_personal_digest_source_ids(session, "alice") == ["rss_a"]
+        result = generate_personal_digest(session, "alice", now=NOW)
+
+        assert result.status == "ready"
+        assert [item.article_id for item in result.items] == ["article-02"]
+        assert json.loads(result.edition.expected_source_ids_json) == ["rss_a"]
+
+        pool = load_digest_candidates(
+            session, [second_system_source, "rss_a"], cutoff_at=NOW, window_hours=48
+        )
+        assert [candidate.article_id for candidate in pool] == ["article-02"]
+        latest = _load_latest_fallback(session, [second_system_source, "rss_a"], [], limit=5)
+        assert [article.id for article, *_rest in latest] == ["article-02"]
+
+
+def test_an_unlisted_dorami_id_is_an_ordinary_digest_source(storage):
+    """反向对照:名单里没有它时,同一个 id 的源照常是早报素材——排除靠的是名单,不是 ``dorami_`` 前缀。"""
+
+    from tests.conftest import SECOND_SYSTEM_SOURCE_ID
+
+    with Session(storage.engine) as session:
+        session.add_all([_user(), _subscribe("alice", f"{SECOND_SYSTEM_SOURCE_ID},rss_a")])
+        _seed_article(session, 1, source=SECOND_SYSTEM_SOURCE_ID, score=9.5)
+        _seed_article(session, 2, source="rss_a", score=7.0)
+        session.commit()
+
+        assert resolve_personal_digest_source_ids(session, "alice") == [SECOND_SYSTEM_SOURCE_ID, "rss_a"]
+        result = generate_personal_digest(session, "alice", now=NOW)
+        assert [item.article_id for item in result.items] == ["article-01", "article-02"]

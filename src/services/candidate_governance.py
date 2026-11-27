@@ -22,7 +22,7 @@ from models.db import (
     EventMemberRecord, SourceConfigRecord, TagRetagJobRecord,
 )
 from models.taxonomy_governance import CandidateGovernanceActionRecord, CandidateGovernanceStateRecord
-from services import sync_consumer_policy, taxonomy
+from services import source_catalog, sync_consumer_policy, taxonomy
 from services.source_visibility import hidden_source_ids
 from services.user_sources import is_user_source, source_is_credentialed
 from services.article_time import SHANGHAI, parse_article_time
@@ -62,7 +62,7 @@ def public_review_evidence(session: Session, candidate_id: int, *, now=None):
         source = session.get(SourceConfigRecord, row.source_id)
         if source_is_credentialed(source):
             continue
-        if article.source_id == "dorami_daily_brief" or article.content_type in {"daily_brief", "personal_digest"}:
+        if source_catalog.is_system_source(article.source_id) or article.content_type in {"daily_brief", "personal_digest"}:
             continue
         published = parse_article_time(row.published_date or row.created_at)
         if published is None or published > _now(now) or not since <= _date(row) <= today:

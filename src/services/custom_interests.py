@@ -31,7 +31,7 @@ from models.db import (
     AppSettingRecord, ArticleRecord, ArticleAnalysisRecord, ArticleTagAssignmentRecord,
     PodcastTextArtifactRecord, PodcastTextPublicationRecord, UserRecord,
 )
-from services import source_visibility, user_sources
+from services import source_catalog, source_visibility, user_sources
 from services.article_time import in_time_window
 from services import interest_match_scope as match_scope
 
@@ -316,7 +316,7 @@ def readable_source_ids(session: Session, username: str, source_ids):
     sources = {str(s) for s in source_ids if s}
     sources -= source_visibility.reader_unavailable_source_ids(session)
     sources -= set(user_sources.unauthorized_user_source_ids(session, username, list(sources)))
-    sources.discard('dorami_daily_brief')
+    sources -= source_catalog.system_source_ids()   # 系统源的条目不当兴趣的取证素材
     return sources
 
 
