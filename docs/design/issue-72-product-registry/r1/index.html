@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 产出 · 概念与样页总览</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; --wash: #eeedfb; --soft: #f1f2f6; --ok: #0f9d6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  h3 { font-size: 15px; margin: 28px 0 2px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { color: var(--accent); text-decoration: none; margin-left: auto; }
+  .frame { position: relative; overflow: hidden; width: calc(var(--vw, 1440) * var(--s, 0.5) * 1px); height: calc(var(--vh, 900) * var(--s, 0.5) * 1px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: calc(var(--y, 0) * var(--s, 0.5) * -1px); left: calc(var(--x, 0) * var(--s, 0.5) * -1px); width: 1440px; height: calc(var(--ih, 900) * 1px); border: 0; transform: scale(var(--s, 0.5)); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1280px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 18px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; }
+  td:first-child { white-space: nowrap; color: var(--faint); }
+  td b { font-weight: 600; }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+
+  /* 概念图 */
+  .concept { display: grid; grid-template-columns: 300px 44px minmax(0, 1fr); gap: 0; margin-top: 18px; max-width: 1280px; align-items: stretch; }
+  .concept-arrow { display: grid; place-items: center; color: var(--faint); font-size: 20px; }
+  .side-title { font-size: 13px; font-weight: 600; color: var(--faint); margin-bottom: 8px; }
+  .box { border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .now { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .now-name { font-weight: 600; font-size: 15px; }
+  .chip { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--soft); font-size: 13px; color: var(--ink-2); }
+  .chip i { font-style: normal; color: var(--faint); min-width: 3em; }
+  .shell { padding: 10px 16px 12px; background: var(--wash); border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+  .shell-name { font-size: 13px; font-weight: 600; color: var(--accent); }
+  .shell-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .shell-items span { padding: 3px 10px; border-radius: 999px; background: #fff; font-size: 13px; color: var(--ink-2); }
+  .flows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .flow-col { padding: 14px 16px 16px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; }
+  .flow-col + .flow-col { border-left: 1px solid var(--line); }
+  .flow-col.is-next { color: var(--faint); background: repeating-linear-gradient(135deg, transparent 0 9px, rgba(122, 128, 144, 0.07) 9px 10px); border-radius: 0 0 12px 0; }
+  .flow-name { font-weight: 600; font-size: 15px; }
+  .seg { font-size: 13px; color: var(--ink-2); }
+  .seg > i { display: block; font-style: normal; font-size: 12px; color: var(--faint); margin-bottom: 3px; }
+  .steps { display: flex; flex-wrap: wrap; gap: 4px; }
+  .steps span { padding: 3px 9px; border-radius: 6px; background: var(--soft); font-size: 13px; }
+  .out { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font-size: 13px; color: var(--ink); }
+  .out::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+  .route { display: grid; grid-template-columns: max-content 44px minmax(0, 1fr); gap: 12px 0; margin-top: 18px; max-width: 1280px; align-items: center; }
+  .route .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .route .tags span { padding: 4px 11px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+  .route .tags.is-not span { background: transparent; border-style: dashed; color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(122, 128, 144, 0.55); }
+  .route .lbl { font-size: 13px; color: var(--faint); padding-right: 14px; }
+
+  .outline { margin-top: 14px; max-width: 760px; padding: 16px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 14px; }
+  .outline h4 { margin: 0 0 8px; font-size: 16px; }
+  .outline .grp { margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--faint); }
+  .outline .repo { margin-top: 6px; }
+  .outline .repo b { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; font-weight: 600; }
+  .outline .slot { color: var(--faint); }
+  .outline .rest { margin-top: 12px; color: var(--faint); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI 产出 · 概念与样页总览(第一轮,2026-11-26)</h1>
+  <p class="lede">公共日报怎么从唯一的专属流程变成多个流程之一,以及管理员在哪里管它们。</p>
+  <p>第 1、2 节是概念,第 3 节是管理面的三个方向并排。画框右上角可以打开可点的原型;原型底部的深色条是样页开关(方向 / 状态 / 主题),不属于产品界面。底页是主干(b4836bac)在隔离栈里的现网页面。</p>
+
+  <h2>1 · 一个流程是什么</h2>
+  <p>一个流程定时读一些源,加工成一期内容,写进它自己的源。上面一层对所有流程都一样;下面三段各写各的,不抽公共步骤。</p>
+  <div class="concept">
+    <div>
+      <div class="side-title">现在</div>
+      <div class="box now">
+        <span class="now-name">公共日报</span>
+        <span class="chip"><i>页签</i>AI 日报</span>
+        <span class="chip"><i>接口</i><code>/api/daily-brief/*</code></span>
+        <span class="chip"><i>定时</i><code>daily_brief</code></span>
+        <span class="chip"><i>配置</i><code>daily_brief_*</code></span>
+        <span class="chip"><i>代码</i>二十多个文件按源 id 特判</span>
+        <span class="out">哆啦美·AI资讯日报</span>
+      </div>
+    </div>
+    <div class="concept-arrow">→</div>
+    <div>
+      <div class="side-title">之后</div>
+      <div class="box">
+        <div class="shell">
+          <span class="shell-name">每个流程都一样</span>
+          <div class="shell-items"><span>登记</span><span>开关</span><span>定时</span><span>上次运行</span><span>立即生成</span><span>进度</span><span>审计</span><span>用量</span></div>
+        </div>
+        <div class="flows">
+          <div class="flow-col">
+            <span class="flow-name">公共日报</span>
+            <div class="seg"><i>取材</i>全部来源里新入库的文章</div>
+            <div class="seg"><i>加工</i><div class="steps"><span>收集</span><span>评分</span><span>精选</span><span>点评</span><span>成稿</span></div></div>
+            <div class="seg"><i>产出 · 一天一期</i><span class="out">哆啦美·AI资讯日报</span></div>
+          </div>
+          <div class="flow-col">
+            <span class="flow-name">GitHub Trending 精读</span>
+            <div class="seg"><i>取材</i>GitHub Trending 日榜当天那一条</div>
+            <div class="seg"><i>加工</i><div class="steps"><span>读榜</span><span>挑选</span><span>成稿</span></div></div>
+            <div class="seg"><i>产出 · 一天一期</i><span class="out">GitHub Trending 精读</span></div>
+          </div>
+          <div class="flow-col is-next">
+            <span class="flow-name">下一个</span>
+            <div class="seg"><i>取材</i>—</div>
+            <div class="seg"><i>加工</i>—</div>
+            <div class="seg"><i>产出</i>—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <table>
+    <tr><th></th><th>公共日报</th><th>GitHub Trending 精读</th></tr>
+    <tr><td>取材</td><td>全部来源(或自定名单)里上次生成之后新入库的文章</td><td>一个源:GitHub Trending 日榜当天的榜单。当天没有榜单就跳过,不算失败</td></tr>
+    <tr><td>加工</td><td>复用入库评分 → 同事件去重 → 按门槛精选 → 逐条点评 → 跨天查重成稿;多次模型调用</td><td>从榜单里挑几个仓库写成中文精读;一次轻模型调用</td></tr>
+    <tr><td>旋钮</td><td>每期条数、入选门槛、正文保底条数、论文门槛、取材范围</td><td>挑选个数、只看 AI 相关</td></tr>
+    <tr><td>产出</td><td>一天一期,写进 <code>dorami_daily_brief</code></td><td>一天一期,写进 <code>dorami_trending_picks</code></td></tr>
+    <tr><td>由谁定义</td><td colspan="2">都是仓库里的一段代码。管理面不能新建流程,读者面没有入口</td></tr>
+  </table>
+
+  <h2>2 · 产出去哪</h2>
+  <p>产出是一个源里的一篇文章。读者那边不用为它单做任何东西;平台自己的加工环节不把它当素材。</p>
+  <div class="route">
+    <span class="out">GitHub Trending 精读</span><span class="concept-arrow">→</span>
+    <div class="tags"><span>发现页</span><span>订阅</span><span>源栏与阅读窗</span><span>feed / MCP</span><span>分享</span><span>源管理 · 系统</span></div>
+    <span class="lbl">不进</span><span></span>
+    <div class="tags is-not"><span>个人早报候选</span><span>榜单</span><span>热点事件</span><span>公共日报候选</span><span>标签冷启动</span></div>
+  </div>
+  <h3>一期精读的结构</h3>
+  <p>仓库名取自开发库里一期真实榜单;灰字是模型要写的位置,这里不代写。</p>
+  <div class="outline">
+    <h4>GitHub Trending 精读 · 2026-11-26</h4>
+    <div class="grp">AI 相关</div>
+    <div class="repo"><b>shiyu-coder/Kronos</b> <span class="slot">— 一句中文说明;为什么值得看</span></div>
+    <div class="repo"><b>diegosouzapw/OmniRoute</b> <span class="slot">— 一句中文说明;为什么值得看</span></div>
+    <div class="repo"><b>ComposioHQ/awesome-claude-skills</b> <span class="slot">— 一句中文说明;为什么值得看</span></div>
+    <div class="grp">通用工具</div>
+    <div class="repo"><b>block/buzz</b> <span class="slot">— 一句中文说明;为什么值得看</span></div>
+    <div class="repo"><b>Pumpkin-MC/Pumpkin</b> <span class="slot">— 一句中文说明;为什么值得看</span></div>
+    <div class="rest">榜单其余:koala73/worldmonitor · citrolabs/ego-lite · chrislgarry/Apollo-11 · earthtojake/text-to-cad · agegr/pi-web</div>
+  </div>
+
+  <h2>3 · 管理面:三个方向</h2>
+  <p>三个方向对「流程是什么」的回答不一样:A、B 把它当成一个有自己页面的东西;C 把它当成源的一种获取方式(与抓取、推送并列),再加任务名册里的一行。</p>
+  <div class="row">
+    <figure><figcaption><b>现网</b>AI 日报<a href="app.html?dir=now&page=brief" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="app.html?dir=now&page=brief&bare&v=1" loading="lazy" title="现网 · AI 日报"></iframe></div></figure>
+    <figure><figcaption><b>现网</b>源管理 · 系统<a href="app.html?dir=now&page=fetch" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="app.html?dir=now&page=fetch&bare&v=1" loading="lazy" title="现网 · 源管理"></iframe></div></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption><b>A · 一物一卡</b>页签改叫「AI 产出」,每个流程一张卡<a href="app.html?dir=a&page=brief" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 1280; --ih: 1280"><iframe src="app.html?dir=a&page=brief&bare&v=1" loading="lazy" title="方向 A"></iframe></div></figure>
+    <figure><figcaption><b>B · 名册</b>同一个页签,左边名册、右边所选流程<a href="app.html?dir=b&page=brief" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="app.html?dir=b&page=brief&bare&v=1" loading="lazy" title="方向 B · 日报"></iframe></div>
+      <div class="frame" style="margin-top: 24px; --vh: 760"><iframe src="app.html?dir=b&page=brief&flow=picks&bare&v=1" loading="lazy" title="方向 B · 精读"></iframe></div></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption><b>C · 并入源与任务</b>任务与运行:名册多一组「生成」,运行表里多它们的行<a href="app.html?dir=c&page=runs" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="app.html?dir=c&page=runs&bare&v=1" loading="lazy" title="方向 C · 任务与运行"></iframe></div></figure>
+    <figure><figcaption><b>C · 并入源与任务</b>源管理:获取方式写「生成」,检视器里一个「生成」框<a href="app.html?dir=c&page=fetch" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="app.html?dir=c&page=fetch&bare&v=1" loading="lazy" title="方向 C · 源管理"></iframe></div></figure>
+  </div>
+  <table>
+    <tr><th></th><th>A · 一物一卡</th><th>B · 名册</th><th>C · 并入源与任务</th></tr>
+    <tr><td>流程是什么</td><td>一张卡</td><td>名册里的一行</td><td>源的获取方式「生成」+ 任务名册里的一行</td></tr>
+    <tr><td>在哪管</td><td>「AI 产出」一页,全部摊开</td><td>「AI 产出」一页,一次看一个</td><td>没有专页。定时与运行在「任务与运行」,旋钮在「源管理」的检视器</td></tr>
+    <tr><td>导轨</td><td>页签改名</td><td>页签改名</td><td>少一个页签</td></tr>
+    <tr><td>日报原有的东西</td><td colspan="2">原样留在卡里:历史、展开读正文、删除、取材口径、自定名单。开关、cron、立即生成三样挪进题条</td><td>旋钮进检视器(345px 宽);历史、读正文、删除改去「知识台账」(现在台账不列日报,要放开);取材口径没有位置</td></tr>
+    <tr><td>到第 5 个流程</td><td>页面约 3000px 高,要滚着找</td><td>名册多三行</td><td>名册与系统组各多三行</td></tr>
+    <tr><td>别的页面</td><td colspan="2">源管理 · 系统多一行,仍写「无采集」;任务与运行不变</td><td>运行表混进「生成」行,抓取 / 跳过两列对它们没有意义;统计条的数字口径跟着变</td></tr>
+    <tr><td>依赖</td><td colspan="2">无</td><td>「生成」框沿用 PR #350 的「抓取」「推送」框,要等它合入</td></tr>
+    <tr><td>改动面</td><td>小:一个新页面外壳,日报面板拆出三样</td><td>中:外壳之外多一个名册</td><td>大:三个现有页面都动,日报面板拆散</td></tr>
+  </table>
+
+  <h3>生成中</h3>
+  <p>手动点了一次精读。</p>
+  <div class="row">
+    <figure><figcaption><b>A</b><a href="app.html?dir=a&page=brief&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --y: 660; --vh: 620; --ih: 1290"><iframe src="app.html?dir=a&page=brief&state=run&bare&v=1" loading="lazy" title="A · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>B</b><a href="app.html?dir=b&page=brief&flow=picks&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="app.html?dir=b&page=brief&flow=picks&state=run&bare&v=1" loading="lazy" title="B · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>C</b><a href="app.html?dir=c&page=fetch&flow=picks&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="app.html?dir=c&page=fetch&flow=picks&state=run&bare&v=1" loading="lazy" title="C · 生成中"></iframe></div></figure>
+  </div>
+  <h3>失败与跳过</h3>
+  <p>日报今天失败;精读今天跳过(当日榜单没入库)。</p>
+  <div class="row">
+    <figure><figcaption><b>A</b><a href="app.html?dir=a&page=brief&state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 1240; --ih: 1240"><iframe src="app.html?dir=a&page=brief&state=bad&bare&v=1" loading="lazy" title="A · 失败与跳过"></iframe></div></figure>
+    <figure><figcaption><b>B</b><a href="app.html?dir=b&page=brief&state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 760"><iframe src="app.html?dir=b&page=brief&state=bad&bare&v=1" loading="lazy" title="B · 失败与跳过"></iframe></div></figure>
+    <figure><figcaption><b>C</b><a href="app.html?dir=c&page=runs&state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33"><iframe src="app.html?dir=c&page=runs&state=bad&bare&v=1" loading="lazy" title="C · 失败与跳过"></iframe></div></figure>
+  </div>
+
+  <h2>4 · 待拍板</h2>
+  <table>
+    <tr><th>#</th><th>问题</th><th>建议</th></tr>
+    <tr><td>1</td><td>流程有没有自己的页面(A、B),还是并进源管理与任务名册(C)</td><td>有。C 的模型最整齐,但日报的历史与取材口径在检视器里放不下,三个现有页面都要动</td></tr>
+    <tr><td>2</td><td>A 还是 B</td><td>A。现在只有两个流程,摊开看得全;到第四、五个再换成 B 的名册,卡里的东西原样搬过去</td></tr>
+    <tr><td>3</td><td>叫什么</td><td>页签「AI 产出」,导轨短名「产出」;里面的一个叫「流程」。读者面只看到源的名字</td></tr>
+    <tr><td>4</td><td>题条里放哪几样</td><td>上次结果、名称、产出源 id、近 7 日、cron、距下次、开关、立即生成。前四样的记号沿用「任务与运行」名册</td></tr>
+    <tr><td>5</td><td>A、B 里源管理那两行写什么</td><td>把「无采集」换成「生成」,检视器里只放一行去「AI 产出」的入口。样页里这两个方向还是照现网写的「无采集」</td></tr>
+    <tr><td>6</td><td>跳过怎么算</td><td>不算失败:琥珀色记号,近 7 日里那天留空,不计入失败数</td></tr>
+    <tr><td>7</td><td>新流程默认开还是关</td><td>关。接了上游的节点日报定时本来就被关着,精读同样由管理员自己打开</td></tr>
+    <tr><td>8</td><td>精读的旋钮</td><td>挑选个数(1–10,默认 6)、只看 AI 相关(默认开)</td></tr>
+    <tr><td>9</td><td>精读这一期送不送入库分析</td><td>不送。没有分数就进不了早报与榜单;代价是列表里没有评分和标签</td></tr>
+  </table>
+
+  <h2>5 · 样页的边界</h2>
+  <p>日报的历史行是开发库副本里的真实记录,日期平移到了今天;精读这个流程还不存在,它的期数、近 7 日、运行行都是示意。模型状态与日报开关在抓底页时改成了「已配置」「开启」——副本库为了不产生付费调用,把密钥删了、定时关了。</p>
+  <p>原型里能点的是:导轨上的三个页签、方向 B 名册里的两行、方向 C 源管理的两行与任务名册的两行。开关、cron、保存、立即生成都不会改动任何数据。</p>
+  <p>没有画的:读者面(发现页与阅读窗里多出来的这个源)、「知识台账」在方向 C 下放开日报之后的样子、新流程第一次打开时的空态、手机壳(管理面不在手机壳里)。</p>
+</main>
+</body>
+</html>

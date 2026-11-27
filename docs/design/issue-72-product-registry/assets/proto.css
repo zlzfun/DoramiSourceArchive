@@ -1,0 +1,175 @@
+/* issue #72 样页第二轮(基于方向 B)新增部分的样式。
+   上半是要落地的(取值只用 index.css 现有 token);下半 .px-* 是样页开关,不属于产品界面。
+   骨架沿用「任务与运行」的 .runs-shell / .runs-work / .runs-paper:页头 + 一张铺到底的纸,内部各区自己滚。 */
+
+/* ── 名册 · 左栏:原样用 .timetable / .tt-*;只把栏头垫到与右边题条同高(56px),两条发丝线对齐 ── */
+.pf-paper .tt-head { height: 56px; padding-top: 0; padding-bottom: 0; align-items: center; }
+
+/* ── 名册 · 顶部磁贴:名册横过来放,一行里的三层信息与左栏相同 ─────────── */
+.pf-paper.is-top { flex-direction: column; }
+.pf-tiles {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.pf-tile {
+  position: relative;
+  flex: 0 0 300px;
+  padding: 12px 16px 14px;
+  text-align: left;
+  border-right: 1px solid var(--dorami-border);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.pf-tile:hover { background: var(--dorami-soft); }
+/* 选中:底边一道,与「任务与运行」统计条的 .flow-stat.is-on 同一个记号 */
+.pf-tile.is-on::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 3px;
+  background: var(--dorami-blue);
+  border-radius: var(--r-pill) var(--r-pill) 0 0;
+}
+
+/* ── 名册 · 顶部表格:沿用 .flow-table / .flow-th / .run-row(44px 行) ──── */
+.pf-table-wrap {
+  flex: none;
+  max-height: 257px; /* 表头 + 5 行;再多在这一格里滚 */
+  overflow-y: auto;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.pf-table .run-row { cursor: pointer; }
+.pf-table .run-row.is-sel { background: var(--dorami-select); }
+.pf-table .run-obj { gap: 10px; }
+.pf-table .tt-next { margin-left: 0; }
+.pf-cell { font-size: 13px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-rhythm { display: inline-flex; align-items: center; gap: 10px; }
+/* 行内图标钮:.icon-button 的 30px 档(抽屉头里已有这一档) */
+.pf-icon.icon-button { width: 30px; height: 30px; box-shadow: none; }
+.pf-icon.icon-button svg { width: 14px; height: 14px; }
+
+/* ── 所选流程:题条 + 正文 ───────────────────────────────────────────── */
+.pf-detail { flex: 1 1 0%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pf-pane { flex: 1 1 0%; min-height: 0; display: flex; flex-direction: column; }
+.pf-pane[hidden] { display: none; }
+/* 题条:每个流程同一副——上次结果 · 名称 · 产出源 id ｜ cron · 开关 · 立即生成 */
+.pf-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.pf-name { font-size: 15px; font-weight: 600; line-height: 21px; color: var(--dorami-ink); white-space: nowrap; }
+.pf-sid {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-sid:hover { color: var(--dorami-ink-2); }
+.pf-cron.form-input {
+  width: 108px;
+  flex: none;
+  min-height: 30px;
+  padding: 0 8px;
+  text-align: center;
+  font-size: 12px;
+}
+.pf-head .pf-cron { margin-left: auto; }
+.pf-head .action-button { flex: none; }
+
+/* 正文:两栏(配置 ｜ 近期)或三段(取材 → 加工 → 产出)。
+   区头是一行列头,字与表头(.flow-th)同一副:12/600、字距 0.07em、faint——它是结构,不与区里的参数名争层级;
+   正文各区在它下面自己滚。 */
+.pf-grid { display: grid; }
+.pf-grid.is-cols { grid-template-columns: 320px minmax(0, 1fr); }
+/* 三段:前两段在窄窗口里先让宽度,产出一段不小于 360 */
+.pf-grid.is-pipe { grid-template-columns: minmax(220px, 280px) minmax(260px, 320px) minmax(360px, 1fr); }
+.pf-band { flex: none; border-bottom: 1px solid var(--dorami-border); }
+.pf-band > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 35px; /* 加底边 1px = 36,与管理面表头同高 */
+  padding: 0 20px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+}
+.pf-band > span + span { border-left: 1px solid var(--dorami-border); }
+.pf-count { font-family: var(--mono); font-style: normal; font-weight: 400; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+/* 三段之间的走向:写在前一格列头的末尾 */
+.pf-band.is-pipe > span:not(:last-child)::after { content: "→"; margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.pf-body { flex: 1 1 0%; min-height: 0; }
+.pf-sec {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pf-sec + .pf-sec { border-left: 1px solid var(--dorami-border); }
+.pf-sec > * { flex: none; }
+/* 往期收起时:「产出」一段平时只放最新一期(日期 · 概况 + 条目,条目的 .pm-item 在 n.css),往期在一个可展开的折叠里 */
+.pf-latest-head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 4px; }
+.pf-fold { font-size: 13px; line-height: 1.55; color: inherit; }
+.pf-fold > summary { gap: 8px; }
+.pf-fold > .pf-list { margin-top: 6px; }
+.pf-fold > .brief-pager-row { margin-top: 8px; }
+/* 历史行末尾:那一期的生成时刻 */
+.pf-when { flex: none; font-family: var(--mono); font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.pf-sec .inspector-param:first-child { padding-top: 0; }
+.pf-sec .inspector-param:last-child { padding-bottom: 0; }
+.pf-sec .inspector-param .mini-seg { flex: none; }
+.pf-sec .scope-note,
+.pf-sec .brief-pager-row,
+.pf-sec .pipeline-note { margin-top: 0; }
+.pf-save { padding-top: 12px; border-top: 1px solid var(--dorami-border); }
+/* 取材是一个固定的源时:源名(点了去源管理)+ 它最近一次入库的时间 */
+.pf-input { display: flex; align-items: center; gap: 10px; }
+.pf-input time { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--dorami-faint); font-variant-numeric: tabular-nums; }
+.pf-input time.is-warn { color: var(--state-warn); }
+.pf-cursor { display: flex; align-items: center; gap: 8px; }
+/* 参数行里的游标值按自身宽度排,不与参数名平分 */
+.pf-sec .inspector-param .brief-cursor-val { flex: 0 1 auto; }
+
+/* ══ 以下是样页开关,不属于产品界面 ═══════════════════════════════════ */
+.px-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: #14161c;
+  color: #c9ced9;
+  font: 600 12px/1 system-ui, -apple-system, "PingFang SC", sans-serif;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+.px-grp { display: flex; align-items: center; gap: 2px; }
+.px-lbl { margin-right: 6px; color: #7d8494; font-weight: 500; }
+.px-bar a { padding: 7px 9px; border-radius: 7px; color: #c9ced9; text-decoration: none; }
+.px-bar a.is-on { background: #f1f3f7; color: #14161c; }
+.px-bar a:hover:not(.is-on) { background: #262a34; }
+html[data-bare] .px-bar { display: none; }
+html[data-bare] { scrollbar-width: none; }
+html[data-bare]::-webkit-scrollbar { display: none; }

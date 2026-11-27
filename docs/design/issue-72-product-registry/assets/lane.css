@@ -1,0 +1,123 @@
+/* issue #72 定稿原型:泳道 + 右侧抽屉。.gf-* 要落地,取值只用 index.css 现有 token;
+   与前几轮共用的小块(.pf-icon / .pf-when / .px-bar)在 proto.css。
+   文件末尾 .acq-* 是主干已有的类(#350,框 = 一条 hairline + 题条淡底);底页样式导出早于它,那一段照 index.css 原样抄来。 */
+
+/* ══ 泳道:一行一个流程。行高固定,每一格的内容都以行的中线为准:
+      控件(阶段条、开关、生成钮)压在中线上,两行的文字块跨在中线两侧,单行文字也在中线上 ══ */
+.gf-paper { flex-direction: column; }
+/* 这个容器的高度不随点击变化(详情不在原地展开),所以滚动条不会在操作中出现或消失,各列不会被挤动;
+   流程多到一屏放不下时滚动条是常驻的 */
+.gf-scroll { flex: 1 1 0%; min-height: 0; overflow-y: auto; }
+.gf-grid {
+  display: grid;
+  /* 各列最小宽度之和 1106,放得进 1280 窗口下纸的内宽 1158 */
+  grid-template-columns: 236px minmax(160px, 220px) minmax(200px, 1fr) minmax(260px, 340px) 190px 60px;
+  align-items: center;
+}
+/* 列头:与表头同一副字,36px */
+.gf-band {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--dorami-surface);
+  border-bottom: 1px solid var(--dorami-border);
+}
+.gf-band > span {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+}
+.gf-band > span:first-child { padding-left: 20px; }
+.gf-band > span.is-flow::after { content: "→"; margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.gf-row {
+  height: 64px;
+  border-bottom: 1px solid var(--dorami-border);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.gf-row:hover { background: var(--dorami-soft); }
+.gf-row.is-on { background: var(--dorami-select); }
+.gf-cell { min-width: 0; padding: 0 12px; }
+.gf-cell:first-child { padding-left: 20px; }
+.gf-id { display: flex; align-items: center; gap: 10px; }
+.gf-id .run-obj-txt { min-width: 0; }
+/* 文字块:上面一句 13px / 20,下面一行小字 18(.run-obj-sub:等宽 12 faint)。只有一句时就只有这一句 */
+.gf-main { font-size: 13px; line-height: 20px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-main.is-err { color: var(--state-bad); }
+.gf-main.is-warn { color: var(--state-warn); }
+.gf-main.is-run { color: var(--state-run); }
+.gf-main.is-none { color: var(--dorami-faint); }
+.gf-sub { display: flex; align-items: center; gap: 8px; height: 18px; margin-top: 2px; }
+.gf-cell .run-obj-sub { line-height: 18px; }
+.gf-cell .run-obj-sub.is-warn { color: var(--state-warn); }
+.gf-cell .run-obj-name { line-height: 20px; }
+.gf-id .run-obj-sub { display: block; margin-top: 2px; }
+.gf-cell .pipeline-note { margin-top: 4px; line-height: 16px; }
+/* 定时:左边是 cron 与距下次(只读,改在详情里),右边是开关 */
+.gf-when { display: flex; align-items: center; gap: 8px; }
+.gf-when > div { flex: 1 1 0%; min-width: 0; }
+.gf-cron { font-family: var(--mono); font-size: 12.5px; line-height: 20px; color: var(--dorami-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.gf-when.is-off .gf-cron { color: var(--dorami-faint); }
+.gf-when .ledger-switch { margin: 0; }
+
+/* ══ 抽屉里的两个框:配置、往期 ══ */
+.gf-box .acq-panel-head { align-items: center; min-height: 36px; padding-top: 0; padding-bottom: 0; }
+.gf-box .acq-panel-head .tiny-meta { margin-left: auto; }
+/* 参数一行一个:现网的参数行(名称在左、控件在右),行与行之间一条 hairline。
+   每行往上挪 1px、容器裁掉溢出:第一行顶上那条线就被裁掉了。(.is-two 是比较用的两列排法,不落地) */
+.gf-params { display: grid; grid-template-columns: 1fr; column-gap: 28px; overflow: hidden; }
+.gf-params.is-two { grid-template-columns: 1fr 1fr; }
+.gf-params > .inspector-param { min-height: 44px; margin-top: -1px; padding: 0; border-top: 1px solid var(--dorami-border); }
+.gf-params > .inspector-param.is-wide { grid-column: 1 / -1; }
+/* 输入框同宽、字居中;数字框去掉浏览器自带的增减钮(它占着右边一截,数字既不靠右也不居中) */
+.gf-box .inspector-param-input { width: 112px; text-align: center; }
+.gf-box .inspector-param-input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.gf-box .inspector-param-input[type="number"]::-webkit-inner-spin-button,
+.gf-box .inspector-param-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.gf-box .inspector-param .mini-seg { flex: none; }
+.gf-box .inspector-param .brief-cursor-val { flex: none; }
+.gf-box .inspector-param.is-block { flex-direction: column; align-items: stretch; gap: 0; padding-bottom: 10px; }
+.gf-box .inspector-param.is-block > .gf-param-line { display: flex; align-items: center; gap: 9px; min-height: 44px; }
+.gf-box .brief-scope-list { margin-top: 0; }
+.gf-box .scope-note { margin-top: 0; }
+/* 保存:框内最后一行,通栏 hairline 起头 */
+.gf-save {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 -12px;
+  padding: 12px 12px 0;
+  border-top: 1px solid var(--dorami-border);
+}
+.gf-periods .acq-panel-body { gap: 0; padding-top: 0; padding-bottom: 10px; }
+.gf-periods .pf-list { margin-top: 0; }
+.gf-periods .brief-run:last-of-type { border-bottom: 0; }
+.gf-periods .brief-pager-row { margin-top: 0; padding-top: 10px; border-top: 1px solid var(--dorami-border); }
+.gf-periods .brief-empty { margin: 12px 0 2px; }
+.gf-running { padding: 12px 0; border-bottom: 1px solid var(--dorami-border); }
+.gf-running .pipeline-note { margin-top: 6px; }
+
+/* ── 抽屉:现网 .ledger-scrim / .ledger-drawer(470 宽,不改),正文上下叠两个框 ── */
+.gf-drawer.is-640 { width: 640px; } /* 比较用的加宽,不落地 */
+.gf-drawer .ledger-drawer-head { align-items: center; gap: 8px; }
+/* 题条里的两个钮同一个尺寸:生成、关闭 */
+.gf-drawer .ledger-drawer-head .icon-button { width: 30px; height: 30px; box-shadow: none; }
+.gf-drawer .ledger-drawer-body > * { flex: none; }
+
+/* ══ 主干已有的类(#350),照 frontend/src/index.css 原样抄来;落地时不需要这一段 ══ */
+.acq-panel { flex: none; border: 1px solid var(--dorami-border); border-radius: var(--r-control); overflow: hidden; }
+.acq-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--dorami-soft);
+}
+.acq-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.acq-panel .inspector-param:first-child { padding-top: 0; }
+.acq-panel .inspector-param:last-child { padding-bottom: 0; }

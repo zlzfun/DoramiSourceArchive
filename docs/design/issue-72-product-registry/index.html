@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成流程 · 定稿样页</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  h3 { font-size: 15px; margin: 32px 0 2px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { margin-left: auto; }
+  .frame { position: relative; overflow: hidden; width: calc(var(--iw, 1440) * var(--s, 0.5) * 1px); height: calc(var(--vh, 900) * var(--s, 0.5) * 1px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: 0; left: 0; width: calc(var(--iw, 1440) * 1px); height: calc(var(--ih, 900) * 1px); border: 0; transform: scale(var(--s, 0.5)); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1300px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 18px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; white-space: nowrap; }
+  td:first-child { white-space: nowrap; color: var(--faint); }
+  table.named td:first-child { color: var(--ink); font-weight: 600; }
+  .done { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 14px 0 0; padding: 0; list-style: none; }
+  .done li { padding: 3px 12px; border-radius: 999px; background: #e9ebf2; font-size: 13px; color: var(--ink-2); }
+  .done li b { color: var(--ink); font-weight: 600; }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>生成流程 · 定稿样页</h1>
+  <p class="lede">公共日报从一张专属的页面变成「生成流程」页里的一行。以后平台自己定时生成的东西,每多一个就多一行;第一个新流程是「GitHub Trending 精读」。</p>
+  <ul class="done">
+    <li>方向 <b>泳道</b></li>
+    <li>页面 <b>生成流程</b></li>
+    <li>导轨短名 <b>生成</b></li>
+    <li>里面的一个 <b>流程</b></li>
+    <li>产出的历史 <b>往期</b>,单位 <b>期</b></li>
+    <li>点一行 <b>右侧抽屉</b>,现网的 <b>470</b> 宽,配置一列</li>
+    <li>复杂流程 泳道上仍是<b>一行阶段块</b></li>
+  </ul>
+  <p>样页与各项待定都在 2026-11-27 定了(§5),已开工。后端怎么做在方案文档 <a href="../../plans/issue-72-generation-flows.md">docs/plans/issue-72-generation-flows.md</a>。之前五轮:<a href="r1/index.html">第一轮</a>、<a href="r2/index.html">第二轮</a>、<a href="r3/index.html">第三轮</a>(六个方向)、<a href="r4/index.html">第四轮</a>(泳道,原地展开)、<a href="r5/index.html">第五轮</a>(抽屉 / 弹窗 / 独立页并排)。画框右上角可以打开可点的原型;原型底部的深色条是样页开关,不属于产品界面。</p>
+
+  <h2>1 · 这一页</h2>
+  <p>一行一个流程。列头是 取材 → 加工 → 产出,后面是定时与生成。行高固定,每一格的内容都以行的中线为准。行上能直接动的只有开关和立即生成。</p>
+  <div class="row">
+    <figure><figcaption><b>泳道</b><a href="lane.html" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.72; --vh: 420"><iframe src="lane.html?bare&v=10" loading="lazy" title="泳道"></iframe></div></figure>
+  </div>
+  <p>点一行,从右侧打开这个流程的抽屉:一个「配置」框(定时、取材、旋钮、游标、保存),一个「往期」框。抽屉是现网的那一副,宽 470 不改;配置一行一个参数,输入框同宽、字居中。题条里另有一个立即生成,因为抽屉开着时行被遮住了。比较过的另一种(加宽到 640、配置两列)在 <a href="details/config.html">details/config.html</a>。</p>
+  <div class="row">
+    <figure><figcaption><b>点开日报</b><a href="lane.html?open=brief" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="lane.html?open=brief&bare&v=10" loading="lazy" title="点开日报"></iframe></div></figure>
+    <figure><figcaption><b>点开精读</b><a href="lane.html?open=picks" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="lane.html?open=picks&bare&v=10" loading="lazy" title="点开精读"></iframe></div></figure>
+  </div>
+
+  <h2>2 · 状态</h2>
+  <h3>生成中;失败与跳过</h3>
+  <p>生成中:行上「加工」一格逐段点亮,抽屉里阶段条出现在往期的顶上(现网也是出现在近期日报的栏头下面)。右边:日报今天失败;精读今天跳过(没有新榜单),跳过是琥珀色,不是失败。</p>
+  <div class="row">
+    <figure><figcaption><b>生成中</b>点开精读<a href="lane.html?state=run&open=picks" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="lane.html?state=run&open=picks&bare&v=10" loading="lazy" title="生成中"></iframe></div></figure>
+    <figure><figcaption><b>失败与跳过</b><a href="lane.html?state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 300"><iframe src="lane.html?state=bad&bare&v=10" loading="lazy" title="失败与跳过"></iframe></div></figure>
+  </div>
+  <h3>新流程</h3>
+  <p>精读刚上线:还没生成过,定时关着。</p>
+  <div class="row">
+    <figure><figcaption><b>泳道</b><a href="lane.html?state=new" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 300"><iframe src="lane.html?state=new&bare&v=10" loading="lazy" title="新流程"></iframe></div></figure>
+    <figure><figcaption><b>点开</b><a href="lane.html?state=new&open=picks" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--vh: 520"><iframe src="lane.html?state=new&open=picks&bare&v=10" loading="lazy" title="新流程 · 点开"></iframe></div></figure>
+  </div>
+  <h3>日报取材用自定名单;暗色;1280 宽</h3>
+  <p>名单框是现网的原样(名字、篇数、默认类型)。行上那一句变成「自定名单 / 6 个来源」。</p>
+  <div class="row">
+    <figure><figcaption><b>自定名单</b><a href="lane.html?open=brief&scope=custom" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="lane.html?open=brief&scope=custom&bare&v=10" loading="lazy" title="自定名单"></iframe></div></figure>
+    <figure><figcaption><b>暗色</b>点开精读<a href="lane.html?open=picks&theme=dark" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="lane.html?open=picks&theme=dark&bare&v=10" loading="lazy" title="暗色"></iframe></div></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption><b>1280 宽</b>泳道</figcaption>
+      <div class="frame" style="--iw: 1280; --vh: 300"><iframe src="lane.html?bare&v=10" loading="lazy" title="1280 宽"></iframe></div></figure>
+    <figure><figcaption><b>1280 宽</b>点开日报</figcaption>
+      <div class="frame" style="--iw: 1280; --vh: 800; --ih: 800"><iframe src="lane.html?open=brief&bare&v=10" loading="lazy" title="1280 宽 · 点开"></iframe></div></figure>
+  </div>
+
+  <h2>3 · 每样东西怎么生效</h2>
+  <table class="named">
+    <tr><th>东西</th><th>在哪</th><th>怎么生效</th><th>与现网</th></tr>
+    <tr><td>定时开关</td><td>行上</td><td>点了即生效</td><td>相同</td></tr>
+    <tr><td>立即生成</td><td>行末;抽屉的题条里也有一个</td><td>点了就跑;进度在行上「加工」一格的阶段条上,抽屉开着时也出现在往期的顶上</td><td>现网的阶段条只在生成时出现;这里行上平时就是各阶段的名字,生成时逐段点亮</td></tr>
+    <tr><td>cron、取材范围、旋钮</td><td>抽屉的「配置」框</td><td>「保存配置」</td><td>相同</td></tr>
+    <tr><td>增量游标的重置</td><td>抽屉的「配置」框</td><td>确认后生效</td><td>相同</td></tr>
+    <tr><td>往期的一行</td><td>抽屉的「往期」框</td><td>展开读正文;行末删除(要确认)</td><td>相同。行末的「已生成」换成生成时刻</td></tr>
+    <tr><td>关抽屉</td><td>关闭钮、点遮罩、Esc</td><td></td><td>与现网的抽屉相同</td></tr>
+  </table>
+
+  <h2>4 · 这一页管什么</h2>
+  <p>内容进平台有三条路,按「谁在跑」分。运行在别处的 Agent、bot 自己写了内容再提交,走推送,不进这一页。细节与六个标题叫法的并排在 <a href="details/title.html">details/title.html</a>。</p>
+  <table class="named">
+    <tr><th>获取方式</th><th>谁在跑</th><th>在哪管</th></tr>
+    <tr><td>抓取</td><td>平台的抓取器</td><td>源管理;任务与运行</td></tr>
+    <tr><td>推送</td><td>别处的 Agent、bot</td><td>源管理 · 登记来源;运维 · 收录令牌</td></tr>
+    <tr><td>生成</td><td>平台自己的流程</td><td>这一页</td></tr>
+  </table>
+
+  <h2>5 · 定下来的</h2>
+  <p>2026-11-27 你的原话:「470 一列,泳道用 A,其余按建议,开工。」</p>
+  <table>
+    <tr><th>#</th><th>问题</th><th>结论</th></tr>
+    <tr><td>1</td><td>抽屉多宽、配置怎么排</td><td>现网的 470 宽,配置一列。比较过的另一种在 <a href="details/config.html">details/config.html</a></td></tr>
+    <tr><td>2</td><td>复杂的(并行、分支)流程怎么表现</td><td>泳道上仍是一行阶段块(细节页里的 A)。本波只做现在这一行阶段块与阶段内的进度;并行路数的记号、虚线、抽屉里的结构图,等第一个真有并行的流程出现再做。<a href="details/phases.html">details/phases.html</a></td></tr>
+    <tr><td>3</td><td>跳过怎么算</td><td>不算失败:琥珀色,不计入失败数。精读是「没有新榜单」;日报是现网的「暂无新增内容」</td></tr>
+    <tr><td>4</td><td>新流程默认开还是关</td><td>关。升级后精读出现在这一页,管理员打开才开始跑</td></tr>
+    <tr><td>5</td><td>精读有哪些旋钮</td><td>挑选个数(默认 6)、只看 AI 相关(默认开)</td></tr>
+    <tr><td>6</td><td>精读的产出送不送入库分析</td><td>不送:不评分,不进榜单、公共日报候选、个人早报</td></tr>
+    <tr><td>7</td><td>源管理里这两个源的获取方式写什么</td><td>「生成」(现在是「无抓取」),检视器里给一个去这一页的入口</td></tr>
+    <tr><td>8</td><td>读者面什么时候出现「GitHub Trending 精读」这个源</td><td>有了第一期才出现</td></tr>
+    <tr><td>9</td><td>推送接口对 Agent 自己写的内容的两处(文章必须有链接;入库后当普通文章评分、回流)</td><td>记进待办,不并入 #72</td></tr>
+  </table>
+  <p>后端的三项(日榜由管理员加进每天的采集任务、分两批、代码里的名字)也按建议,见方案文档 §10。</p>
+
+  <h2>6 · 样页的边界</h2>
+  <p>底页是隔离栈里抓的现网 DOM 与样式(主干 b4836bac,早于推送绑定 #350 合入;导轨与页头此后没有变)。抽屉的外壳用的是现网的类(<code>.ledger-scrim</code> / <code>.ledger-drawer</code>),宽度也是现网的;里面的两个框用的是 #350 加的 <code>.acq-panel</code>,底页的样式导出早于它,那几条规则是照主干抄进样页的。</p>
+  <p>日报的逐期(日期、生成时刻、条数、模型)是开发库副本里的真实记录,日期平移到了今天;样页里的「今天」是 2026-11-26。自定名单里的来源名、篇数、默认类型取自副本库里篇数最多的公共源,勾选是示意。精读这个流程还不存在:期数、每天的结果、入库时间都是示意。</p>
+  <p>能点的是:点一行打开抽屉,关闭(关闭钮、遮罩、Esc)。开关、保存、立即生成、重置、删除都不会改动任何数据;往期的一行在样页里点不开(现网点开是那一期的正文)。抽屉进出的动效没有做(现网的抽屉自带)。</p>
+  <p>没有画的:往期的一行展开后正文在抽屉里的样子;读者面(发现页里多出来的这一个源,形制与日报那个相同);源管理里那两行改成「生成」的样子;手机壳(管理面不在手机壳里)。</p>
+</main>
+</body>
+</html>

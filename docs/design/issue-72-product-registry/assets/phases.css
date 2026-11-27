@@ -1,0 +1,25 @@
+/* 细节样页 details/phases.html 用:复杂流程的三种画法与抽屉里的「流程」框。都是示意,本波不落地。 */
+
+/* a:阶段块上的记号。并行的路数跟在名字后面;可能跳过的阶段用虚线框 */
+.ledger-pipeline-step .gf-fan { margin-left: 3px; font-family: var(--mono); font-weight: 400; opacity: 0.75; }
+.ledger-pipeline-step.is-optional:not(.is-done):not(.is-now) { background: transparent; box-shadow: inset 0 0 0 1px var(--dorami-border-strong); outline: 0; border-style: dashed; }
+.ledger-pipeline-step.is-optional:not(.is-done):not(.is-now) { box-shadow: none; outline: 1px dashed var(--dorami-border-strong); outline-offset: -1px; }
+
+/* b / 抽屉:按阶段分列的结构图 */
+.gf-graph { position: relative; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 600; }
+.gf-graph-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.gf-graph-wires path { fill: none; stroke: var(--dorami-border-strong); stroke-width: 1; }
+.gf-graph-col { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.gf-graph-nodes { display: flex; flex-direction: column; gap: 4px; }
+.gf-node { height: 22px; padding: 0 7px; line-height: 22px; text-align: center; white-space: nowrap; color: var(--dorami-faint); background: var(--dorami-well); border-radius: var(--r-sm); }
+.gf-node.is-done { background: var(--dorami-wash); color: var(--dorami-accent-ink); }
+.gf-node.is-now { background: var(--dorami-ink); color: var(--dorami-surface); }
+.gf-node.is-optional:not(.is-done):not(.is-now) { background: var(--dorami-surface); outline: 1px dashed var(--dorami-border-strong); outline-offset: -1px; }
+/* 泳道里放结构图:并行的节点上下排,这一行就得比别的行高 */
+.gf-row.is-tall { height: auto; min-height: 64px; padding: 10px 0; }
+/* 抽屉里的「流程」框:每列顶上是阶段名(列头那副字),节点大一号 */
+.gf-flowbox .gf-graph { align-items: stretch; justify-content: space-between; gap: 28px; padding: 4px 4px 6px; }
+.gf-flowbox .gf-graph-col { flex: 1 1 0%; justify-content: flex-start; }
+.gf-flowbox .gf-graph-nodes { flex: 1 1 0%; justify-content: center; gap: 6px; }
+.gf-flowbox .gf-graph-head { font-size: 12px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint); text-align: center; }
+.gf-flowbox .gf-node { height: 28px; line-height: 28px; padding: 0 10px; }

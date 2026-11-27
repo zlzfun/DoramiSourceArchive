@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 产出 · 样页总览(第三轮)</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  h3 { font-size: 15px; margin: 32px 0 2px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { margin-left: auto; }
+  .frame { position: relative; overflow: hidden; width: calc(var(--vw, 1440) * var(--s, 0.5) * 1px); height: calc(var(--vh, 900) * var(--s, 0.5) * 1px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: 0; left: 0; width: 1440px; height: calc(var(--ih, 900) * 1px); border: 0; transform: scale(var(--s, 0.5)); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1480px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 18px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; }
+  td:first-child { white-space: nowrap; color: var(--faint); }
+  .who { display: inline-block; margin-left: 10px; padding: 1px 9px; border-radius: 999px; background: #e9ebf2; font-size: 12px; font-weight: 600; color: var(--ink-2); vertical-align: 2px; }
+  /* 六个方向一览 */
+  .six { display: grid; grid-template-columns: repeat(3, max-content); gap: 18px 24px; margin-top: 18px; }
+  .six .frame { --s: 0.31; }
+  .six figcaption b { font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI 产出 · 样页总览(第三轮)</h1>
+  <p class="lede">上一轮的方向都是「名册 + 所选流程」,往期列表常驻。这一轮放开来想:往期不常驻,也不一定是列表。</p>
+  <p><b>这是第三轮总览的存档(2026-11-27)。</b>之后定了 C2 泳道,页面叫「生成流程」:<a href="../index.html">定稿总览</a>。这里 C2、C3 的画框仍按当时的标题「AI 产出」显示;C2 的版面是定稿后的(列宽、保存配置的位置有调整)。</p>
+  <p>两边各出三个方向:C1–C3 是 Claude 的,G1–G3 是 Gemini 4 Carbon 的(在 Antigravity 里)。「近期日报」「近期精读」在这一轮统一叫「往期」。画框右上角可以打开可点的原型;原型底部的深色条是样页开关,不属于产品界面。前两轮:<a href="../r1/index.html">第一轮</a>(概念两节与 A、B、C)、<a href="../r2/index.html">第二轮</a>(名册三种放法 × 详情两种排法)。</p>
+
+  <h2>1 · 六个方向一览</h2>
+  <div class="six">
+    <figure><figcaption><b>C1 · 往期收起</b><a href="../app.html?dir=b&lay=tiles&det=pipe&hist=fold" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&bare&v=6" loading="lazy" title="C1"></iframe></div></figure>
+    <figure><figcaption><b>C2 · 泳道</b><a href="../n1.html?title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C2"></iframe></div></figure>
+    <figure><figcaption><b>C3 · 台账</b><a href="../n2.html?title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n2.html?bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C3"></iframe></div></figure>
+    <figure><figcaption><b>G1 · 刊席</b><a href="../gemini/g1.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g1.html?bare&v=6" loading="lazy" title="G1"></iframe></div></figure>
+    <figure><figcaption><b>G2 · 时序</b><a href="../gemini/g2.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g2.html?bare&v=6" loading="lazy" title="G2"></iframe></div></figure>
+    <figure><figcaption><b>G3 · 机匣</b><a href="../gemini/g3.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g3.html?bare&v=6" loading="lazy" title="G3"></iframe></div></figure>
+  </div>
+
+  <h2>2 · Claude 的三个方向</h2>
+
+  <h3>C1 · 往期收起<span class="who">Claude</span></h3>
+  <p>上一轮的 B2(顶部磁贴 + 取材 → 加工 → 产出)不动,只改「产出」一段:平时放最新一期的内容,往期折在它下面,点开才是列表。</p>
+  <div class="row">
+    <figure><figcaption><b>日报</b><a href="../app.html?dir=b&lay=tiles&det=pipe&hist=fold" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&bare&v=6" loading="lazy" title="C1 · 日报"></iframe></div></figure>
+    <figure><figcaption><b>点开往期</b><a href="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&histopen" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&histopen&bare&v=6" loading="lazy" title="C1 · 点开往期"></iframe></div></figure>
+  </div>
+
+  <h3>C2 · 泳道<span class="who">Claude</span></h3>
+  <p>没有主从。一行一个流程,列头就是 取材 → 加工 → 产出;平时每格只有一句概况,定时与生成直接在行上。点开一行,取材的控件、旋钮、往期各自落在同一列下面。</p>
+  <div class="row">
+    <figure><figcaption><b>都收起</b><a href="../n1.html?title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C2 · 都收起"></iframe></div></figure>
+    <figure><figcaption><b>点开日报</b><a href="../n1.html?open=brief&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?open=brief&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C2 · 点开日报"></iframe></div></figure>
+  </div>
+
+  <h3>C3 · 台账<span class="who">Claude</span></h3>
+  <p>往期不再是列表。一行一个流程,一格一天:绿的有产出,空心琥珀是跳过,红的是失败。选中一格,下面就是那一期的内容;没有产出的那一天可以补生成。配置很少动,点行上的配置钮才从右边出来。</p>
+  <div class="row">
+    <figure><figcaption><b>选中日报今天这一期</b><a href="../n2.html?title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n2.html?bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C3 · 今天"></iframe></div></figure>
+    <figure><figcaption><b>选中精读跳过的那天,配置栏开着</b><a href="../n2.html?flow=picks&date=2026-11-24&cfg=brief&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n2.html?flow=picks&date=2026-11-24&cfg=brief&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C3 · 跳过与配置"></iframe></div></figure>
+  </div>
+
+  <h2>3 · Gemini 的三个方向</h2>
+  <p>下面三个由 Gemini 4 Carbon 设计并写成代码,名字也是它起的;样式与脚本原样落盘,没有改动。它自己的说明在 <a href="../gemini/NOTES.md">gemini/NOTES.md</a>,它推荐 G3。</p>
+
+  <h3>G1 · 刊席<span class="who">Gemini</span></h3>
+  <p>一个流程一栏,主角是每个流程最新一期的成稿。栏头是名称与生成 / 配置 / 开关,下面一条是结果、cron、距下次与近 7 日,再下面是 ‹ 日期 › 翻期。往期点「41 期 ▾」才拉下来;点配置钮,这一栏原地翻成表单,另一栏不动。</p>
+  <div class="row">
+    <figure><figcaption><b>刊面</b><a href="../gemini/g1.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g1.html?bare&v=6" loading="lazy" title="G1 · 刊面"></iframe></div></figure>
+    <figure><figcaption><b>日报一栏翻成配置</b><a href="../gemini/g1.html?view=cfg" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g1.html?view=cfg&bare&v=6" loading="lazy" title="G1 · 配置"></iframe></div></figure>
+  </div>
+
+  <h3>G2 · 时序<span class="who">Gemini</span></h3>
+  <p>主角是今天的 24 小时。顶上一把标尺,标着每个流程的时刻和现在;「此刻」那条线以上是今天已经跑的(结果、停在哪个阶段、原因),以下是待跑的(距下次、几项取值的小签、生成 / 配置 / 开关)。近 7 日是顶上一排日期胶囊,点了回到那一天;全部往期从右上角拉下来,两个流程混排。</p>
+  <div class="row">
+    <figure><figcaption><b>今天</b><a href="../gemini/g2.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g2.html?bare&v=6" loading="lazy" title="G2 · 今天"></iframe></div></figure>
+    <figure><figcaption><b>拉下全部归档</b><a href="../gemini/g2.html?view=arch" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g2.html?view=arch&bare&v=6" loading="lazy" title="G2 · 归档"></iframe></div></figure>
+  </div>
+
+  <h3>G3 · 机匣<span class="who">Gemini</span></h3>
+  <p>纸变成一块浅槽工作台。每个流程一只小匣:结果、最新一期、阶段条、cron、距下次、近 7 日。往期不分流程,合成底下一条「近期产出」,平时只露最近三期,点开才是列表,能按流程筛。配置点匣子上的钮,只在那只匣子里向下伸。</p>
+  <div class="row">
+    <figure><figcaption><b>收拢</b><a href="../gemini/g3.html" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g3.html?bare&v=6" loading="lazy" title="G3 · 收拢"></iframe></div></figure>
+    <figure><figcaption><b>点开近期产出</b><a href="../gemini/g3.html?view=vault" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../gemini/g3.html?view=vault&bare&v=6" loading="lazy" title="G3 · 合订展开"></iframe></div></figure>
+  </div>
+
+  <h2>4 · 对比</h2>
+  <table>
+    <tr><th></th><th>C1 · 往期收起</th><th>C2 · 泳道</th><th>C3 · 台账</th><th>G1 · 刊席</th><th>G2 · 时序</th><th>G3 · 机匣</th></tr>
+    <tr><td>这一页的主角</td><td>所选流程的三段</td><td>全部流程,一行一个</td><td>全部流程的逐日结果,加选中的那一期</td><td>每个流程最新一期的成稿,一个流程一栏</td><td>今天的 24 小时:已跑的在上,待跑的在下</td><td>每个流程一只小匣</td></tr>
+    <tr><td>往期的形态</td><td>折叠的列表;平时显示最新一期</td><td>点开一行才有的列表</td><td>日期格子;不再有列表</td><td>‹ 日期 › 翻期;目录点了才拉下来</td><td>近 7 日的日期胶囊;全部归档点了才拉下来,两个流程混排</td><td>两个流程合成一条,平时只露最近三期</td></tr>
+    <tr><td>配置在哪</td><td>常驻(取材、加工两段)</td><td>点开一行</td><td>右侧配置栏,点了才出来</td><td>这一栏原地翻成表单</td><td>待跑那一行下面展开</td><td>匣子向下伸</td></tr>
+    <tr><td>开关、cron、生成</td><td>所选流程的题条</td><td>每一行上</td><td>每一行上</td><td>每栏栏头</td><td>待跑区每一行</td><td>每只匣子上</td></tr>
+    <tr><td>能直接读到产出内容</td><td>能(最新一期)</td><td>不能(现网的展开读正文仍在往期行里)</td><td>能(任意一期)</td><td>能(每个流程的最新一期,常驻)</td><td>点开今天那一行</td><td>点开近期产出里的一行</td></tr>
+    <tr><td>流程多了以后</td><td>磁贴一排 4 个,再多横向滚</td><td>一行 79px,900 高的窗口一屏 9 个</td><td>一行 56px;六个流程时下面那一期还剩 420px 高</td><td>等分竖栏:两个各 659px,四个各 330px,再多没有画</td><td>每个流程上下各占一行(57px);时刻相近时标尺上的标签会叠</td><td>一排两只,每只 182px 高;六个流程三排</td></tr>
+    <tr><td>窄窗口(1280)</td><td>正常</td><td>正常,阶段条变窄</td><td>日期从 27 天减到 21 天</td><td>正常,每栏 579px</td><td>正常</td><td>正常</td></tr>
+    <tr><td>代价</td><td>改动最小;主从结构还在</td><td>平时页面大半是空的</td><td>日期格子是新组件;选中一格要取那一期的条目(现网是展开往期行时才取正文)</td><td>进页面就要取每个流程最新一期的条目;流程一多就得换排法</td><td>24 小时里只有两个时刻,标尺大半是空的;「已执勤」「待发排期」是新说法</td><td>收拢时纸的下半是空的;看一期要点两次</td></tr>
+  </table>
+
+  <h2>5 · 状态</h2>
+  <h3>失败与跳过</h3>
+  <p>日报今天失败;精读今天跳过(当日榜单没入库)。</p>
+  <div class="row">
+    <figure><figcaption><b>C1</b>选中精读<a href="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&state=bad&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&state=bad&flow=picks&bare&v=6" loading="lazy" title="C1 · 跳过"></iframe></div></figure>
+    <figure><figcaption><b>C2</b><a href="../n1.html?state=bad&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../n1.html?state=bad&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C2 · 失败与跳过"></iframe></div></figure>
+    <figure><figcaption><b>C3</b>选中日报今天<a href="../n2.html?state=bad&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../n2.html?state=bad&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C3 · 失败"></iframe></div></figure>
+  </div>
+  <h3>生成中</h3>
+  <p>手动点了一次精读。</p>
+  <div class="row">
+    <figure><figcaption><b>C1</b><a href="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&state=run&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&hist=fold&state=run&flow=picks&bare&v=6" loading="lazy" title="C1 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>C2</b><a href="../n1.html?state=run&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../n1.html?state=run&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C2 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>C3</b><a href="../n2.html?state=run&flow=picks&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../n2.html?state=run&flow=picks&bare&v=6&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA" loading="lazy" title="C3 · 生成中"></iframe></div></figure>
+  </div>
+  <h3>Gemini 的三个:失败与跳过</h3>
+  <div class="row">
+    <figure><figcaption><b>G1</b><a href="../gemini/g1.html?state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g1.html?state=bad&bare&v=6" loading="lazy" title="G1 · 失败与跳过"></iframe></div></figure>
+    <figure><figcaption><b>G2</b><a href="../gemini/g2.html?state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g2.html?state=bad&bare&v=6" loading="lazy" title="G2 · 失败与跳过"></iframe></div></figure>
+    <figure><figcaption><b>G3</b><a href="../gemini/g3.html?state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g3.html?state=bad&bare&v=6" loading="lazy" title="G3 · 失败与跳过"></iframe></div></figure>
+  </div>
+  <h3>Gemini 的三个:生成中</h3>
+  <div class="row">
+    <figure><figcaption><b>G1</b><a href="../gemini/g1.html?state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g1.html?state=run&bare&v=6" loading="lazy" title="G1 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>G2</b><a href="../gemini/g2.html?state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g2.html?state=run&bare&v=6" loading="lazy" title="G2 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>G3</b><a href="../gemini/g3.html?state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../gemini/g3.html?state=run&bare&v=6" loading="lazy" title="G3 · 生成中"></iframe></div></figure>
+  </div>
+
+  <h2>6 · 待拍板</h2>
+  <table>
+    <tr><th>#</th><th>问题</th><th>建议</th></tr>
+    <tr><td>1</td><td>选哪个方向</td><td>C3 台账。每个流程每一天跑没跑,一眼看得全;往期不占地方,也不用翻页;下面直接是那一期的内容。流程长期只有两三个、每天都想直接看到各自成稿的话,G1 刊席更直接;只想确认状态的话,G3 机匣或 C2 泳道最安静。也可以拼:比如 G1 每栏的近 7 日换成 C3 的日期格子</td></tr>
+    <tr><td>2</td><td>叫法</td><td>「近期日报」「近期精读」统一叫「往期」,单位「期」</td></tr>
+    <tr><td>3</td><td>没有产出的那一天给不给「补生成」(C3)</td><td>给。日报的生成接口本来就能指定日期;精读要照着做</td></tr>
+    <tr><td>4</td><td>日期格子画多少天(C3)</td><td>按宽度放:1440 窗口 27 天,1280 窗口 21 天;更早的用上一期 / 下一期翻</td></tr>
+    <tr><td>5</td><td>能不能直接读到某一期的内容</td><td>能(C1、C3)。管理员要判断产出好不好,标题、分数、来源比「收录 33 条」有用</td></tr>
+    <tr><td colspan="3" style="color: var(--faint); padding-top: 18px;">前两轮还没定的(这一轮的各方向都按建议画了)</td></tr>
+    <tr><td>6</td><td>页签与对象叫什么</td><td>页签「AI 产出」,导轨短名「产出」;里面的一个叫「流程」</td></tr>
+    <tr><td>7</td><td>配置的写法;往期行末尾</td><td>参数行(名称在左、控件在右);行末是生成时刻,不再是每行一样的「已生成」</td></tr>
+    <tr><td>8</td><td>跳过怎么算</td><td>不算失败:琥珀色,不计入失败数</td></tr>
+    <tr><td>9</td><td>源管理 · 系统那两行写什么</td><td>把「无采集」换成「生成」</td></tr>
+    <tr><td>10</td><td>新流程默认开还是关;精读的旋钮;精读送不送入库分析</td><td>默认关;挑选个数(默认 6)与只看 AI 相关(默认开);不送分析</td></tr>
+  </table>
+
+  <h2>7 · 样页的边界</h2>
+  <p>日报的逐期(日期、生成时刻、条数、模型、每期条目的标题 / 分类 / 分数 / 来源)是开发库副本里的真实记录,日期平移到了今天;样页里的「今天」是 2026-11-26。精读这个流程还不存在:它的期数、每天的结果、入库时间是示意,每一期的内容只列仓库名(取自一期真实榜单)和灰色占位,没有代写正文。</p>
+  <p>C2、C3 能点的是:行的点开与收起、日期格子、上一期 / 下一期、配置钮。C1 能点的是磁贴与往期的折叠。开关、cron、保存、立即生成、补生成、删除都不会改动任何数据。</p>
+  <p>Gemini 那三个是这样来的:在 Antigravity 里用 Gemini 4 Carbon(高思考档)新开会话,把背景、你的原话、要放得下的东西、审美要求、现网的变量与组件、底页的用法都写进一条提示词(<a href="../gemini/BRIEF-inline.md">gemini/BRIEF-inline.md</a>),并告诉它 Claude 在做泳道、台账与往期收起,请它避开。它用了 41 分钟,回复里给出样式、脚本和说明,我切分落盘(原文在 <a href="../gemini/REPLY.txt">gemini/REPLY.txt</a>),没有改它的代码;页面壳与载入现网外壳的脚本是我备的。它页面里底部开关条上的字、「已执勤」这类说法都是它自己的。</p>
+  <p>没有画的:读者面、新流程第一次打开时的空态、日报「自定名单」展开后的样子、手机壳(管理面不在手机壳里)。</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,2885 @@
+=== FILE: g.css ===
+/* ==========================================================================
+   AI 产出 — 三个发散方向样式 (g1 刊席 / g2 时序 / g3 机匣)
+   仅使用现网变量与字号刻度 (12 / 12.5 / 13 / 14 / 15 / 24px)
+   ========================================================================== */
+
+.gx-mono {
+  font-family: var(--mono);
+}
+
+.gx-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-btn-active {
+  background: var(--dorami-select) !important;
+  color: var(--dorami-accent-ink) !important;
+  border-color: var(--dorami-border-strong) !important;
+}
+
+.gx-icon-sm {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  padding: 0 !important;
+}
+
+.gx-cron-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-sm);
+  background: var(--dorami-card);
+  color: var(--dorami-ink-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
+}
+
+.gx-cron-chip:hover {
+  background: var(--dorami-soft);
+  border-color: var(--dorami-border-strong);
+}
+
+.gx-next-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--dorami-muted);
+  white-space: nowrap;
+}
+
+.gx-next-meta b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--dorami-ink-2);
+}
+
+.gx-dots- interactive,
+.gx-dots-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gx-dots-btn i {
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+.gx-dots-btn i:hover {
+  transform: scale(1.35);
+}
+
+/* 现场阶段诊断框 */
+.gx-diag-card {
+  padding: 10px 12px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-control);
+  background: var(--dorami-well);
+  margin-bottom: 12px;
+}
+
+.gx-diag-card.is-run {
+  background: var(--state-run-bg);
+  border-color: color-mix(in srgb, var(--state-run) 32%, var(--dorami-border));
+}
+
+.gx-diag-card.is-bad {
+  background: var(--state-bad-bg);
+  border-color: color-mix(in srgb, var(--state-bad) 32%, var(--dorami-border));
+}
+
+.gx-diag-card.is-warn {
+  background: var(--state-warn-bg);
+  border-color: color-mix(in srgb, var(--state-warn) 35%, var(--dorami-border));
+}
+
+.gx-diag-card .pipeline-note {
+  margin-top: 6px;
+}
+
+/* 通用单期正文条目 (日报 / 精读) */
+.gx-article-list,
+.gx-repo-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-article-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-article-row:last-child {
+  border-bottom: none;
+}
+
+.gx-article-score {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dorami-accent-ink);
+  background: var(--dorami-wash);
+  border-radius: var(--r-sm);
+  text-align: center;
+  padding: 1px 4px;
+}
+
+.gx-article-score.is-mid {
+  color: var(--dorami-ink-2);
+  background: var(--dorami-well);
+}
+
+.gx-article-title {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--dorami-ink);
+  min-width: 0;
+}
+
+.gx-article-tag {
+  font-size: 12px;
+  color: var(--dorami-muted);
+  white-space: nowrap;
+}
+
+.gx-repo-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-repo-row:last-child {
+  border-bottom: none;
+}
+
+.gx-repo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gx-repo-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gx-repo-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-repo-lang {
+  font-size: 12px;
+  color: var(--dorami-muted);
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-well);
+}
+
+.gx-repo-stars {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+  white-space: nowrap;
+}
+
+.gx-repo-stars em {
+  font-style: normal;
+  color: var(--state-ok);
+  margin-left: 6px;
+}
+
+.gx-repo-placeholder {
+  font-size: 12.5px;
+  color: var(--dorami-faint);
+}
+
+/* 往期行内展开容器 */
+.gx-run-expand {
+  padding: 6px 16px 12px 32px;
+  background: var(--dorami-well);
+  border-top: 1px solid var(--dorami-border);
+}
+
+.brief-run.gx-open .brief-run-caret {
+  transform: rotate(90deg);
+}
+
+.brief-run .brief-run-del {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.gx-flow-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 1px 6px;
+  margin-right: 8px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-sm);
+  background: var(--dorami-soft);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dorami-ink-2);
+  flex-shrink: 0;
+}
+
+/* 通用分区配置块 */
+.gx-cfg-section {
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card);
+  background: var(--dorami-card);
+  overflow: hidden;
+}
+
+.gx-cfg-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 14px;
+  background: var(--dorami-well);
+  border-bottom: 1px solid var(--dorami-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-cfg-sec-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dorami-muted);
+}
+
+.gx-cfg-sec-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gx-cfg-sec-body.is-flush {
+  padding: 0;
+  gap: 0;
+}
+
+.gx-cfg-kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.gx-cfg-k {
+  font-size: 13px;
+  color: var(--dorami-ink-2);
+}
+
+.gx-cursor-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  background: var(--dorami-well);
+  border: 1px solid var(--dorami-border);
+}
+
+.gx-cursor-val {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-ink-2);
+}
+
+.gx-scope-slot details.scope-note {
+  margin: 0;
+}
+
+.gx-param-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 14px;
+  border-top: 1px solid var(--dorami-border);
+}
+
+.gx-cfg-sec-body.is-flush .inspector-params {
+  border: none;
+}
+
+.gx-cfg-sec-body.is-flush .inspector-param {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+/* ==========================================================================
+   方向 1 (g1): 刊席 — 双栏并立当期印样，原地翻期与翻面调参
+   ========================================================================== */
+
+.runs-paper.gx-g1 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.gx-desk {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-right: 1px solid var(--dorami-border);
+  background: var(--dorami-card);
+  position: relative;
+}
+
+.gx-desk:last-child {
+  border-right: none;
+}
+
+.gx-desk.is-off .gx-desk-body {
+  opacity: 0.58;
+}
+
+/* 席头: 54px 跨栏严格对齐 */
+.gx-desk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 54px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-desk-title-grp {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gx-desk-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+}
+
+.gx-desk-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-desk-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 脉搏栏: 40px 跨栏严格对齐 */
+.gx-desk-pulse {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  background: var(--dorami-well);
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-pulse-l,
+.gx-pulse-r {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 眉栏: 42px 跨栏严格对齐 (刊面与配置面同高) */
+.gx-desk-subbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 42px;
+  flex-shrink: 0;
+  padding: 0 14px 0 12px;
+  border-bottom: 1px solid var(--dorami-border);
+  background: var(--dorami-card);
+}
+
+.gx-desk-subbar.is-cfg {
+  padding: 0 18px;
+  background: var(--dorami-soft);
+}
+
+.gx-subbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-issue-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gx-issue-date {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  padding: 0 2px;
+  white-space: nowrap;
+}
+
+.gx-issue-summary {
+  font-size: 12px;
+  color: var(--dorami-muted);
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-issue-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gx-desk-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.gx-desk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 18px 20px;
+}
+
+.gx-cfg-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 席内往期目录抽屉层 */
+.gx-desk-hist-layer {
+  position: absolute;
+  inset: 0;
+  background: var(--dorami-card);
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+
+.gx-desk-hist-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gx-desk-hist-list .brief-run.is-viewing > .brief-run-line {
+  background: var(--dorami-select);
+}
+
+/* ==========================================================================
+   方向 2 (g2): 时序 — 24h 刻度标尺 + 此刻 16:11 上下分界时刻表
+   ========================================================================== */
+
+.runs-paper.gx-g2 {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.gx-chrono-head {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--dorami-border);
+  background: var(--dorami-card);
+}
+
+.gx-chrono-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  padding: 0 20px;
+}
+
+.gx-day-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gx-day-label {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  padding: 0 4px;
+}
+
+.gx-week-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gx-week-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-control);
+  background: var(--dorami-card);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease);
+}
+
+.gx-week-pill:hover {
+  background: var(--dorami-soft);
+}
+
+.gx-week-pill.is-on {
+  background: var(--dorami-select);
+  border-color: var(--dorami-border-strong);
+  color: var(--dorami-ink);
+  font-weight: 600;
+}
+
+.gx-pill-pair {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gx-pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: var(--dorami-faint);
+}
+
+.gx-pill-dot.ok { background: var(--state-ok); }
+.gx-pill-dot.bad { background: var(--state-bad); }
+.gx-pill-dot.warn { background: var(--state-warn); }
+.gx-pill-dot.run { background: var(--state-run); border-radius: 50%; }
+
+/* 24h 全景标尺 */
+.gx-ruler-band {
+  height: 54px;
+  padding: 0 24px;
+  background: var(--dorami-well);
+  border-top: 1px solid var(--dorami-border);
+  display: flex;
+  align-items: center;
+}
+
+.gx-ruler-track {
+  position: relative;
+  width: 100%;
+  height: 36px;
+}
+
+.gx-ruler-past {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  height: 12px;
+  background: color-mix(in srgb, var(--dorami-blue) 10%, transparent);
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  pointer-events: none;
+}
+
+.gx-ruler-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 18px;
+  height: 1px;
+  background: var(--dorami-border-strong);
+}
+
+.gx-ruler-tick {
+  position: absolute;
+  top: 14px;
+  width: 1px;
+  height: 8px;
+  background: var(--dorami-border-strong);
+  transform: translateX(-0.5px);
+}
+
+.gx-ruler-tick.is-major {
+  top: 11px;
+  height: 14px;
+}
+
+.gx-ruler-tick span {
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+}
+
+.gx-ruler-pin {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-card);
+  border: 1px solid var(--dorami-border-strong);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.gx-ruler-pin.is-left {
+  transform: translateX(-92%);
+}
+
+.gx-ruler-pin.is-right {
+  transform: translateX(-8%);
+}
+
+.gx-ruler-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--dorami-blue);
+  transform: translateX(-1px);
+  z-index: 3;
+}
+
+.gx-ruler-now-tag {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-blue);
+  color: var(--dorami-card);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 时刻表主视口 */
+.gx-chrono-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-chrono-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gx-stratum {
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card);
+  background: var(--dorami-card);
+  overflow: hidden;
+}
+
+.gx-stratum-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  padding: 0 16px;
+  background: var(--dorami-well);
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-stratum-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-stratum-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+}
+
+.gx-slot-row {
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-slot-row:last-child {
+  border-bottom: none;
+}
+
+.gx-slot-row.is-off .gx-slot-main {
+  opacity: 0.55;
+}
+
+.gx-slot-main {
+  display: grid;
+  grid-template-columns: 82px 236px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 54px;
+  padding: 8px 16px;
+}
+
+.gx-slot-time {
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-slot-clock {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-slot-subclock {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+}
+
+.gx-slot-flow {
+  min-width: 0;
+}
+
+.gx-slot-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+}
+
+.gx-slot-feed {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+}
+
+.gx-slot-mid {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gx-slot-reason {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.gx-slot-reason.is-err { color: var(--state-bad); }
+.gx-slot-reason.is-warn { color: var(--state-warn); }
+.gx-slot-reason.is-run { color: var(--state-run); }
+
+.gx-spec-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gx-spec-pill {
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  background: var(--dorami-well);
+  font-size: 12px;
+  color: var(--dorami-muted);
+  white-space: nowrap;
+}
+
+.gx-slot-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 此刻 16:11 分界尺 / 运行现场横舱 */
+.gx-now-seam {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 4px;
+}
+
+.gx-now-seam-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--dorami-wash);
+  color: var(--dorami-accent-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.gx-now-seam-rule {
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--dorami-blue) 35%, var(--dorami-border));
+}
+
+.gx-now-seam-countdown {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+  flex-shrink: 0;
+}
+
+.gx-now-live-pod {
+  border: 1px solid color-mix(in srgb, var(--state-run) 45%, var(--dorami-border));
+  border-radius: var(--r-card);
+  background: var(--state-run-bg);
+}
+
+/* 待发行内嵌三格配置面板 */
+.gx-inline-cfg {
+  border-top: 1px solid var(--dorami-border);
+  background: var(--dorami-well);
+  padding: 14px 16px 0;
+}
+
+.gx-inline-cfg-grid {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 320px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.gx-slot-drawer {
+  border-top: 1px solid var(--dorami-border);
+  background: var(--dorami-well);
+  padding: 10px 18px 14px 98px;
+}
+
+/* g2 全站归档覆盖层 */
+.gx-arch-sheet {
+  position: absolute;
+  inset: 0;
+  background: var(--dorami-card);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-arch-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 46px;
+  padding: 0 20px;
+  background: var(--dorami-soft);
+  border-bottom: 1px solid var(--dorami-border);
+  flex-shrink: 0;
+}
+
+.gx-arch-sheet-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ==========================================================================
+   方向 3 (g3): 机匣 — 凹槽桌面模块机匣 + 常态隐藏的统一口径合订匣
+   ========================================================================== */
+
+.runs-paper.gx-g3 {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  gap: 14px;
+  background: var(--dorami-well);
+  overflow-y: auto;
+}
+
+.gx-pod-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+  flex-shrink: 0;
+}
+
+.gx-pod {
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card);
+  background: var(--dorami-card);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-pod.is-off .gx-pod-core,
+.gx-pod.is-off .gx-pod-foot {
+  opacity: 0.55;
+}
+
+.gx-pod-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 50px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-pod-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gx-pod-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  white-space: nowrap;
+}
+
+.gx-pod-feed {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-pod-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gx-pod-core {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+
+.gx-pod-core.is-run {
+  background: var(--state-run-bg);
+}
+
+.gx-pod-core.is-bad {
+  background: var(--state-bad-bg);
+}
+
+.gx-pod-core.is-warn {
+  background: var(--state-warn-bg);
+}
+
+.gx-pod-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 24px;
+}
+
+.gx-pod-status-l {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gx-pod-latest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-sm);
+  background: var(--dorami-card);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.gx-pod-latest-btn:hover {
+  background: var(--dorami-soft);
+  border-color: var(--dorami-border-strong);
+}
+
+.gx-pod-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 40px;
+  padding: 0 16px;
+  background: var(--dorami-soft);
+}
+
+.gx-pod-foot-l,
+.gx-pod-foot-r {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gx-pod-total {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+}
+
+.gx-pod-cfg {
+  border-top: 1px solid var(--dorami-border);
+  background: var(--dorami-well);
+  padding: 12px 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 统一口径合订底匣 */
+.gx-vault {
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-card);
+  background: var(--dorami-card);
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-vault.is-open {
+  flex: 1;
+  min-height: 360px;
+}
+
+.gx-vault-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.gx-vault.is-open .gx-vault-head {
+  border-bottom: 1px solid var(--dorami-border);
+  background: var(--dorami-soft);
+}
+
+.gx-vault-head-l {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gx-vault-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dorami-ink);
+  cursor: pointer;
+}
+
+.gx-vault-caret {
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+.gx-vault.is-open .gx-vault-caret {
+  transform: rotate(90deg);
+}
+
+.gx-vault-peek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 16px;
+  border-top: 1px solid var(--dorami-border);
+  background: var(--dorami-card);
+  overflow: hidden;
+}
+
+.gx-peek-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--dorami-border);
+  border-radius: var(--r-sm);
+  background: var(--dorami-well);
+  font-size: 12px;
+  color: var(--dorami-ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.gx-peek-chip:hover {
+  background: var(--dorami-soft);
+  border-color: var(--dorami-border-strong);
+}
+
+.gx-peek-chip code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-muted);
+}
+
+.gx-vault-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-vault-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 1320px) {
+  .gx-slot-main {
+    grid-template-columns: 74px 212px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .gx-inline-cfg-grid {
+    grid-template-columns: 190px minmax(0, 1fr) 290px;
+  }
+}
+=== FILE: g.js ===
+shellReady.then(({ paper, shell, parts, state, theme }) => {
+  const dir = document.documentElement.dataset.g || '1';
+  const urlParams = new URLSearchParams(window.location.search);
+  const initView = urlParams.get('view') || '';
+
+  const ICONS = {
+    sliders: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+    prev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
+    next: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>',
+    trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+    caretRight: '<svg class="gx-vault-caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>'
+  };
+
+  function esc(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // 构造真实与模拟数据集
+  const rawBriefs = (window.PF_DATA && Array.isArray(window.PF_DATA.briefPeriods))
+    ? window.PF_DATA.briefPeriods
+    : [];
+  const rawRepos = (window.PF_DATA && Array.isArray(window.PF_DATA.trendingRepos))
+    ? window.PF_DATA.trendingRepos
+    : [
+        { repo: 'block/buzz', lang: 'Rust', stars: 6744, today: '2,460' },
+        { repo: 'anthropics/mcp-registry', lang: 'TypeScript', stars: 9412, today: '1,820' },
+        { repo: 'deepseek-ai/Janus-Flow', lang: 'Python', stars: 15320, today: '1,540' },
+        { repo: 'vercel/ai-elements', lang: 'TypeScript', stars: 4890, today: '980' },
+        { repo: 'ggml-org/llama.cpp', lang: 'C++', stars: 76400, today: '740' },
+        { repo: 'astral-sh/ty', lang: 'Rust', stars: 8210, today: '690' }
+      ];
+
+  function buildBriefPeriods() {
+    const list = rawBriefs.map((p, idx) => ({
+      uid: 'brief-' + p.date,
+      flowId: 'brief',
+      flowShort: '日报',
+      flowName: '哆啦美·AI资讯日报',
+      date: p.date,
+      time: p.time || '08:31',
+      count: p.count || (p.items ? p.items.length : 30),
+      model: p.model || 'deepseek-chat',
+      metaText: `收录 ${p.count || (p.items ? p.items.length : 30)} 条 · ${p.model || 'deepseek-chat'}`,
+      shortMeta: `${p.count || 30} 条`,
+      items: Array.isArray(p.items) ? p.items : []
+    }));
+    if (state === 'bad') {
+      return list.filter((p) => p.date !== '2026-11-26');
+    }
+    return list;
+  }
+
+  function buildTrendingPeriods() {
+    const dates = [
+      '2026-11-26', '2026-11-25', '2026-11-23', '2026-11-22',
+      '2026-11-21', '2026-11-20', '2026-11-19', '2026-11-18',
+      '2026-11-17', '2026-11-16', '2026-11-15', '2026-11-14'
+    ];
+    const filtered = state === 'bad' ? dates.filter((d) => d !== '2026-11-26') : dates;
+    return filtered.map((d, idx) => {
+      const repos = [];
+      for (let i = 0; i < 6; i++) {
+        repos.push(rawRepos[(idx * 2 + i) % rawRepos.length]);
+      }
+      const minute = (idx % 3 === 1) ? '09:31' : '09:30';
+      return {
+        uid: 'trending-' + d,
+        flowId: 'trending',
+        flowShort: '精读',
+        flowName: 'GitHub Trending 精读',
+        date: d,
+        time: minute,
+        count: 6,
+        poolCount: 25,
+        metaText: '选 6 个 · 榜单 25 个',
+        shortMeta: '6 个',
+        repos
+      };
+    });
+  }
+
+  const WEEK_DATES = [
+    '2026-11-20', '2026-11-21', '2026-11-22', '2026-11-23',
+    '2026-11-24', '2026-11-25', '2026-11-26'
+  ];
+
+  const store = {
+    cursor: (parts && parts.cursor) || '2026-06-06T21:51:37',
+    flows: {
+      brief: {
+        id: 'brief',
+        shortName: '日报',
+        name: '哆啦美·AI资讯日报',
+        feedId: 'dorami_daily_brief',
+        enabled: true,
+        cron: (parts && parts.values && parts.values.cron) || '30 8 * * *',
+        clock: '08:30',
+        hourFrac: (8 + 30 / 60) / 24,
+        nextIn: '16:18:19',
+        sourceMode: 'all',
+        knobs: {
+          topN: (parts && parts.values && parts.values.topN) || '12',
+          minScore: (parts && parts.values && parts.values.minScore) || '6',
+          minItems: (parts && parts.values && parts.values.minItems) || '8',
+          paperMin: (parts && parts.values && parts.values.paperMin) || '7'
+        },
+        stages: ['收集', '评分', '精选', '点评', '成稿'],
+        lastStatus: state === 'bad' ? 'bad' : 'ok',
+        stampClass: state === 'bad' ? 'stamp-bad' : 'stamp-ok',
+        stampText: state === 'bad' ? '失败' : '已生成',
+        reason: state === 'bad' ? 'LLM 请求超时' : '',
+        activeStageIdx: state === 'bad' ? 3 : 4,
+        week: WEEK_DATES.map((d) => ({
+          date: d,
+          status: (d === '2026-11-26' && state === 'bad') ? 'bad' : 'ok'
+        })),
+        periods: buildBriefPeriods()
+      },
+      trending: {
+        id: 'trending',
+        shortName: '精读',
+        name: 'GitHub Trending 精读',
+        feedId: 'dorami_trending_picks',
+        enabled: true,
+        cron: '30 9 * * *',
+        clock: '09:30',
+        hourFrac: (9 + 30 / 60) / 24,
+        nextIn: '17:18:19',
+        lastIngest: state === 'bad' ? '11-25 07:00' : '11-26 07:00',
+        knobs: {
+          pickN: '6',
+          aiOnly: true
+        },
+        stages: ['读榜', '挑选', '成稿'],
+        lastStatus: state === 'run' ? 'run' : (state === 'bad' ? 'warn' : 'ok'),
+        stampClass: state === 'run' ? 'stamp-run' : (state === 'bad' ? 'stamp-warn' : 'stamp-ok'),
+        stampText: state === 'run' ? '生成中' : (state === 'bad' ? '已跳过' : '已生成'),
+        reason: state === 'run'
+          ? '从 25 个仓库里挑 6 个'
+          : (state === 'bad' ? '当日榜单未入库' : ''),
+        activeStageIdx: state === 'run' ? 1 : (state === 'bad' ? 0 : 2),
+        week: WEEK_DATES.map((d) => {
+          if (d === '2026-11-24') return { date: d, status: 'warn' };
+          if (d === '2026-11-26' && state === 'bad') return { date: d, status: 'warn' };
+          if (d === '2026-11-26' && state === 'run') return { date: d, status: 'run' };
+          return { date: d, status: 'ok' };
+        }),
+        periods: buildTrendingPeriods()
+      }
+    }
+  };
+
+  function cronToClock(cronStr, fallback) {
+    const segs = String(cronStr || '').trim().split(/\s+/);
+    if (segs.length >= 2 && /^\d+$/.test(segs[0]) && /^\d+$/.test(segs[1])) {
+      const m = segs[0].padStart(2, '0');
+      const h = segs[1].padStart(2, '0');
+      return `${h}:${m}`;
+    }
+    return fallback;
+  }
+
+  // 构建阶段流水线 HTML
+  function renderPipelineHTML(flow) {
+    const steps = flow.stages.map((label, idx) => {
+      let cls = 'ledger-pipeline-step';
+      if (flow.lastStatus === 'ok') {
+        cls += ' is-done';
+      } else if (flow.lastStatus === 'run') {
+        if (idx < flow.activeStageIdx) cls += ' is-done';
+        else if (idx === flow.activeStageIdx) cls += ' is-now';
+      } else if (flow.lastStatus === 'bad') {
+        if (idx < flow.activeStageIdx) cls += ' is-done';
+        else if (idx === flow.activeStageIdx) cls += ' is-now is-err';
+      } else if (flow.lastStatus === 'warn') {
+        if (idx === flow.activeStageIdx) cls += ' is-now';
+      }
+      return `<span class="${cls}">${esc(label)}</span>`;
+    }).join('');
+    return `<div class="ledger-pipeline">${steps}</div>`;
+  }
+
+  // 构建单期正文 DOM (日报条目或精读仓库)
+  function createPeriodContentEl(period) {
+    const wrap = document.createElement('div');
+    if (period.flowId === 'brief') {
+      wrap.className = 'gx-article-list';
+      const items = period.items && period.items.length ? period.items : [];
+      items.forEach((it) => {
+        const row = document.createElement('div');
+        row.className = 'gx-article-row';
+        const numScore = Number(it.score || 0);
+        const scoreCls = numScore >= 8.5 ? 'gx-article-score' : 'gx-article-score is-mid';
+        row.innerHTML = `
+          <span class="${scoreCls}">${numScore ? numScore.toFixed(1) : '—'}</span>
+          <span class="gx-article-title">${esc(it.title)}</span>
+          <span class="gx-article-tag">${esc(it.kind || '')}${it.kind && it.source ? ' · ' : ''}${esc(it.source || '')}</span>
+        `;
+        wrap.appendChild(row);
+      });
+    } else {
+      wrap.className = 'gx-repo-list';
+      (period.repos || []).forEach((r) => {
+        const row = document.createElement('div');
+        row.className = 'gx-repo-row';
+        row.innerHTML = `
+          <div class="gx-repo-top">
+            <div class="gx-repo-name-wrap">
+              <span class="gx-repo-name">${esc(r.repo)}</span>
+              <span class="gx-repo-lang">${esc(r.lang)}</span>
+            </div>
+            <span class="gx-repo-stars">★ ${Number(r.stars || 0).toLocaleString()}<em>+${esc(r.today)}</em></span>
+          </div>
+          <div class="gx-repo-placeholder">一句中文说明；为什么值得看</div>
+        `;
+        wrap.appendChild(row);
+      });
+    }
+    return wrap;
+  }
+
+  // 使用现网 parts.rows 克隆创建往期行
+  function createBriefRunNode(period, opts = {}) {
+    const { showFlowBadge = false, expanded = false, isViewing = false, onSelect, onToggleExpand, onDelete } = opts;
+    let node;
+    if (parts && parts.rows && parts.rows[0]) {
+      node = parts.rows[0].cloneNode(true);
+      const extra = Array.from(node.children).filter((ch) => !ch.classList.contains('brief-run-line'));
+      extra.forEach((el) => el.remove());
+    } else {
+      node = document.createElement('div');
+      node.className = 'brief-run';
+      node.innerHTML = `
+        <div class="brief-run-line">
+          <button type="button" class="brief-run-head">
+            <svg class="brief-run-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            <span class="brief-run-date"></span>
+            <span class="brief-run-meta"></span>
+            <span class="stamp stamp-ok">已生成</span>
+          </button>
+          <button type="button" class="brief-run-del">${ICONS.trash}</button>
+        </div>
+      `;
+    }
+
+    node.classList.toggle('is-viewing', Boolean(isViewing));
+    node.classList.toggle('gx-open', Boolean(expanded));
+
+    const headBtn = node.querySelector('.brief-run-head');
+    const dateEl = node.querySelector('.brief-run-date');
+    const metaEl = node.querySelector('.brief-run-meta');
+    const stampEl = node.querySelector('.stamp');
+    const delBtn = node.querySelector('.brief-run-del');
+
+    const oldBadge = node.querySelector('.gx-flow-badge');
+    if (oldBadge) oldBadge.remove();
+
+    if (dateEl) {
+      dateEl.textContent = showFlowBadge ? `${period.date} ${period.time}` : period.date;
+      if (showFlowBadge && headBtn) {
+        const badge = document.createElement('span');
+        badge.className = 'gx-flow-badge';
+        badge.textContent = period.flowShort;
+        headBtn.insertBefore(badge, dateEl);
+      }
+    }
+    if (metaEl) {
+      metaEl.textContent = showFlowBadge ? period.metaText : `${period.time} · ${period.metaText}`;
+    }
+    if (stampEl) {
+      stampEl.className = 'stamp stamp-ok';
+      stampEl.textContent = '已生成';
+    }
+
+    if (expanded) {
+      const expandBox = document.createElement('div');
+      expandBox.className = 'gx-run-expand';
+      expandBox.appendChild(createPeriodContentEl(period));
+      node.appendChild(expandBox);
+    }
+
+    if (headBtn) {
+      headBtn.addEventListener('click', () => {
+        if (onSelect) onSelect(period);
+        else if (onToggleExpand) onToggleExpand(period);
+      });
+    }
+    if (delBtn) {
+      delBtn.title = '删除该期';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (onDelete) onDelete(period);
+      });
+    }
+    return node;
+  }
+
+  // 使用现网 parts.pager 克隆创建分页条
+  function createPagerNode(page, totalItems, pageSize, onPage) {
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    let row;
+    if (parts && parts.pager) {
+      row = parts.pager.cloneNode(true);
+    } else {
+      row = document.createElement('div');
+      row.className = 'brief-pager-row';
+      row.innerHTML = '<span class="tiny-meta"></span><div class="pager"></div>';
+    }
+
+    const meta = row.querySelector('.tiny-meta') || row.firstElementChild;
+    let pager = row.querySelector('.pager');
+    if (!pager) {
+      pager = document.createElement('div');
+      pager.className = 'pager';
+      row.appendChild(pager);
+    }
+    if (meta && meta !== pager) {
+      const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+      const end = Math.min(totalItems, page * pageSize);
+      meta.textContent = `${start}–${end} / 共 ${totalItems} 期`;
+    }
+
+    pager.innerHTML = '';
+    for (let p = 1; p <= totalPages; p++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pager-btn' + (p === page ? ' is-on' : '');
+      btn.textContent = String(p);
+      btn.addEventListener('click', () => onPage(p));
+      pager.appendChild(btn);
+    }
+    return row;
+  }
+
+  // 构建流程配置面板 (复用在三个方向各自的容器内)
+  function buildFlowConfigBlocks(flow, onSave, onCancel) {
+    const frag = document.createDocumentFragment();
+    let draftSourceMode = flow.sourceMode || 'all';
+    let draftAiOnly = Boolean(flow.knobs.aiOnly);
+
+    // 1. 定时
+    const cronSec = document.createElement('div');
+    cronSec.className = 'gx-cfg-section';
+    cronSec.innerHTML = `
+      <div class="gx-cfg-sec-head">
+        <span>定时</span>
+        <span class="gx-cfg-sec-sub gx-mono">距下次 ${esc(flow.nextIn)}</span>
+      </div>
+      <div class="gx-cfg-sec-body">
+        <div class="gx-cfg-kv">
+          <span class="gx-cfg-k">Cron 表达式</span>
+          <input type="text" class="form-input font-mono pf-cron gx-input-cron" value="${esc(flow.cron)}" />
+        </div>
+      </div>
+    `;
+    frag.appendChild(cronSec);
+
+    // 2. 取材
+    const srcSec = document.createElement('div');
+    srcSec.className = 'gx-cfg-section';
+    if (flow.id === 'brief') {
+      srcSec.innerHTML = `
+        <div class="gx-cfg-sec-head"><span>取材</span></div>
+        <div class="gx-cfg-sec-body">
+          <div class="mini-seg is-fluid">
+            <button type="button" class="mini-seg-btn ${draftSourceMode === 'all' ? 'is-on' : ''}" data-mode="all">全部来源</button>
+            <button type="button" class="mini-seg-btn ${draftSourceMode === 'custom' ? 'is-on' : ''}" data-mode="custom">自定名单</button>
+          </div>
+          <div class="gx-cursor-box">
+            <span class="gx-cursor-val">增量游标 ${esc(store.cursor)}</span>
+            <button type="button" class="inspector-metabtn gx-reset-cursor">重置</button>
+          </div>
+          <div class="gx-scope-slot"></div>
+        </div>
+      `;
+      srcSec.querySelectorAll('.mini-seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          draftSourceMode = btn.dataset.mode;
+          srcSec.querySelectorAll('.mini-seg-btn').forEach((b) => b.classList.toggle('is-on', b === btn));
+        });
+      });
+      const resetBtn = srcSec.querySelector('.gx-reset-cursor');
+      const cursorVal = srcSec.querySelector('.gx-cursor-val');
+      resetBtn.addEventListener('click', () => {
+        store.cursor = '2026-11-26T16:11:00';
+        cursorVal.textContent = '增量游标 ' + store.cursor;
+      });
+      if (parts && parts.scope) {
+        srcSec.querySelector('.gx-scope-slot').appendChild(parts.scope);
+      }
+    } else {
+      const warnCls = state === 'bad' ? 'stamp stamp-warn' : 'tiny-meta gx-mono';
+      srcSec.innerHTML = `
+        <div class="gx-cfg-sec-head"><span>取材</span></div>
+        <div class="gx-cfg-sec-body">
+          <div class="gx-cfg-kv">
+            <span class="gx-cfg-k">GitHub Trending 日榜</span>
+            <span class="${warnCls}">最近入库 ${esc(flow.lastIngest)}</span>
+          </div>
+        </div>
+      `;
+    }
+    frag.appendChild(srcSec);
+
+    // 3. 加工旋钮
+    const knobSec = document.createElement('div');
+    knobSec.className = 'gx-cfg-section';
+    if (flow.id === 'brief') {
+      knobSec.innerHTML = `
+        <div class="gx-cfg-sec-head">
+          <span>旋钮</span>
+          <span class="gx-cfg-sec-sub">${esc(flow.stages.join(' · '))}</span>
+        </div>
+        <div class="gx-cfg-sec-body is-flush">
+          <div class="inspector-params">
+            <div class="inspector-param">
+              <label class="inspector-param-label">每期条数 (1–50)</label>
+              <input type="number" min="1" max="50" class="inspector-param-input" data-k="topN" value="${esc(flow.knobs.topN)}" />
+            </div>
+            <div class="inspector-param">
+              <label class="inspector-param-label">入选门槛 (0–10)</label>
+              <input type="number" min="0" max="10" class="inspector-param-input" data-k="minScore" value="${esc(flow.knobs.minScore)}" />
+            </div>
+            <div class="inspector-param">
+              <label class="inspector-param-label">正文保底条数 (0–50)</label>
+              <input type="number" min="0" max="50" class="inspector-param-input" data-k="minItems" value="${esc(flow.knobs.minItems)}" />
+            </div>
+            <div class="inspector-param">
+              <label class="inspector-param-label">论文门槛 (0–10)</label>
+              <input type="number" min="0" max="10" class="inspector-param-input" data-k="paperMin" value="${esc(flow.knobs.paperMin)}" />
+            </div>
+          </div>
+        </div>
+      `;
+    } else {
+      knobSec.innerHTML = `
+        <div class="gx-cfg-sec-head">
+          <span>旋钮</span>
+          <span class="gx-cfg-sec-sub">${esc(flow.stages.join(' · '))}</span>
+        </div>
+        <div class="gx-cfg-sec-body is-flush">
+          <div class="inspector-params">
+            <div class="inspector-param">
+              <label class="inspector-param-label">挑选个数 (1–10)</label>
+              <input type="number" min="1" max="10" class="inspector-param-input" data-k="pickN" value="${esc(flow.knobs.pickN)}" />
+            </div>
+          </div>
+          <div class="gx-param-switch-row">
+            <span class="inspector-param-label">只看 AI 相关</span>
+            <button type="button" class="ledger-switch ${draftAiOnly ? 'is-on' : ''} gx-ai-switch" aria-label="只看 AI 相关"></button>
+          </div>
+        </div>
+      `;
+      const sw = knobSec.querySelector('.gx-ai-switch');
+      sw.addEventListener('click', () => {
+        draftAiOnly = !draftAiOnly;
+        sw.classList.toggle('is-on', draftAiOnly);
+      });
+    }
+    frag.appendChild(knobSec);
+
+    // 底部保存区
+    const saveBar = document.createElement('div');
+    saveBar.className = 'pf-save';
+    saveBar.style.display = 'flex';
+    saveBar.style.justifyContent = 'flex-end';
+    saveBar.style.gap = '8px';
+    saveBar.style.padding = '10px 0';
+    saveBar.innerHTML = `
+      <button type="button" class="action-button action-button-secondary min-h-[32px] px-3 text-xs gx-cancel-btn">取消</button>
+      <button type="button" class="action-button action-button-primary min-h-[32px] px-3 text-xs gx-save-btn">保存</button>
+    `;
+    saveBar.querySelector('.gx-cancel-btn').addEventListener('click', () => {
+      if (onCancel) onCancel();
+    });
+    saveBar.querySelector('.gx-save-btn').addEventListener('click', () => {
+      const cronInput = cronSec.querySelector('.gx-input-cron');
+      if (cronInput && cronInput.value.trim()) {
+        flow.cron = cronInput.value.trim();
+        flow.clock = cronToClock(flow.cron, flow.clock);
+      }
+      if (flow.id === 'brief') {
+        flow.sourceMode = draftSourceMode;
+      } else {
+        flow.knobs.aiOnly = draftAiOnly;
+      }
+      knobSec.querySelectorAll('.inspector-param-input').forEach((inp) => {
+        const key = inp.dataset.k;
+        if (key) flow.knobs[key] = inp.value;
+      });
+      if (onSave) onSave();
+    });
+    frag.appendChild(saveBar);
+
+    return { frag, cronInput: cronSec.querySelector('.gx-input-cron') };
+  }
+
+  function deletePeriodById(flowId, uid) {
+    const flow = store.flows[flowId];
+    if (!flow) return;
+    flow.periods = flow.periods.filter((p) => p.uid !== uid);
+  }
+
+  function triggerManualRun(flow, rerender) {
+    if (flow.lastStatus === 'run') return;
+    flow.lastStatus = 'run';
+    flow.stampClass = 'stamp-run';
+    flow.stampText = '生成中';
+    flow.activeStageIdx = 1;
+    flow.reason = flow.id === 'brief' ? '正在评分与精选新归档文章' : '从 25 个仓库里挑 6 个';
+    rerender();
+  }
+
+  /* ========================================================================
+     方向 1: 刊席 (双栏并立当期印样，原地翻期与翻面调参)
+     ======================================================================== */
+  function mountDirection1() {
+    paper.className = 'runs-paper gx-g1';
+    const ui = {
+      brief: {
+        mode: initView === 'cfg' ? 'cfg' : 'read',
+        histOpen: initView === 'hist',
+        idx: 0,
+        page: 1,
+        focusCron: false
+      },
+      trending: {
+        mode: 'read',
+        histOpen: false,
+        idx: 0,
+        page: 1,
+        focusCron: false
+      }
+    };
+
+    function render() {
+      if (parts && parts.scope && parts.scope.parentNode) {
+        parts.scope.parentNode.removeChild(parts.scope);
+      }
+      paper.innerHTML = '';
+      ['brief', 'trending'].forEach((fid) => {
+        paper.appendChild(renderDesk(store.flows[fid], ui[fid]));
+      });
+    }
+
+    function renderDesk(flow, dState) {
+      if (dState.idx >= flow.periods.length) {
+        dState.idx = Math.max(0, flow.periods.length - 1);
+      }
+      const curPeriod = flow.periods[dState.idx] || null;
+      const desk = document.createElement('section');
+      desk.className = 'gx-desk' + (flow.enabled ? '' : ' is-off');
+
+      // 1. 席头
+      const head = document.createElement('header');
+      head.className = 'gx-desk-head';
+      const isRun = flow.lastStatus === 'run';
+      head.innerHTML = `
+        <div class="gx-desk-title-grp">
+          <span class="gx-desk-title">${esc(flow.name)}</span>
+          <span class="gx-desk-id">${esc(flow.feedId)}</span>
+        </div>
+        <div class="gx-desk-tools">
+          <button type="button" class="icon-button pf-icon gx-run-btn" title="立即生成">${isRun ? parts.spinIcon : parts.playIcon}</button>
+          <button type="button" class="icon-button pf-icon gx-cfg-btn ${dState.mode === 'cfg' ? 'gx-btn-active' : ''}" title="参数与取材">${ICONS.sliders}</button>
+          <button type="button" class="ledger-switch ${flow.enabled ? 'is-on' : ''} gx-enable-sw" aria-label="流程开关"></button>
+        </div>
+      `;
+      head.querySelector('.gx-run-btn').addEventListener('click', () => triggerManualRun(flow, render));
+      head.querySelector('.gx-cfg-btn').addEventListener('click', () => {
+        dState.mode = dState.mode === 'cfg' ? 'read' : 'cfg';
+        dState.histOpen = false;
+        render();
+      });
+      head.querySelector('.gx-enable-sw').addEventListener('click', () => {
+        flow.enabled = !flow.enabled;
+        render();
+      });
+      desk.appendChild(head);
+
+      // 2. 脉搏栏
+      const pulse = document.createElement('div');
+      pulse.className = 'gx-desk-pulse';
+      const dotsHTML = flow.week.map((w) => `<i class="${esc(w.status)}" data-date="${esc(w.date)}" title="${esc(w.date)}"></i>`).join('');
+      pulse.innerHTML = `
+        <div class="gx-pulse-l">
+          <span class="stamp ${esc(flow.stampClass)}">${esc(flow.stampText)}</span>
+          <button type="button" class="gx-cron-chip" title="修改定时">${esc(flow.cron)}</button>
+          <span class="gx-next-meta">距下次 <b>${esc(flow.nextIn)}</b></span>
+        </div>
+        <div class="gx-pulse-r">
+          <span class="tt-dots gx-dots-btn">${dotsHTML}</span>
+        </div>
+      `;
+      pulse.querySelector('.gx-cron-chip').addEventListener('click', () => {
+        dState.mode = 'cfg';
+        dState.histOpen = false;
+        dState.focusCron = true;
+        render();
+      });
+      pulse.querySelectorAll('.tt-dots i').forEach((dot) => {
+        dot.addEventListener('click', () => {
+          const targetDate = dot.dataset.date;
+          const foundIdx = flow.periods.findIndex((p) => p.date === targetDate);
+          if (foundIdx >= 0) {
+            dState.mode = 'read';
+            dState.histOpen = false;
+            dState.idx = foundIdx;
+            render();
+          }
+        });
+      });
+      desk.appendChild(pulse);
+
+      // 3. 眉栏 + 主视口
+      if (dState.mode === 'cfg') {
+        const subbar = document.createElement('div');
+        subbar.className = 'gx-desk-subbar is-cfg';
+        subbar.innerHTML = `
+          <span class="gx-subbar-title">参数与取材</span>
+          <button type="button" class="inspector-metabtn gx-back-read">返回刊面</button>
+        `;
+        subbar.querySelector('.gx-back-read').addEventListener('click', () => {
+          dState.mode = 'read';
+          render();
+        });
+        desk.appendChild(subbar);
+
+        const body = document.createElement('div');
+        body.className = 'gx-desk-body';
+        const cfgScroll = document.createElement('div');
+        cfgScroll.className = 'gx-cfg-scroll';
+        const { frag, cronInput } = buildFlowConfigBlocks(
+          flow,
+          () => { dState.mode = 'read'; render(); },
+          () => { dState.mode = 'read'; render(); }
+        );
+        cfgScroll.appendChild(frag);
+        body.appendChild(cfgScroll);
+        desk.appendChild(body);
+        if (dState.focusCron && cronInput) {
+          dState.focusCron = false;
+          requestAnimationFrame(() => cronInput.focus());
+        }
+      } else {
+        const subbar = document.createElement('div');
+        subbar.className = 'gx-desk-subbar';
+        const isFallbackPrev = curPeriod && curPeriod.date !== '2026-11-26' && dState.idx === 0;
+        subbar.innerHTML = `
+          <div class="gx-issue-stepper">
+            <button type="button" class="icon-button pf-icon gx-icon-sm gx-prev-issue" title="上一期" ${dState.idx >= flow.periods.length - 1 ? 'disabled' : ''}>${ICONS.prev}</button>
+            <span class="gx-issue-date">${curPeriod ? esc(curPeriod.date) : '暂无刊期'}</span>
+            ${isFallbackPrev ? '<span class="stamp is-hollow">上期</span>' : ''}
+            <button type="button" class="icon-button pf-icon gx-icon-sm gx-next-issue" title="下一期" ${dState.idx <= 0 ? 'disabled' : ''}>${ICONS.next}</button>
+            <span class="gx-issue-summary">${curPeriod ? esc(`${curPeriod.time} · ${curPeriod.metaText}`) : ''}</span>
+          </div>
+          <div class="gx-issue-ops">
+            ${curPeriod ? `<button type="button" class="icon-button pf-icon gx-icon-sm gx-del-cur" title="删除当期">${ICONS.trash}</button>` : ''}
+            <button type="button" class="inspector-metabtn gx-toggle-hist ${dState.histOpen ? 'gx-btn-active' : ''}">${flow.periods.length} 期 ▾</button>
+          </div>
+        `;
+        subbar.querySelector('.gx-prev-issue').addEventListener('click', () => {
+          if (dState.idx < flow.periods.length - 1) {
+            dState.idx++;
+            dState.histOpen = false;
+            render();
+          }
+        });
+        subbar.querySelector('.gx-next-issue').addEventListener('click', () => {
+          if (dState.idx > 0) {
+            dState.idx--;
+            dState.histOpen = false;
+            render();
+          }
+        });
+        const delCur = subbar.querySelector('.gx-del-cur');
+        if (delCur && curPeriod) {
+          delCur.addEventListener('click', () => {
+            deletePeriodById(flow.id, curPeriod.uid);
+            render();
+          });
+        }
+        subbar.querySelector('.gx-toggle-hist').addEventListener('click', () => {
+          dState.histOpen = !dState.histOpen;
+          render();
+        });
+        desk.appendChild(subbar);
+
+        const body = document.createElement('div');
+        body.className = 'gx-desk-body';
+        const scroll = document.createElement('div');
+        scroll.className = 'gx-desk-scroll';
+
+        // 现场进度或异常诊断卡 (置于滚动区顶部以保持跨席三条横线绝对对齐)
+        if (flow.lastStatus !== 'ok') {
+          const diag = document.createElement('div');
+          const tone = flow.lastStatus === 'run' ? 'is-run' : (flow.lastStatus === 'bad' ? 'is-bad' : 'is-warn');
+          const noteTone = flow.lastStatus === 'bad' ? 'is-err' : (flow.lastStatus === 'warn' ? 'is-warn' : '');
+          diag.className = `gx-diag-card ${tone}`;
+          diag.innerHTML = `
+            ${renderPipelineHTML(flow)}
+            ${flow.reason ? `<div class="pipeline-note ${noteTone}">${esc(flow.reason)}</div>` : ''}
+          `;
+          scroll.appendChild(diag);
+        }
+
+        if (curPeriod) {
+          scroll.appendChild(createPeriodContentEl(curPeriod));
+        }
+        body.appendChild(scroll);
+
+        // 席内往期目录叠层
+        if (dState.histOpen) {
+          const layer = document.createElement('div');
+          layer.className = 'gx-desk-hist-layer';
+          const listWrap = document.createElement('div');
+          listWrap.className = 'gx-desk-hist-list';
+          const pageSize = 10;
+          const totalPages = Math.max(1, Math.ceil(flow.periods.length / pageSize));
+          if (dState.page > totalPages) dState.page = totalPages;
+          const slice = flow.periods.slice((dState.page - 1) * pageSize, dState.page * pageSize);
+
+          slice.forEach((p) => {
+            const realIdx = flow.periods.indexOf(p);
+            listWrap.appendChild(createBriefRunNode(p, {
+              isViewing: realIdx === dState.idx,
+              onSelect: () => {
+                dState.idx = realIdx;
+                dState.histOpen = false;
+                render();
+              },
+              onDelete: (target) => {
+                deletePeriodById(flow.id, target.uid);
+                render();
+              }
+            }));
+          });
+          layer.appendChild(listWrap);
+          layer.appendChild(createPagerNode(dState.page, flow.periods.length, pageSize, (nextPage) => {
+            dState.page = nextPage;
+            render();
+          }));
+          body.appendChild(layer);
+        }
+
+        desk.appendChild(body);
+      }
+
+      return desk;
+    }
+
+    render();
+    mountPxBar([
+      { label: '刊面', val: 'read' },
+      { label: '期目', val: 'hist' },
+      { label: '配置', val: 'cfg' }
+    ], initView || 'read');
+  }
+
+  /* ========================================================================
+     方向 2: 时序 (24h 刻度标尺 + 此刻 16:11 上下分界时刻表)
+     ======================================================================== */
+  function mountDirection2() {
+    paper.className = 'runs-paper gx-g2';
+    const allDates = Array.from(new Set([
+      ...WEEK_DATES,
+      ...store.flows.brief.periods.map((p) => p.date),
+      ...store.flows.trending.periods.map((p) => p.date)
+    ])).sort();
+
+    const ui = {
+      selectedDate: initView === 'past' ? '2026-11-24' : '2026-11-26',
+      expandedToday: new Set(initView === 'open' ? ['brief'] : []),
+      openCfgFlow: initView === 'open' ? 'brief' : '',
+      archOpen: initView === 'arch',
+      archFilter: 'all',
+      archPage: 1,
+      archExpandedUids: new Set()
+    };
+
+    function getAllUnifiedPeriods() {
+      const merged = [
+        ...store.flows.brief.periods,
+        ...store.flows.trending.periods
+      ];
+      return merged.sort((a, b) => (`${b.date} ${b.time}`).localeCompare(`${a.date} ${a.time}`));
+    }
+
+    function render() {
+      if (parts && parts.scope && parts.scope.parentNode) {
+        parts.scope.parentNode.removeChild(parts.scope);
+      }
+      paper.innerHTML = '';
+
+      const isToday = ui.selectedDate === '2026-11-26';
+      const unified = getAllUnifiedPeriods();
+      const dateIdx = allDates.indexOf(ui.selectedDate);
+
+      // 1. 顶坞: 日期穿梭 + 7日双轨胶囊 + 24h 全景刻度标尺
+      const head = document.createElement('header');
+      head.className = 'gx-chrono-head';
+
+      const weekPillsHTML = WEEK_DATES.map((d) => {
+        const bDot = store.flows.brief.week.find((w) => w.date === d)?.status || '';
+        const tDot = store.flows.trending.week.find((w) => w.date === d)?.status || '';
+        const dayNum = d.slice(8);
+        return `
+          <button type="button" class="gx-week-pill ${ui.selectedDate === d ? 'is-on' : ''}" data-date="${esc(d)}" title="${esc(d)}">
+            <span>11-${esc(dayNum)}</span>
+            <span class="gx-pill-pair">
+              <i class="gx-pill-dot ${esc(bDot)}"></i>
+              <i class="gx-pill-dot ${esc(tDot)}"></i>
+            </span>
+          </button>
+        `;
+      }).join('');
+
+      const bar = document.createElement('div');
+      bar.className = 'gx-chrono-bar';
+      bar.innerHTML = `
+        <div class="gx-day-nav">
+          <button type="button" class="icon-button pf-icon gx-icon-sm gx-day-prev" ${dateIdx <= 0 ? 'disabled' : ''} title="前一天">${ICONS.prev}</button>
+          <span class="gx-day-label">${esc(ui.selectedDate)}</span>
+          <span class="stamp ${isToday ? 'stamp-ok' : 'is-hollow'}">${isToday ? '今天' : '历史'}</span>
+          <button type="button" class="icon-button pf-icon gx-icon-sm gx-day-next" ${dateIdx >= allDates.length - 1 ? 'disabled' : ''} title="后一天">${ICONS.next}</button>
+          ${!isToday ? '<button type="button" class="inspector-metabtn gx-go-today">回今天</button>' : ''}
+        </div>
+        <div class="gx-week-pills">${weekPillsHTML}</div>
+        <div>
+          <button type="button" class="inspector-metabtn gx-arch-btn ${ui.archOpen ? 'gx-btn-active' : ''}">全部归档 · ${unified.length} 期 ▾</button>
+        </div>
+      `;
+
+      bar.querySelector('.gx-day-prev').addEventListener('click', () => {
+        if (dateIdx > 0) {
+          ui.selectedDate = allDates[dateIdx - 1];
+          ui.archOpen = false;
+          render();
+        }
+      });
+      bar.querySelector('.gx-day-next').addEventListener('click', () => {
+        if (dateIdx < allDates.length - 1) {
+          ui.selectedDate = allDates[dateIdx + 1];
+          ui.archOpen = false;
+          render();
+        }
+      });
+      const goToday = bar.querySelector('.gx-go-today');
+      if (goToday) {
+        goToday.addEventListener('click', () => {
+          ui.selectedDate = '2026-11-26';
+          ui.archOpen = false;
+          render();
+        });
+      }
+      bar.querySelectorAll('.gx-week-pill').forEach((pill) => {
+        pill.addEventListener('click', () => {
+          ui.selectedDate = pill.dataset.date;
+          ui.archOpen = false;
+          render();
+        });
+      });
+      bar.querySelector('.gx-arch-btn').addEventListener('click', () => {
+        ui.archOpen = !ui.archOpen;
+        render();
+      });
+      head.appendChild(bar);
+
+      // 24h 标尺带
+      const ruler = document.createElement('div');
+      ruler.className = 'gx-ruler-band';
+      const nowPct = ((16 + 11 / 60) / 24 * 100).toFixed(2);
+      const bPct = (store.flows.brief.hourFrac * 100).toFixed(2);
+      const tPct = (store.flows.trending.hourFrac * 100).toFixed(2);
+      let ticksHTML = '';
+      for (let h = 0; h <= 24; h += 2) {
+        const major = h % 4 === 0;
+        const pct = (h / 24 * 100).toFixed(2);
+        ticksHTML += `<div class="gx-ruler-tick ${major ? 'is-major' : ''}" style="left:${pct}%">${major ? `<span>${String(h).padStart(2, '0')}</span>` : ''}</div>`;
+      }
+      const bDayStatus = getFlowDayStatus(store.flows.brief, ui.selectedDate);
+      const tDayStatus = getFlowDayStatus(store.flows.trending, ui.selectedDate);
+
+      ruler.innerHTML = `
+        <div class="gx-ruler-track">
+          ${isToday ? `<div class="gx-ruler-past" style="width:${nowPct}%"></div>` : ''}
+          <div class="gx-ruler-line"></div>
+          ${ticksHTML}
+          <div class="gx-ruler-pin is-left" style="left:${bPct}%">
+            <span>${esc(store.flows.brief.clock)} 日报</span>
+            <span class="tt-last ${esc(bDayStatus)}"></span>
+          </div>
+          <div class="gx-ruler-pin is-right" style="left:${tPct}%">
+            <span class="tt-last ${esc(tDayStatus)}"></span>
+            <span>${esc(store.flows.trending.clock)} 精读</span>
+          </div>
+          ${isToday ? `<div class="gx-ruler-now" style="left:${nowPct}%"><span class="gx-ruler-now-tag">16:11</span></div>` : ''}
+        </div>
+      `;
+      head.appendChild(ruler);
+      paper.appendChild(head);
+
+      // 2. 主体区
+      const body = document.createElement('div');
+      body.className = 'gx-chrono-body';
+      const scroll = document.createElement('div');
+      scroll.className = 'gx-chrono-scroll';
+
+      // 当日已运行区块
+      const pastStratum = document.createElement('section');
+      pastStratum.className = 'gx-stratum';
+      pastStratum.innerHTML = `
+        <div class="gx-stratum-head">
+          <span class="gx-stratum-title">${isToday ? '今日已执勤' : `${esc(ui.selectedDate)} 执勤记录`}</span>
+          <span class="gx-stratum-meta">${isToday ? '00:00 — 16:11' : '00:00 — 24:00'}</span>
+        </div>
+      `;
+      ['brief', 'trending'].forEach((fid) => {
+        pastStratum.appendChild(renderDayExecutedRow(store.flows[fid], ui.selectedDate, isToday));
+      });
+      scroll.appendChild(pastStratum);
+
+      if (isToday) {
+        // 此刻 16:11 分界线 或 实时运行横舱
+        const runningFlows = ['brief', 'trending'].map((k) => store.flows[k]).filter((f) => f.lastStatus === 'run');
+        if (runningFlows.length > 0) {
+          runningFlows.forEach((rf) => {
+            const livePod = document.createElement('section');
+            livePod.className = 'gx-now-live-pod';
+            livePod.innerHTML = `
+              <div class="gx-slot-main">
+                <div class="gx-slot-time">
+                  <span class="gx-slot-clock">16:11</span>
+                  <span class="gx-slot-subclock">此刻手动</span>
+                </div>
+                <div class="gx-slot-flow">
+                  <div class="gx-slot-name">${esc(rf.name)}</div>
+                  <div class="gx-slot-feed">${esc(rf.feedId)}</div>
+                </div>
+                <div class="gx-slot-mid">
+                  <span class="stamp stamp-run">生成中</span>
+                  ${renderPipelineHTML(rf)}
+                  <span class="gx-slot-reason is-run">${esc(rf.reason)}</span>
+                </div>
+                <div class="gx-slot-ops">
+                  <button type="button" class="icon-button pf-icon" disabled>${parts.spinIcon}</button>
+                </div>
+              </div>
+            `;
+            scroll.appendChild(livePod);
+          });
+        } else {
+          const seam = document.createElement('div');
+          seam.className = 'gx-now-seam';
+          seam.innerHTML = `
+            <span class="gx-now-seam-badge">此刻 16:11</span>
+            <span class="gx-now-seam-rule"></span>
+            <span class="gx-now-seam-countdown">距下一班 ${esc(store.flows.brief.nextIn)}</span>
+          `;
+          scroll.appendChild(seam);
+        }
+
+        // 待发排期与总控区块
+        const nextStratum = document.createElement('section');
+        nextStratum.className = 'gx-stratum';
+        nextStratum.innerHTML = `
+          <div class="gx-stratum-head">
+            <span class="gx-stratum-title">待发排期与控制</span>
+            <span class="gx-stratum-meta">明日 2026-11-27</span>
+          </div>
+        `;
+        ['brief', 'trending'].forEach((fid) => {
+          nextStratum.appendChild(renderUpcomingRow(store.flows[fid]));
+        });
+        scroll.appendChild(nextStratum);
+      }
+
+      body.appendChild(scroll);
+
+      // 全站归档覆盖层
+      if (ui.archOpen) {
+        body.appendChild(renderArchiveSheet(unified));
+      }
+
+      paper.appendChild(body);
+    }
+
+    function getFlowDayStatus(flow, dateStr) {
+      if (dateStr === '2026-11-26') return flow.lastStatus;
+      if (flow.id === 'trending' && dateStr === '2026-11-24') return 'warn';
+      const hasPeriod = flow.periods.some((p) => p.date === dateStr);
+      return hasPeriod ? 'ok' : '';
+    }
+
+    function renderDayExecutedRow(flow, dateStr, isToday) {
+      const row = document.createElement('div');
+      row.className = 'gx-slot-row';
+      const period = flow.periods.find((p) => p.date === dateStr) || null;
+      const isSkipped24 = flow.id === 'trending' && dateStr === '2026-11-24';
+      const isBadToday = isToday && (flow.lastStatus === 'bad' || flow.lastStatus === 'warn');
+
+      let midHTML = '';
+      let opsHTML = '';
+      let subClock = period ? `${period.time} 成稿` : '';
+
+      if (isBadToday) {
+        subClock = flow.id === 'brief' ? '08:32 中断' : '09:30 跳过';
+        const rCls = flow.lastStatus === 'bad' ? 'is-err' : 'is-warn';
+        midHTML = `
+          <span class="stamp ${esc(flow.stampClass)}">${esc(flow.stampText)}</span>
+          ${renderPipelineHTML(flow)}
+          <span class="gx-slot-reason ${rCls}">${esc(flow.reason)}</span>
+        `;
+        opsHTML = `<button type="button" class="icon-button pf-icon gx-retry-btn" title="立即生成">${parts.playIcon}</button>`;
+      } else if (isSkipped24) {
+        subClock = '09:30 跳过';
+        midHTML = `
+          <span class="stamp stamp-warn">已跳过</span>
+          <div class="ledger-pipeline">
+            <span class="ledger-pipeline-step is-now">读榜</span>
+            <span class="ledger-pipeline-step">挑选</span>
+            <span class="ledger-pipeline-step">成稿</span>
+          </div>
+          <span class="gx-slot-reason is-warn">当日榜单未入库</span>
+        `;
+      } else if (period) {
+        const stepsDone = flow.stages.map((s) => `<span class="ledger-pipeline-step is-done">${esc(s)}</span>`).join('');
+        midHTML = `
+          <span class="stamp stamp-ok">已生成</span>
+          <div class="ledger-pipeline">${stepsDone}</div>
+        `;
+        const isExp = ui.expandedToday.has(period.uid) || (isToday && ui.expandedToday.has(flow.id));
+        opsHTML = `
+          <button type="button" class="inspector-metabtn gx-exp-period ${isExp ? 'gx-btn-active' : ''}">${esc(period.metaText)} ${isExp ? '▴' : '▾'}</button>
+          <button type="button" class="icon-button pf-icon gx-icon-sm gx-del-period" title="删除本期">${ICONS.trash}</button>
+        `;
+      } else {
+        subClock = '无记录';
+        midHTML = '<span class="stamp is-hollow">未排期</span>';
+      }
+
+      const main = document.createElement('div');
+      main.className = 'gx-slot-main';
+      main.innerHTML = `
+        <div class="gx-slot-time">
+          <span class="gx-slot-clock">${esc(flow.clock)}</span>
+          <span class="gx-slot-subclock">${esc(subClock)}</span>
+        </div>
+        <div class="gx-slot-flow">
+          <div class="gx-slot-name">${esc(flow.name)}</div>
+          <div class="gx-slot-feed">${esc(flow.feedId)}</div>
+        </div>
+        <div class="gx-slot-mid">${midHTML}</div>
+        <div class="gx-slot-ops">${opsHTML}</div>
+      `;
+
+      const retryBtn = main.querySelector('.gx-retry-btn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => triggerManualRun(flow, render));
+      }
+
+      if (period) {
+        const key = isToday ? flow.id : period.uid;
+        const isExp = ui.expandedToday.has(key);
+        const expBtn = main.querySelector('.gx-exp-period');
+        const delBtn = main.querySelector('.gx-del-period');
+        if (expBtn) {
+          expBtn.addEventListener('click', () => {
+            if (ui.expandedToday.has(key)) ui.expandedToday.delete(key);
+            else ui.expandedToday.add(key);
+            render();
+          });
+        }
+        if (delBtn) {
+          delBtn.addEventListener('click', () => {
+            deletePeriodById(flow.id, period.uid);
+            ui.expandedToday.delete(key);
+            render();
+          });
+        }
+        row.appendChild(main);
+        if (isExp) {
+          const drawer = document.createElement('div');
+          drawer.className = 'gx-slot-drawer';
+          drawer.appendChild(createPeriodContentEl(period));
+          row.appendChild(drawer);
+        }
+      } else {
+        row.appendChild(main);
+      }
+
+      return row;
+    }
+
+    function renderUpcomingRow(flow) {
+      const row = document.createElement('div');
+      row.className = 'gx-slot-row' + (flow.enabled ? '' : ' is-off');
+      const cfgOpen = ui.openCfgFlow === flow.id;
+      const isRun = flow.lastStatus === 'run';
+
+      const specs = flow.id === 'brief'
+        ? [
+            flow.sourceMode === 'all' ? '全部来源' : '自定名单',
+            `每期 ${flow.knobs.topN} 条`,
+            `门槛 ${flow.knobs.minScore}`
+          ]
+        : [
+            'Trending 日榜',
+            `挑 ${flow.knobs.pickN} 个`,
+            flow.knobs.aiOnly ? '只看 AI' : '不限领域'
+          ];
+
+      const main = document.createElement('div');
+      main.className = 'gx-slot-main';
+      main.innerHTML = `
+        <div class="gx-slot-time">
+          <span class="gx-slot-clock">${flow.enabled ? esc(flow.clock) : '已停用'}</span>
+          <span class="gx-slot-subclock">${flow.enabled ? esc(flow.cron) : '暂停定时'}</span>
+        </div>
+        <div class="gx-slot-flow">
+          <div class="gx-slot-name">${esc(flow.name)}</div>
+          <div class="gx-slot-feed">累计 ${flow.periods.length} 期</div>
+        </div>
+        <div class="gx-slot-mid">
+          <span class="gx-next-meta">距下次 <b>${flow.enabled ? esc(flow.nextIn) : '—'}</b></span>
+          <div class="gx-spec-pills">
+            ${specs.map((s) => `<span class="gx-spec-pill">${esc(s)}</span>`).join('')}
+          </div>
+        </div>
+        <div class="gx-slot-ops">
+          <button type="button" class="icon-button pf-icon gx-up-run" title="立即生成">${isRun ? parts.spinIcon : parts.playIcon}</button>
+          <button type="button" class="icon-button pf-icon gx-up-cfg ${cfgOpen ? 'gx-btn-active' : ''}" title="参数与取材">${ICONS.sliders}</button>
+          <button type="button" class="ledger-switch ${flow.enabled ? 'is-on' : ''} gx-up-sw" aria-label="流程开关"></button>
+        </div>
+      `;
+
+      main.querySelector('.gx-up-run').addEventListener('click', () => triggerManualRun(flow, render));
+      main.querySelector('.gx-up-cfg').addEventListener('click', () => {
+        ui.openCfgFlow = cfgOpen ? '' : flow.id;
+        render();
+      });
+      main.querySelector('.gx-up-sw').addEventListener('click', () => {
+        flow.enabled = !flow.enabled;
+        render();
+      });
+      row.appendChild(main);
+
+      if (cfgOpen) {
+        const inlineCfg = document.createElement('div');
+        inlineCfg.className = 'gx-inline-cfg';
+        const { frag } = buildFlowConfigBlocks(
+          flow,
+          () => { ui.openCfgFlow = ''; render(); },
+          () => { ui.openCfgFlow = ''; render(); }
+        );
+        const sections = Array.from(frag.querySelectorAll('.gx-cfg-section'));
+        const saveBar = frag.querySelector('.pf-save');
+        const grid = document.createElement('div');
+        grid.className = 'gx-inline-cfg-grid';
+        sections.forEach((s) => grid.appendChild(s));
+        inlineCfg.appendChild(grid);
+        if (saveBar) inlineCfg.appendChild(saveBar);
+        row.appendChild(inlineCfg);
+      }
+
+      return row;
+    }
+
+    function renderArchiveSheet(unified) {
+      const sheet = document.createElement('div');
+      sheet.className = 'gx-arch-sheet';
+      const filtered = ui.archFilter === 'all'
+        ? unified
+        : unified.filter((p) => p.flowId === ui.archFilter);
+
+      const head = document.createElement('div');
+      head.className = 'gx-arch-sheet-head';
+      head.innerHTML = `
+        <div class="gx-vault-head-l">
+          <span class="gx-subbar-title">全部往期归档</span>
+          <div class="mini-seg">
+            <button type="button" class="mini-seg-btn ${ui.archFilter === 'all' ? 'is-on' : ''}" data-f="all">全部 ${unified.length}</button>
+            <button type="button" class="mini-seg-btn ${ui.archFilter === 'brief' ? 'is-on' : ''}" data-f="brief">日报 ${store.flows.brief.periods.length}</button>
+            <button type="button" class="mini-seg-btn ${ui.archFilter === 'trending' ? 'is-on' : ''}" data-f="trending">精读 ${store.flows.trending.periods.length}</button>
+          </div>
+        </div>
+        <button type="button" class="inspector-metabtn gx-close-arch">收起归档</button>
+      `;
+      head.querySelectorAll('.mini-seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          ui.archFilter = btn.dataset.f;
+          ui.archPage = 1;
+          render();
+        });
+      });
+      head.querySelector('.gx-close-arch').addEventListener('click', () => {
+        ui.archOpen = false;
+        render();
+      });
+      sheet.appendChild(head);
+
+      const listEl = document.createElement('div');
+      listEl.className = 'gx-arch-sheet-list';
+      const pageSize = 10;
+      const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      if (ui.archPage > totalPages) ui.archPage = totalPages;
+      const slice = filtered.slice((ui.archPage - 1) * pageSize, ui.archPage * pageSize);
+
+      slice.forEach((p) => {
+        const exp = ui.archExpandedUids.has(p.uid);
+        listEl.appendChild(createBriefRunNode(p, {
+          showFlowBadge: true,
+          expanded: exp,
+          onToggleExpand: () => {
+            if (exp) ui.archExpandedUids.delete(p.uid);
+            else ui.archExpandedUids.add(p.uid);
+            render();
+          },
+          onDelete: (target) => {
+            deletePeriodById(target.flowId, target.uid);
+            ui.archExpandedUids.delete(target.uid);
+            render();
+          }
+        }));
+      });
+      sheet.appendChild(listEl);
+      sheet.appendChild(createPagerNode(ui.archPage, filtered.length, pageSize, (p) => {
+        ui.archPage = p;
+        render();
+      }));
+      return sheet;
+    }
+
+    render();
+    mountPxBar([
+      { label: '今日', val: 'today' },
+      { label: '展开', val: 'open' },
+      { label: '11-24', val: 'past' },
+      { label: '归档', val: 'arch' }
+    ], initView || 'today');
+  }
+
+  /* ========================================================================
+     方向 3: 机匣 (凹槽桌面模块机匣 + 常态隐藏的统一口径合订匣)
+     ======================================================================== */
+  function mountDirection3() {
+    paper.className = 'runs-paper gx-g3';
+
+    function getMergedPeriods() {
+      return [
+        ...store.flows.brief.periods,
+        ...store.flows.trending.periods
+      ].sort((a, b) => (`${b.date} ${b.time}`).localeCompare(`${a.date} ${a.time}`));
+    }
+
+    const initialMerged = getMergedPeriods();
+    const ui = {
+      openCfg: initView === 'cfg' ? 'brief' : '',
+      focusCron: false,
+      vaultOpen: initView === 'vault',
+      vaultFilter: 'all',
+      vaultPage: 1,
+      expandedUids: new Set(initView === 'vault' && initialMerged[0] ? [initialMerged[0].uid] : [])
+    };
+
+    function openPeriodInVault(period) {
+      if (!period) return;
+      ui.vaultOpen = true;
+      ui.vaultFilter = 'all';
+      const all = getMergedPeriods();
+      const idx = all.findIndex((p) => p.uid === period.uid);
+      ui.vaultPage = idx >= 0 ? Math.floor(idx / 10) + 1 : 1;
+      ui.expandedUids.add(period.uid);
+      render();
+    }
+
+    function render() {
+      if (parts && parts.scope && parts.scope.parentNode) {
+        parts.scope.parentNode.removeChild(parts.scope);
+      }
+      paper.innerHTML = '';
+
+      // 1. 双列流程机匣网格
+      const grid = document.createElement('div');
+      grid.className = 'gx-pod-grid';
+      ['brief', 'trending'].forEach((fid) => {
+        grid.appendChild(renderPod(store.flows[fid]));
+      });
+      paper.appendChild(grid);
+
+      // 2. 统一口径合订底匣
+      paper.appendChild(renderVault());
+    }
+
+    function renderPod(flow) {
+      const pod = document.createElement('section');
+      pod.className = 'gx-pod' + (flow.enabled ? '' : ' is-off');
+      const isRun = flow.lastStatus === 'run';
+      const isCfg = ui.openCfg === flow.id;
+      const latest = flow.periods[0] || null;
+
+      // 匣首
+      const head = document.createElement('header');
+      head.className = 'gx-pod-head';
+      head.innerHTML = `
+        <div class="gx-pod-id">
+          <span class="tt-last ${esc(flow.lastStatus)}"></span>
+          <span class="gx-pod-name">${esc(flow.name)}</span>
+          <span class="gx-pod-feed">${esc(flow.feedId)}</span>
+        </div>
+        <div class="gx-pod-tools">
+          <button type="button" class="icon-button pf-icon gx-pod-run" title="立即生成">${isRun ? parts.spinIcon : parts.playIcon}</button>
+          <button type="button" class="icon-button pf-icon gx-pod-cfg-btn ${isCfg ? 'gx-btn-active' : ''}" title="参数与取材">${ICONS.sliders}</button>
+          <button type="button" class="ledger-switch ${flow.enabled ? 'is-on' : ''} gx-pod-sw" aria-label="流程开关"></button>
+        </div>
+      `;
+      head.querySelector('.gx-pod-run').addEventListener('click', () => triggerManualRun(flow, render));
+      head.querySelector('.gx-pod-cfg-btn').addEventListener('click', () => {
+        ui.openCfg = isCfg ? '' : flow.id;
+        render();
+      });
+      head.querySelector('.gx-pod-sw').addEventListener('click', () => {
+        flow.enabled = !flow.enabled;
+        render();
+      });
+      pod.appendChild(head);
+
+      // 匣芯 (状态 + 异常原因 + 最新一期跳转 + 阶段链)
+      const coreTone = flow.lastStatus === 'run'
+        ? ' is-run'
+        : (flow.lastStatus === 'bad' ? ' is-bad' : (flow.lastStatus === 'warn' ? ' is-warn' : ''));
+      const reasonCls = flow.lastStatus === 'bad'
+        ? 'is-err'
+        : (flow.lastStatus === 'warn' ? 'is-warn' : 'is-run');
+      const core = document.createElement('div');
+      core.className = 'gx-pod-core' + coreTone;
+      const latestLabel = latest
+        ? `${latest.date === '2026-11-26' ? '今日' : latest.date.slice(5)} ${latest.time} · ${latest.shortMeta} ▸`
+        : '';
+
+      core.innerHTML = `
+        <div class="gx-pod-status-line">
+          <div class="gx-pod-status-l">
+            <span class="stamp ${esc(flow.stampClass)}">${esc(flow.stampText)}</span>
+            ${flow.reason ? `<span class="gx-slot-reason ${reasonCls}">${esc(flow.reason)}</span>` : ''}
+          </div>
+          ${latest ? `<button type="button" class="gx-pod-latest-btn">${esc(latestLabel)}</button>` : ''}
+        </div>
+        ${renderPipelineHTML(flow)}
+      `;
+      const latestBtn = core.querySelector('.gx-pod-latest-btn');
+      if (latestBtn && latest) {
+        latestBtn.addEventListener('click', () => openPeriodInVault(latest));
+      }
+      pod.appendChild(core);
+
+      // 匣底 (cron + 距下次 + 近7日点阵 + 累计期数)
+      const foot = document.createElement('div');
+      foot.className = 'gx-pod-foot';
+      const dotsHTML = flow.week.map((w) => `<i class="${esc(w.status)}" data-date="${esc(w.date)}" title="${esc(w.date)}"></i>`).join('');
+      foot.innerHTML = `
+        <div class="gx-pod-foot-l">
+          <button type="button" class="gx-cron-chip" title="修改定时">${esc(flow.cron)}</button>
+          <span class="gx-next-meta">距下次 <b>${flow.enabled ? esc(flow.nextIn) : '—'}</b></span>
+        </div>
+        <div class="gx-pod-foot-r">
+          <span class="tt-dots gx-dots-btn">${dotsHTML}</span>
+          <span class="gx-pod-total">${flow.periods.length} 期</span>
+        </div>
+      `;
+      foot.querySelector('.gx-cron-chip').addEventListener('click', () => {
+        ui.openCfg = flow.id;
+        ui.focusCron = true;
+        render();
+      });
+      foot.querySelectorAll('.tt-dots i').forEach((dot) => {
+        dot.addEventListener('click', () => {
+          const p = flow.periods.find((item) => item.date === dot.dataset.date);
+          if (p) openPeriodInVault(p);
+        });
+      });
+      pod.appendChild(foot);
+
+      // 按需展开的匣内配置抽屉
+      if (isCfg) {
+        const cfgWrap = document.createElement('div');
+        cfgWrap.className = 'gx-pod-cfg';
+        const { frag, cronInput } = buildFlowConfigBlocks(
+          flow,
+          () => { ui.openCfg = ''; render(); },
+          () => { ui.openCfg = ''; render(); }
+        );
+        cfgWrap.appendChild(frag);
+        pod.appendChild(cfgWrap);
+        if (ui.focusCron && cronInput) {
+          ui.focusCron = false;
+          requestAnimationFrame(() => cronInput.focus());
+        }
+      }
+
+      return pod;
+    }
+
+    function renderVault() {
+      const merged = getMergedPeriods();
+      const filtered = ui.vaultFilter === 'all'
+        ? merged
+        : merged.filter((p) => p.flowId === ui.vaultFilter);
+
+      const vault = document.createElement('section');
+      vault.className = 'gx-vault' + (ui.vaultOpen ? ' is-open' : '');
+
+      const head = document.createElement('div');
+      head.className = 'gx-vault-head';
+      head.innerHTML = `
+        <div class="gx-vault-head-l">
+          <button type="button" class="gx-vault-title-btn">
+            ${ICONS.caretRight}
+            <span>近期产出</span>
+          </button>
+          <div class="mini-seg">
+            <button type="button" class="mini-seg-btn ${ui.vaultFilter === 'all' ? 'is-on' : ''}" data-f="all">全部 ${merged.length}</button>
+            <button type="button" class="mini-seg-btn ${ui.vaultFilter === 'brief' ? 'is-on' : ''}" data-f="brief">日报 ${store.flows.brief.periods.length}</button>
+            <button type="button" class="mini-seg-btn ${ui.vaultFilter === 'trending' ? 'is-on' : ''}" data-f="trending">精读 ${store.flows.trending.periods.length}</button>
+          </div>
+        </div>
+        <button type="button" class="inspector-metabtn gx-vault-toggle">${ui.vaultOpen ? '收起列表 ▴' : '展开全部 ▾'}</button>
+      `;
+
+      head.querySelector('.gx-vault-title-btn').addEventListener('click', () => {
+        ui.vaultOpen = !ui.vaultOpen;
+        render();
+      });
+      head.querySelector('.gx-vault-toggle').addEventListener('click', () => {
+        ui.vaultOpen = !ui.vaultOpen;
+        render();
+      });
+      head.querySelectorAll('.mini-seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          ui.vaultFilter = btn.dataset.f;
+          ui.vaultPage = 1;
+          ui.vaultOpen = true;
+          render();
+        });
+      });
+      vault.appendChild(head);
+
+      if (!ui.vaultOpen) {
+        // 折叠态速览条: 展示最近 3 期微缩丸
+        const peek = document.createElement('div');
+        peek.className = 'gx-vault-peek';
+        filtered.slice(0, 3).forEach((p) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'gx-peek-chip';
+          chip.innerHTML = `
+            <code>${esc(p.date.slice(5))} ${esc(p.time)}</code>
+            <span>${esc(p.flowShort)} · ${esc(p.shortMeta)}</span>
+          `;
+          chip.addEventListener('click', () => openPeriodInVault(p));
+          peek.appendChild(chip);
+        });
+        vault.appendChild(peek);
+      } else {
+        const body = document.createElement('div');
+        body.className = 'gx-vault-body';
+        const listEl = document.createElement('div');
+        listEl.className = 'gx-vault-list';
+
+        const pageSize = 10;
+        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        if (ui.vaultPage > totalPages) ui.vaultPage = totalPages;
+        const slice = filtered.slice((ui.vaultPage - 1) * pageSize, ui.vaultPage * pageSize);
+
+        slice.forEach((p) => {
+          const isExp = ui.expandedUids.has(p.uid);
+          listEl.appendChild(createBriefRunNode(p, {
+            showFlowBadge: true,
+            expanded: isExp,
+            onToggleExpand: () => {
+              if (isExp) ui.expandedUids.delete(p.uid);
+              else ui.expandedUids.add(p.uid);
+              render();
+            },
+            onDelete: (target) => {
+              deletePeriodById(target.flowId, target.uid);
+              ui.expandedUids.delete(target.uid);
+              render();
+            }
+          }));
+        });
+        body.appendChild(listEl);
+        body.appendChild(createPagerNode(ui.vaultPage, filtered.length, pageSize, (p) => {
+          ui.vaultPage = p;
+          render();
+        }));
+        vault.appendChild(body);
+      }
+
+      return vault;
+    }
+
+    render();
+    mountPxBar([
+      { label: '收拢', val: 'shut' },
+      { label: '合订展开', val: 'vault' },
+      { label: '匣内配置', val: 'cfg' }
+    ], initView || 'shut');
+  }
+
+  /* ========================================================================
+     底部样页开关条 (.px-bar)
+     ======================================================================== */
+  function buildQueryHref(patch) {
+    const p = new URLSearchParams(window.location.search);
+    Object.keys(patch).forEach((k) => {
+      if (patch[k] == null || patch[k] === '') p.delete(k);
+      else p.set(k, patch[k]);
+    });
+    const qs = p.toString();
+    return qs ? `?${qs}` : window.location.pathname;
+  }
+
+  function mountPxBar(viewOptions, activeView) {
+    const existing = document.querySelector('.px-bar');
+    if (existing) existing.remove();
+
+    const bar = document.createElement('div');
+    bar.className = 'px-bar';
+
+    const stateGrp = document.createElement('span');
+    stateGrp.className = 'px-grp';
+    stateGrp.innerHTML = '<span class="px-lbl">状态</span>';
+    [
+      { label: 'ok', val: 'ok' },
+      { label: 'run', val: 'run' },
+      { label: 'bad', val: 'bad' }
+    ].forEach((item) => {
+      const a = document.createElement('a');
+      a.href = buildQueryHref({ state: item.val });
+      a.textContent = item.label;
+      if (state === item.val) a.className = 'is-on';
+      stateGrp.appendChild(a);
+    });
+    bar.appendChild(stateGrp);
+
+    const themeGrp = document.createElement('span');
+    themeGrp.className = 'px-grp';
+    themeGrp.innerHTML = '<span class="px-lbl">主题</span>';
+    [
+      { label: '亮', val: 'light' },
+      { label: '暗', val: 'dark' }
+    ].forEach((item) => {
+      const a = document.createElement('a');
+      a.href = buildQueryHref({ theme: item.val });
+      a.textContent = item.label;
+      if (theme === item.val) a.className = 'is-on';
+      themeGrp.appendChild(a);
+    });
+    bar.appendChild(themeGrp);
+
+    if (viewOptions && viewOptions.length) {
+      const viewGrp = document.createElement('span');
+      viewGrp.className = 'px-grp';
+      viewGrp.innerHTML = '<span class="px-lbl">视图</span>';
+      viewOptions.forEach((item) => {
+        const a = document.createElement('a');
+        a.href = buildQueryHref({ view: item.val });
+        a.textContent = item.label;
+        if (activeView === item.val) a.className = 'is-on';
+        viewGrp.appendChild(a);
+      });
+      bar.appendChild(viewGrp);
+    }
+
+    document.body.appendChild(bar);
+  }
+
+  if (dir === '2') {
+    mountDirection2();
+  } else if (dir === '3') {
+    mountDirection3();
+  } else {
+    mountDirection1();
+  }
+});
+=== FILE: NOTES.md ===
+# 「AI 产出」三个发散方向说明
+
+## 方向一（g1）：刊席
+
+- **核心想法**：取消「名册选流程」与常驻往期列表，把**每个流程最新一期的实际产出成稿**立为主角。所有流程横向平权分栏并立成「刊席」，席头、脉搏栏、期号眉栏三条水平发丝线跨栏像素级拉齐；管理员一眼扫过席头即知今日状态与倒计时，下移目光即可通读今日日报条目与精选仓库。
+- **往期藏在哪 / 怎么到达**：常态无往期列表。每席眉栏左设 `‹ 日期 ›` 翻期器（也可直接点脉搏栏近 7 日圆点跳至对应日），右设 `41 期 ▾` 胶囊钮；点击 `41 期 ▾` 在本席视口内拉下往期目录叠层（克隆 `parts.rows` 与 `parts.pager`），支持跳选与单期删除，眉栏旁亦常驻删除当期小图标钮。样页参数 `?view=hist` 可直达目录展开态。
+- **配置藏在哪 / 怎么到达**：每席右上角设滑杆调节小图标钮（点击脉搏栏上的 `cron` 胶囊亦可触发），点击后该席原地翻面为「定时 / 取材 / 旋钮」三段包含框表单，另一席仍保持阅读态互不干扰。样页参数 `?view=cfg` 可直达配置态。
+- **新起的类名**：`.gx-g1`、`.gx-desk`、`.gx-desk-head`、`.gx-desk-title-grp`、`.gx-desk-title`、`.gx-desk-id`、`.gx-desk-tools`、`.gx-desk-pulse`、`.gx-pulse-l`、`.gx-pulse-r`、`.gx-desk-subbar`、`.gx-issue-stepper`、`.gx-issue-date`、`.gx-issue-summary`、`.gx-issue-ops`、`.gx-desk-body`、`.gx-desk-scroll`、`.gx-cfg-scroll`、`.gx-desk-hist-layer`、`.gx-desk-hist-list`，以及共用基础类 `.gx-diag-card`、`.gx-article-*`、`.gx-repo-*`、`.gx-cfg-*`、`.gx-cron-chip`。
+- **没做的部分**：未做 4 个以上流程时的横向滚动或折行切换策略（当前针对 2–3 个流程等分竖栏最优）；日报「自定名单」分段切过去后仅切换选中态，未展开真实订阅源多选穿梭框。
+
+## 方向二（g2）：时序
+
+- **核心想法**：打破按流程切分容器的惯例，把**一天 24 小时的时间流向**立为主角。顶坞放置带 `16:11` 实时指针的 24h 全景刻度尺与近 7 日双轨胶囊；主画布以「此刻 16:11」为水平分界线，上半场只呈现「今日已执勤结果与阶段落点」，下半场呈现「明日待发倒计时与流程控制」，在 `run` 态分界线本身化作高亮的此刻手动运行现场舱。
+- **往期藏在哪 / 怎么到达**：三种路径按远近分级——① 今日刚出的期次直接在「今日已执勤」行点 `收录 33 条 ▾` 原地展开阅读与删除（`?view=open`）；② 近一周点顶栏 7 日双点胶囊或 `‹ ›` 穿梭复盘历史某天执勤现场（如 `?view=past` 直达 `11-24` 查看精读跳过记录）；③ 跨月翻找则点右上角 `全部归档 · 53 期 ▾` 拉下统一口径混排归档层（`?view=arch`）。
+- **配置藏在哪 / 怎么到达**：「待发排期与控制」区块每行常驻只读规格微签（如 `全部来源 · 每期 12 条 · 门槛 6`），点击右侧滑杆小图标钮即在该行下方内嵌展开三栏并排面板（定时｜取材｜旋钮），无需切页或占用侧栏。
+- **新起的类名**：`.gx-g2`、`.gx-chrono-head`、`.gx-chrono-bar`、`.gx-day-nav`、`.gx-day-label`、`.gx-week-pills`、`.gx-week-pill`、`.gx-pill-pair`、`.gx-pill-dot`、`.gx-ruler-band`、`.gx-ruler-track`、`.gx-ruler-past`、`.gx-ruler-line`、`.gx-ruler-tick`、`.gx-ruler-pin`、`.gx-ruler-now`、`.gx-ruler-now-tag`、`.gx-chrono-body`、`.gx-chrono-scroll`、`.gx-stratum`、`.gx-stratum-head`、`.gx-slot-row`、`.gx-slot-main`、`.gx-slot-time`、`.gx-slot-flow`、`.gx-slot-mid`、`.gx-slot-ops`、`.gx-now-seam`、`.gx-now-live-pod`、`.gx-inline-cfg`、`.gx-inline-cfg-grid`、`.gx-slot-drawer`、`.gx-arch-sheet`。
+- **没做的部分**：若两个流程的定时设在同一分钟（如都改到 `08:30`），顶部 24h 标尺上的两枚时刻胶囊需要做合并显示，当前仅做了左右错向锚定。
+
+## 方向三（g3）：机匣
+
+- **核心想法**：彻底抛弃「找内容填满整屏白纸」的执念，将纸面变为 `--dorami-well` 凹槽工作台，按操作频率严苛收敛面积。上方双列摆放独立封装的「流程机匣」（浓缩状态记号、阶段流水链、cron、距下次与近 7 日点阵，对未来扩展到 3–6 个流程天然友好）；下方将所有流程的产出打通为一只**常态收拢（仅 90px 高）的统一口径「近期产出合订匣」**。
+- **往期藏在哪 / 怎么到达**：所有流程往期按时间戳统一混排收进底部「合订匣」。折叠态仅露出一行微缩速览丸（最近 3 期）；点击匣头、`展开全部 ▾`、微缩丸、机匣上的最新一期胶囊或近 7 日圆点，合订匣即向下展开撑满工作台（`?view=vault`），支持 `全部 / 日报 / 精读` 筛选、行内展开阅读及删除。
+- **配置藏在哪 / 怎么到达**：点击任一流程机匣右上角的滑杆小图标钮（或匣底 `cron` 胶囊），配置面板仅在该只机匣内部向下伸展（`?view=cfg`），网格设 `align-items: start`，邻匣高度纹丝不动。
+- **新起的类名**：`.gx-g3`、`.gx-pod-grid`、`.gx-pod`、`.gx-pod-head`、`.gx-pod-id`、`.gx-pod-name`、`.gx-pod-feed`、`.gx-pod-tools`、`.gx-pod-core`、`.gx-pod-status-line`、`.gx-pod-latest-btn`、`.gx-pod-foot`、`.gx-pod-total`、`.gx-pod-cfg`、`.gx-vault`、`.gx-vault-head`、`.gx-vault-title-btn`、`.gx-vault-caret`、`.gx-vault-peek`、`.gx-peek-chip`、`.gx-vault-body`、`.gx-vault-list`。
+- **没做的部分**：机匣内部展开配置时若视口较矮会产生外层工作台纵向滚动，未做双匣同步对比调参锁。
+
+## 综合推荐：方向三「机匣」最优（方向一「刊席」次之）
+
+我认为**方向三（机匣）**最契合「AI 产出」作为长期后台管理页的真实使用节律：
+
+1. **视觉权重完全对齐操作频率**：管理员 90% 的访问只是花两秒钟确认「今天跑了没、有没有报错、下次几点跑」。「机匣」常态只用不到半屏的高度就把双流程的实时状态、完整阶段落点、7 日脉冲与倒计时交代得清清楚楚，没有任何被迫加载在眼前的长列表噪音。
+2. **正面兑现「统一口径 + 常态隐藏」**：底部「合订匣」将日报与精读拉通成同一套时间流，折叠时靠 3 枚速览丸提供恰到好处的近期确认感，展开后又能按流程筛选、展读、删除，收放自如。
+3. **最佳的个位数扩展弹性**：当流程从 2 个增加到 3、4、5 个时，「刊席」的等分竖栏会变窄，「时序」的 24h 标尺锚点会变密，唯有「机匣」的双列自适应网格能零改版直接容纳第 3 至第 6 个流程，且每只机匣的展开配置与异常提示完全自治。
+=== END ===
