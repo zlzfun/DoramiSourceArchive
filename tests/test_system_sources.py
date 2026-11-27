@@ -319,3 +319,102 @@ def test_reader_catalog_lists_a_system_source_only_once_it_has_items(monkeypatch
     entry = after[second_system_source]
     assert (entry["name"], entry["count"]) == ("测试流程", 1)
     assert entry["icon"] == "🧪" and entry["source_owner"] == "dorami"
+
+
+def test_a_row_that_is_not_a_system_row_still_wins_over_the_catalog_meta(monkeypatch, tmp_path, second_system_source):
+    """元数据合并的先后没有变:源行(只要不是 origin=system)的字段盖过目录里系统源的展示元数据。
+
+    基线里日报就是这样合并的(``{**DAILY_BRIEF_SOURCE_META, **meta}``)。这种行现实里来自存量:
+    同一个 id 在登记成系统源之前已经有一行,且带着同步印记所以对账不收养。
+    """
+    import api.app as app_module
+    from config import RuntimeConfig
+    from tests.conftest import seed_default_accounts
+
+    sink = _make_sink(tmp_path, "precedence.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    seed_default_accounts(sink.engine)
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, runtime=RuntimeConfig(role="reader")))
+    with Session(sink.engine) as session:
+        session.add(SourceConfigRecord(
+            source_id=second_system_source, name="行上的名字", source_type="legacy", origin="legacy",
+            shape="article", source_owner="someone", collection_authority_id="authority-1",
+            is_active=True, created_at="2026-06-01T00:00:00", updated_at="2026-06-01T00:00:00",
+        ))
+        session.commit()
+    _seed(sink.engine, "other-1", second_system_source)
+
+    with TestClient(app_module.app) as client:
+        _login(client)
+        catalog = {row["source_id"]: row for row in client.get("/api/reader/sources").json()["sources"]}
+
+    entry = catalog[second_system_source]
+    assert (entry["name"], entry["source_owner"]) == ("行上的名字", "someone")
+
+
+def test_admin_content_overview_names_every_system_source_from_the_catalog(monkeypatch, tmp_path, second_system_source):
+    """管理面「内容」总览里系统源的名称与图标来自目录条目——以前只给公共日报一个 id 合并。"""
+    import api.app as app_module
+    from tests.conftest import seed_default_accounts
+
+    sink = _make_sink(tmp_path, "admin-content.db")
+    monkeypatch.setattr(app_module, "db_sink", sink)
+    seed_default_accounts(sink.engine)
+    _seed(sink.engine, "brief-1", BRIEF, content_type="daily_brief")
+    _seed(sink.engine, "other-1", second_system_source)
+    _seed(sink.engine, "normal", "rss_openai_news")
+
+    with TestClient(app_module.app) as client:
+        _login(client, "admin", "admin")
+        response = client.get("/api/admin/content")
+        assert response.status_code == 200
+        sources = {row["source_id"]: row for row in response.json()["sources"]}
+
+    assert (sources[BRIEF]["name"], sources[BRIEF]["icon"]) == ("哆啦美·AI资讯日报", "🤖")
+    assert (sources[second_system_source]["name"], sources[second_system_source]["icon"]) == ("测试流程", "🧪")
+    assert sources[second_system_source]["article_count"] == 1
+
+
+def _legacy_row(source_id, *, authority=""):
+    return SourceConfigRecord(
+        source_id=source_id, name=source_id, source_type="legacy", origin="legacy", shape="article",
+        collection_authority_id=authority, is_active=True,
+        created_at="2026-06-01T00:00:00", updated_at="2026-06-01T00:00:00",
+    )
+
+
+def test_reconcile_summary_reports_adoption_and_prefers_created(tmp_path, monkeypatch):
+    """对账摘要的 ``system`` 仍是一个词:只有收养 → adopted;新建与收养并存 → created;都没有 → unchanged。"""
+    from services import source_rows
+
+    real = catalog_files.loaded()
+    extra = catalog_files.SystemEntry(id="dorami_later", name="后来的流程", shape="article")
+    both = replace(real, system={**real.system, extra.id: extra})
+
+    # 只有收养:日报那一行在、但 origin 不是 system(存量回填的行)
+    sink = _make_sink(tmp_path, "adopt.db")
+    with Session(sink.engine) as session:
+        session.add(_legacy_row(BRIEF))
+        session.commit()
+        assert source_rows.reconcile_source_rows(session)["system"] == "adopted"
+        session.commit()
+        assert session.get(SourceConfigRecord, BRIEF).origin == "system"
+        assert source_rows.reconcile_source_rows(session)["system"] == "unchanged"
+
+    # 新建与收养并存:日报要收养,另一个系统源要新建
+    sink = _make_sink(tmp_path, "both.db")
+    monkeypatch.setattr(catalog_files, "loaded", lambda: both)
+    with Session(sink.engine) as session:
+        session.add(_legacy_row(BRIEF))
+        session.commit()
+        assert source_rows.reconcile_source_rows(session)["system"] == "created"
+        session.commit()
+        assert {session.get(SourceConfigRecord, sid).origin for sid in (BRIEF, "dorami_later")} == {"system"}
+
+    # 带同步印记的行不收养(上游也有这个源,目录字段不碰),也不算变化
+    sink = _make_sink(tmp_path, "marked.db")
+    with Session(sink.engine) as session:
+        session.add_all([_legacy_row(BRIEF, authority="authority-1"), _legacy_row("dorami_later", authority="authority-1")])
+        session.commit()
+        assert source_rows.reconcile_source_rows(session)["system"] == "unchanged"
+        assert session.get(SourceConfigRecord, "dorami_later").origin == "legacy"
