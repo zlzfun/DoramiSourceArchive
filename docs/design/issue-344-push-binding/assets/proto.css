@@ -1,0 +1,75 @@
+/* issue #344 样页:新增部分的样式。上半是要落地的(取值只用现有 token),下半 .px-* 是样页开关。 */
+
+/* 获取方式:行上原来的形态签(与页签重复)改写「抓取 / 推送 / 抓取 · 推送」;两样都没有的写「无抓取」,静默灰 */
+.board-node-type.acq-none { color: var(--dorami-faint); background: transparent; box-shadow: inset 0 0 0 1px var(--dorami-border); }
+/* 检视器里的获取方式:「抓取」「推送」各一个框,同一副框架——框住的都归它(抓取:参数、动作、近期运行;推送:令牌)。
+   框题 13/600(现网 .tools-title,与框外的「源审查」同级);框内小标题(近期运行)降一档 12/600 faint;框内不再套虚线框。 */
+/* flex: none——检视器正文是纵向弹性容器,裁切溢出的框不写这一句会在窗口矮时被压扁(内容被裁掉而不是滚动) */
+.acq-panel { flex: none; border: 1px solid var(--dorami-border); border-radius: var(--r-control); overflow: hidden; }
+.acq-panel-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; background: var(--dorami-soft); }
+.acq-fetcher { margin-left: auto; font-size: 12px; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acq-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.acq-panel .inspector-param:first-child { padding-top: 0; }
+.acq-panel .inspector-param:last-child { padding-bottom: 0; }
+.acq-panel .inspector-empty-mini { border: 0; border-radius: 0; padding: 0; text-align: left; }
+.acq-sec { display: flex; flex-direction: column; gap: 6px; margin: 0 -12px; padding: 10px 12px 0; border-top: 1px solid var(--dorami-border); }
+.acq-sec > .micro-label { color: var(--dorami-faint); }
+.acq-panel-body.is-list { gap: 0; padding-top: 0; padding-bottom: 0; }
+.acq-panel-body.is-list > .bind-add { margin: 12px 0; }
+
+/* 源审查的取值:格子可以比内容窄,一行截断——认不出的取值再长也不撑宽右栏 */
+.inspector-review-grid > div { min-width: 0; }
+.inspector-review-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 绑定清单:令牌抽屉里列来源,源检视器里列令牌,同一套行 */
+.bind-list { display: grid; }
+.bind-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 26px;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  border-top: 1px solid var(--dorami-border);
+}
+.bind-row:first-child { border-top: 0; }
+.bind-main { display: grid; min-width: 0; }
+.bind-main .acct-name,
+.bind-main .acct-mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bind-main .acct-mono { color: var(--dorami-faint); }
+.bind-time { color: var(--dorami-faint); }
+.bind-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+.bind-add .form-input,
+.bind-add select { width: 100%; max-width: none; min-width: 0; }
+.bind-empty { font-size: 12px; color: var(--dorami-faint); padding: 6px 0 2px; }
+
+/* 令牌表「来源」列:名称一行排开,排不下省略 */
+.tok-sources { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink-2); font-size: 13px; }
+.tok-sources.is-none { color: var(--dorami-faint); }
+
+/* 登记来源抽屉里的表单 */
+.reg-form { display: grid; gap: 14px; }
+.reg-form label { display: grid; gap: 6px; min-width: 0; }
+.reg-form .form-input { width: 100%; }
+.reg-id { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
+.reg-id > span { font-family: var(--font-mono); font-size: 13px; color: var(--dorami-faint); }
+.reg-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.reg-switch > span:first-child { font-size: 13px; font-weight: 600; color: var(--dorami-ink-2); }
+.reg-form .segmented-control { width: max-content; }
+
+/* ── 以下是样页开关,不属于产品界面 ── */
+.px-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 9999;
+  display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+  background: #16181d; color: #d6d9e0; border-radius: 12px;
+  font: 12px/1 system-ui, sans-serif; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+.px-bar b { color: #8b90a0; font-weight: 500; margin-right: 6px; }
+.px-bar a { color: #d6d9e0; text-decoration: none; padding: 5px 8px; border-radius: 7px; }
+.px-bar a.on { background: #2f3440; color: #fff; }
+.px-bar span { display: inline-flex; align-items: center; }
+html[data-bare] .px-bar { display: none; }

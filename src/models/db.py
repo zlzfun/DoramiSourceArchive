@@ -1507,6 +1507,24 @@ class IngestTokenRecord(SQLModel, table=True):
     revoked_at: Optional[str] = Field(default=None, description="吊销时间")
 
 
+class IngestBindingRecord(SQLModel, table=True):
+    """推送绑定(issue #344):哪个收录令牌可以往哪个源推。
+
+    源的一种获取方式,与源行上的抓取绑定(``fetcher_id`` + ``params_json``)并列,一个源可以两种都有。
+    令牌只能往它绑定的源推;没有绑定的令牌一条也推不进来。只在收录入口所在的节点,不随 Archive Sync 同步。
+    """
+
+    __tablename__ = "ingest_bindings"
+    __table_args__ = (UniqueConstraint("source_id", "token_id", name="uq_ingest_bindings_source_token"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: str = Field(index=True, description="绑定的源")
+    token_id: int = Field(index=True, description="收录令牌 ingest_tokens.id")
+    created_by: str = Field(default="", description="绑定的管理员")
+    created_at: str = Field(description="绑定时间")
+    last_pushed_at: Optional[str] = Field(default=None, description="这个令牌最近一次有条目被这个源接受的时间")
+
+
 class ArticlePickRecord(SQLModel, table=True):
     """收录记录(issue #262 D4):谁在什么时候「收」了这一条;已存在的内容不重复入库。"""
 

@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from sqlmodel import Session
 
 from models.db import ArticleRecord
-from services import content_fingerprint, ingest_policy, ingest_push, social_ingest
+from services import content_fingerprint, ingest_bindings, ingest_policy, ingest_push, social_ingest
 from storage.impl import db_storage
 
 
@@ -33,6 +33,10 @@ class IngestCaller:
     actor: str
     channel: str = ingest_push.CHANNEL_PUSH
     remaining: Optional[int] = None  # 今日剩余额度;None = 不限(管理员会话)
+    # 推送绑定(issue #344):令牌只能往它绑定的源推,认不出出处时不建源。None = 不按绑定限制
+    # (管理员「单条收录」:照旧认出处、认不出建临时源)。
+    token_id: Optional[int] = None
+    bound: Optional[frozenset[str]] = None
 
 
 def social_source(item: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +90,17 @@ def _resolve_all(
             kind = item.get("kind")
             source = social_source(item) if kind == "social_post" else dict(item.get("source") or {})
             try:
-                resolved = ingest_push.resolve_source(ctx, kind, source, item_url=str(item.get("url") or ""))
+                if caller.bound is None:
+                    resolved = ingest_push.resolve_source(ctx, kind, source, item_url=str(item.get("url") or ""))
+                else:
+                    author = item.get("author") if isinstance(item.get("author"), dict) else {}
+                    if kind == "social_post":
+                        # 认出处与核对作者都用帖子自己的平台(入库的也是它),不用出处描述里另写的那个。
+                        source["platform"] = str(item.get("platform") or "x").strip().casefold() or "x"
+                    resolved = ingest_push.resolve_bound_source(
+                        ctx, kind, source,
+                        allowed=caller.bound, author=author, item_url=str(item.get("url") or ""),
+                    )
                 prepared.append((index, item, resolved, None))
             except ValueError as exc:
                 # IngestRejected 之外,身份派生对清洗后为空的账号名也抛 ValueError(handle 为「!!!」之类);
@@ -110,6 +124,7 @@ async def ingest(
     """
     results: list[dict[str, Any]] = []
     stored_ids: list[str] = []
+    accepted_sources: set[str] = set()  # 这一批里有条目被接受的源(推送绑定的「最近一批」)
     given = warnings or []
     notes: list[list[str]] = [list(given[i]) if i < len(given) else [] for i in range(len(items))]
     for index, item, resolved, reason in _resolve_all(db_sink, _prepare_social(items, notes), caller):
@@ -167,6 +182,7 @@ async def ingest(
                 ingest_push.record_pick(session, duplicate[0], caller.actor, note, channel=caller.channel)
                 session.commit()
                 results.append({**base, "status": status, "id": duplicate[0], "source_id": duplicate[1]})
+                accepted_sources.add(resolved.source_id)
                 continue
             if kind == "podcast_episode" and resolved.created:
                 ingest_push.ensure_podcast_source(session, resolved)
@@ -195,6 +211,14 @@ async def ingest(
             **base, "status": status, "id": content.id, "source_id": resolved.source_id,
             "source_created": bool(resolved.created and status == "created"),
         })
+        accepted_sources.add(resolved.source_id)
+    if caller.token_id is not None and accepted_sources:
+        try:
+            with Session(db_sink.engine) as session:
+                ingest_bindings.touch(session, caller.token_id, accepted_sources)
+                session.commit()
+        except Exception:  # noqa: BLE001 - 「最近一批」只是展示用的时间,记不上不影响回执
+            _logger.warning("推送绑定的最近一批时间写入失败", exc_info=True)
     if stored_ids and on_stored is not None:
         on_stored(stored_ids)
     for result in results:

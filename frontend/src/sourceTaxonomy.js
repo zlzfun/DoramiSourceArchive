@@ -173,14 +173,11 @@ export const SOURCE_CHANNEL_LABELS = {
   paper_ranking: '论文榜单',
   search_rss: '搜索 RSS',
   podcast_rss: 'Podcast RSS',
+  x_user_timeline: 'X 时间线',
   website: '网站',
   website_or_feed: '网站/Feed',
   docs_console: '开放平台',
 };
-
-export const SIGNAL_LABELS = { high_signal: '高信号', medium_signal: '中信号', low_signal: '低信号' };
-export const NOISE_LABELS = { low_noise: '低噪声', medium_noise: '中噪声', high_noise: '高噪声' };
-export const RELIABILITY_LABELS = { stable_public: '稳定公开', fragile_js_api: 'JS/API 易变', blocked_or_fragile: '易阻断' };
 
 export function labelFrom(map, value) {
   return map[value] || value || '';

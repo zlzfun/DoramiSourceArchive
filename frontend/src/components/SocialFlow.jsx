@@ -9,6 +9,7 @@ import {
   currentSocialTranslation, socialCachedZh, socialCardView, socialOriginalTexts, socialSignatureOf,
   socialTranslationSources,
 } from '../utils/socialTranslate';
+import { reposterLabel } from '../utils/socialPost';
 import { socialClampCandidate, socialMoreVisible } from '../utils/socialClamp';
 import { useClampCut } from '../hooks/useClampCut';
 import { useOverlayScrollbar } from '../hooks/useOverlayScrollbar';
@@ -333,7 +334,8 @@ const SocialPost = memo(function SocialPost({
       {reposted && (
         <p className="social-repost">
           <Repeat2 className="h-[13px] w-[13px]" aria-hidden="true" />
-          {sourceName || article.source_id} 转推
+          {/* 转推者是帖子顶层的作者(issue #344):合集源里一个源有很多账号,源名不是转推者 */}
+          {reposterLabel(ext, sourceName, article.source_id)} 转推
         </p>
       )}
       <div className="social-body">

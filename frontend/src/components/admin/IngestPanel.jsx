@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ban, Copy, KeyRound, Loader2, X } from 'lucide-react';
-import { createIngestToken, fetchIngestTokens, revokeIngestToken } from '../../api';
+import {
+  bindIngestSource, createIngestToken, fetchFetchers, fetchIngestTokens, revokeIngestToken, unbindIngestSource,
+} from '../../api';
 import { useConfirm } from '../../hooks/useConfirm';
+import { bindableSources } from '../../utils/sourceAcquisition';
+import { BindAdd, BindList } from './PushBindings';
+import { SyncDrawerShell } from './sync/syncParts';
 
 const fmtNum = (n) => Number(n || 0).toLocaleString();
 // 令牌时间存的是带时区的 UTC(…+00:00);统一按本地时间显示。
@@ -13,11 +18,25 @@ const fmtTime = (value) => {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 };
 
+const SHAPE_GROUPS = [['article', '文章'], ['podcast', '播客'], ['social', '社交']];
+
+// 来源下拉按内容形态分组;认不出形态的归文章。
+function sourceGroups(sources) {
+  const known = new Set(SHAPE_GROUPS.map(([key]) => key));
+  return SHAPE_GROUPS.map(([key, label]) => ({
+    label,
+    options: sources
+      .filter((source) => (known.has(source.shape) ? source.shape : 'article') === key)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
+      .map((source) => ({ value: source.id, label: source.name || source.id })),
+  }));
+}
+
 /**
  * 收录令牌(issue #262 波 1,运维 → 自定源与收录)。调用方可以是 Agent、自动化流程或人。
  *
- * 签发(明文只回显这一次)/ 吊销。收录建的临时源与其它源一起在「源管理」里治理
- * (列入 / 改名 / 读者面隐藏;issue #262 第三波把这里的源列表搬了过去)。
+ * 签发(明文只回显这一次)/ 吊销;令牌只能往它绑定的来源推(issue #344)——表里列出每个令牌的来源,
+ * 点一行在抽屉里加、解。来源本身(登记 / 列入 / 改名 / 读者面隐藏)在「源管理」里治理。
  */
 export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
@@ -25,6 +44,11 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const [actor, setActor] = useState('');
   const [issued, setIssued] = useState(null); // { actor, token }
   const [busy, setBusy] = useState('');
+  // 抽屉:开合与「是哪个令牌」分开记——关上时令牌 id 留着,滑出去的过程里内容不空。
+  const [drawerId, setDrawerId] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [catalog, setCatalog] = useState(null); // 源目录(每次打开抽屉时重取)
+  const [bindBusy, setBindBusy] = useState(''); // 'add' | 绑定行的 key
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +90,43 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
       showToast('复制失败,请手动选中复制', 'error');
     }
   };
+
+  // 抽屉:这个令牌的来源。绑定 / 解绑的接口都返回更新后的令牌,就地换进列表。
+  const shown = tokens?.find((token) => token.id === drawerId) || null;
+  const openDrawer = (token) => {
+    setDrawerId(token.id);
+    setDrawerOpen(true);
+    // 每次打开都重取:在源管理里新登记的来源要出现在下拉里(取不到就沿用上一份)。
+    fetchFetchers().then((list) => { if (Array.isArray(list)) setCatalog(list); }).catch(() => {});
+  };
+  const replaceToken = (next) => setTokens((prev) => (prev || []).map((token) => (token.id === next.id ? next : token)));
+  const handleBind = async (sourceId) => {
+    setBindBusy('add');
+    try {
+      replaceToken(await bindIngestSource(shown.id, sourceId));
+      return true;
+    } catch (error) {
+      showToast(error.message || '绑定失败', 'error');
+      return false;
+    } finally {
+      setBindBusy('');
+    }
+  };
+  const handleUnbind = async (row) => {
+    setBindBusy(row.key);
+    try {
+      replaceToken(await unbindIngestSource(shown.id, row.id));
+    } catch (error) {
+      showToast(error.message || '解绑失败', 'error');
+    } finally {
+      setBindBusy('');
+    }
+  };
+  const bindings = useMemo(() => shown?.bindings || [], [shown]);
+  const addGroups = useMemo(
+    () => sourceGroups(bindableSources(catalog, bindings.map((binding) => binding.source_id))),
+    [catalog, bindings],
+  );
 
   const handleRevoke = async (token) => {
     if (!(await confirm(`确认吊销「${token.actor}」的收录令牌？使用它的调用方将立即无法推送。`))) return;
@@ -131,20 +192,36 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
             <table className="acct-table is-fixed">
               <thead>
                 <tr>
-                  <th className="acct-th" style={{ width: 180 }}>调用方</th>
+                  <th className="acct-th" style={{ width: 160 }}>调用方</th>
                   <th className="acct-th" style={{ width: 110 }}>令牌</th>
-                  <th className="acct-th" style={{ width: 90 }}>日额度</th>
-                  <th className="acct-th" style={{ width: 130 }}>签发</th>
-                  <th className="acct-th" style={{ width: 130 }}>最近推送</th>
+                  <th className="acct-th">来源</th>
+                  <th className="acct-th" style={{ width: 80 }}>日额度</th>
+                  <th className="acct-th" style={{ width: 140 }}>签发</th>
+                  <th className="acct-th" style={{ width: 140 }}>最近推送</th>
                   <th className="acct-th" style={{ width: 90 }}>状态</th>
                   <th className="acct-th" aria-label="操作" style={{ width: 56 }} />
                 </tr>
               </thead>
               <tbody>
-                {tokens.map((token) => (
-                  <tr key={token.id} className="acct-row is-static">
+                {tokens.map((token) => {
+                  const names = (token.bindings || []).map((binding) => binding.name);
+                  return (
+                  <tr
+                    key={token.id}
+                    className={`acct-row ${drawerOpen && drawerId === token.id ? 'is-sel' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${token.actor} 的来源`}
+                    onClick={() => openDrawer(token)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(token); } }}
+                  >
                     <td><span className="acct-name" title={token.actor}>{token.actor}</span></td>
                     <td><span className="acct-mono">{token.token_preview}</span></td>
+                    <td>
+                      {names.length
+                        ? <span className="tok-sources" title={names.join(' · ')}>{names.join(' · ')}</span>
+                        : <span className="tok-sources is-none">–</span>}
+                    </td>
                     <td className="acct-n">{fmtNum(token.daily_limit)}</td>
                     <td><span className="acct-mono">{fmtTime(token.created_at)}</span></td>
                     <td><span className="acct-mono">{fmtTime(token.last_used_at)}</span></td>
@@ -153,7 +230,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                         ? <span className="stamp stamp-ok">有效</span>
                         : <span className="stamp stamp-idle">已吊销</span>}
                     </td>
-                    <td>
+                    <td onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                       <span className="rowacts">
                         {busy === `token:${token.id}` ? (
                           <span className="rowact-btn" aria-hidden="true"><Loader2 className="animate-spin" /></span>
@@ -165,12 +242,45 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                       </span>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </section>
       )}
+
+      <SyncDrawerShell
+        open={drawerOpen && Boolean(shown)}
+        onClose={() => setDrawerOpen(false)}
+        icon={<KeyRound />}
+        title={shown?.actor || ''}
+        sub={shown?.token_preview || ''}
+        stamp={shown ? (shown.is_active
+          ? <span className="stamp stamp-ok">有效</span>
+          : <span className="stamp stamp-idle">已吊销</span>) : null}
+        label={`${shown?.actor || '令牌'} · 来源`}
+      >
+        {shown && (
+          <section>
+            <div className="drawer-sec-title">来源</div>
+            <BindList
+              rows={bindings.map((binding) => ({
+                key: binding.source_id,
+                id: binding.source_id,
+                name: binding.name,
+                mono: binding.source_id,
+                pushedAt: binding.last_pushed_at,
+              }))}
+              onUnbind={handleUnbind}
+              busyKey={bindBusy}
+            />
+            {shown.is_active && (
+              <BindAdd label="来源" groups={addGroups} onBind={handleBind} busy={bindBusy === 'add'} />
+            )}
+          </section>
+        )}
+      </SyncDrawerShell>
     </>
   );
 }

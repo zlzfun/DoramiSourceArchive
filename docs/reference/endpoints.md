@@ -23,8 +23,8 @@
 - `GET /api/feed/articles.md` — same filtered records as a Markdown batch; capped at 200 records
 
 **Ingest**(issue #262,契约 [`contracts/ingest_push.md`](../contracts/ingest_push.md))
-- `POST /api/public/ingest/v1/items` — 收录:`ding_` 令牌推送(通道 `push`)或管理员会话「单条收录」(通道 `manual`);`/api/public/*` 免会话门控,会话由路由自己核对(只认 admin);社交帖可带 `media_urls` / `quoted` / `reposted` 或 X API 原始 JSON `raw`,逐条回执的 `warnings` 列出没被采用的内容(issue #341)
-- `/api/admin/ingest/*` — 收录令牌签发 / 吊销,收录源列入 / 下架 / 恢复 / 改名
+- `POST /api/public/ingest/v1/items` — 收录:`ding_` 令牌推送(通道 `push`;只能推它绑定的源,不建源,issue #344)或管理员会话「单条收录」(通道 `manual`;认出处、认不出建临时源);`/api/public/*` 免会话门控,会话由路由自己核对(只认 admin);社交帖可带 `media_urls` / `quoted` / `reposted` 或 X API 原始 JSON `raw`,逐条回执的 `warnings` 列出没被采用的内容(issue #341)
+- `/api/admin/ingest/*` — 收录令牌签发 / 吊销,推送绑定(`POST` / `DELETE /api/admin/ingest/tokens/{id}/bindings[/{source_id}]`),登记不带抓取的源(`POST /api/admin/ingest/sources`),收录源列入 / 下架 / 恢复 / 改名
 - `POST /api/import/social-posts` — 已退役(issue #262):外部社交内容按 `kind=social_post` 推送
 
 **Archive Sync** (collector → reader, see [Archive Sync](../architecture/archive-sync.md))

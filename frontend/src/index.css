@@ -5676,12 +5676,80 @@ input[type="radio"] {
     background: rgba(245, 158, 11, 0.10);
   }
 
-  /* 无采集绑定徽标(issue #262 第三波):源管理列全部源,没有绑定的不能运行——静默灰系,非异常 */
-  .unbound-pill {
-    color: var(--dorami-muted);
-    border-color: var(--dorami-border);
+  /* ── 获取方式与推送绑定(issue #344;刻度 1:1 取自 docs/design/issue-344-push-binding/) ── */
+  /* 源管理行上的获取方式一格:抓取 / 推送 / 抓取 · 推送沿用 .chip;两样都没有的「无抓取」静默灰,非异常 */
+  .board-node-type.acq-none { color: var(--dorami-faint); background: transparent; box-shadow: inset 0 0 0 1px var(--dorami-border); }
+  /* 检视器里的获取方式:「抓取」「推送」各一个框,同一副框架——框住的都归它(抓取:参数、动作、近期运行;推送:令牌)。
+     层次靠版面:框题取卡内小节刻度(.tools-title 13/600,与框外的「源审查」同级);框内小标题(近期运行)降一档 12/600 faint。
+     框 = 一条 hairline + 题条淡底,框内不再套虚线框(描边预算:同一层只用一种分隔手段)。 */
+  /* flex: none——检视器正文是纵向弹性容器,裁切溢出的框不写这一句会在窗口矮时被压扁(内容被裁掉而不是滚动) */
+  .acq-panel { flex: none; border: 1px solid var(--dorami-border); border-radius: var(--r-control); overflow: hidden; }
+  .acq-panel-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 12px;
     background: var(--dorami-soft);
   }
+  /* 题条右侧的抓取器名 */
+  .acq-fetcher { margin-left: auto; font-size: 12px; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acq-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+  .acq-panel .inspector-param:first-child { padding-top: 0; }
+  .acq-panel .inspector-param:last-child { padding-bottom: 0; }
+  .acq-panel .inspector-empty-mini { border: 0; border-radius: 0; padding: 0; text-align: left; }
+  /* 框内小节:通栏 hairline 起头,标题降一档 */
+  .acq-sec {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 -12px;
+    padding: 10px 12px 0;
+    border-top: 1px solid var(--dorami-border);
+  }
+  .acq-sec > .micro-label { color: var(--dorami-faint); }
+  /* 推送框:令牌行顶着题条排(行自带 46px 行高),「加一个」上下各留 12px */
+  .acq-panel-body.is-list { gap: 0; padding-top: 0; padding-bottom: 0; }
+  .acq-panel-body.is-list > .bind-add { margin: 12px 0; }
+
+  /* 绑定清单:令牌抽屉里列来源,源检视器里列令牌,同一套行 */
+  .bind-list { display: grid; }
+  .bind-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 26px;
+    align-items: center;
+    gap: 10px;
+    min-height: 46px;
+    border-top: 1px solid var(--dorami-border);
+  }
+  .bind-row:first-child { border-top: 0; }
+  .bind-row.is-muted .acct-name { color: var(--dorami-faint); }
+  .bind-main { display: grid; min-width: 0; }
+  .bind-main .acct-name,
+  .bind-main .acct-mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bind-main .acct-mono { color: var(--dorami-faint); }
+  .bind-time { color: var(--dorami-faint); }
+  .bind-add {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .bind-add .form-input,
+  .bind-add select { width: 100%; max-width: none; min-width: 0; }
+
+  /* 收录令牌表「来源」列:名称一行排开,排不下省略 */
+  .tok-sources { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink-2); font-size: 13px; }
+  .tok-sources.is-none { color: var(--dorami-faint); }
+
+  /* 登记来源抽屉里的表单 */
+  .reg-form { display: grid; gap: 14px; }
+  .reg-form label { display: grid; gap: 6px; min-width: 0; }
+  .reg-form .form-input { width: 100%; }
+  .reg-form .segmented-control { width: max-content; }
+  .reg-id { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
+  .reg-id > span { font-family: var(--font-mono); font-size: 13px; color: var(--dorami-faint); }
+  .reg-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+  .reg-switch > span:first-child { font-size: 13px; font-weight: 600; color: var(--dorami-ink-2); }
 
   /* ── 日报源范围:自定名单多选清单(配置卡内,定高滚动) ── */
   .brief-scope-list {
@@ -7477,12 +7545,6 @@ input[type="radio"] {
     gap: 8px;
   }
 
-  .inspector-section-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-
   .inspector-params {
     display: flex;
     flex-direction: column;
@@ -7669,11 +7731,19 @@ input[type="radio"] {
     gap: 8px 14px;
   }
 
+  /* 格子可以比内容窄(min-width: 0),取值一行截断:认不出的原始取值再长也不撑宽右栏 */
+  .inspector-review-grid > div {
+    min-width: 0;
+  }
+
   .inspector-review-val {
     font-size: 12px;
     font-weight: 600;
     color: var(--dorami-ink-2);
     margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* 移动端遮罩（仅小屏渲染出效果） */

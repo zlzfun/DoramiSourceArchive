@@ -50,6 +50,33 @@ def _push(client, token, items):
     )
 
 
+def _collect(client, items):
+    """管理员「单条收录」(通道 manual):认出处、认不出建临时源。
+
+    issue #344 起令牌只能推它绑定的源、不再建源;出处解析与建临时源的用例都走这里。
+    """
+    return client.post("/api/public/ingest/v1/items", json={"items": items})
+
+
+def _token_id(client, token):
+    listed = client.get("/api/admin/ingest/tokens").json()["items"]
+    return next(item["id"] for item in listed if item["token_preview"] == f"...{token[-6:]}")
+
+
+def _bind(client, token, *source_ids):
+    token_id = _token_id(client, token)
+    for source_id in source_ids:
+        response = client.post(f"/api/admin/ingest/tokens/{token_id}/bindings", json={"source_id": source_id})
+        assert response.status_code == 200, response.text
+    return token_id
+
+
+def _register(client, **body):
+    response = client.post("/api/admin/ingest/sources", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()["source_id"]
+
+
 def _row(engine, model, key):
     with Session(engine) as session:
         return session.get(model, key)
@@ -82,8 +109,7 @@ def test_social_posts_resolve_presets_and_create_provisional_sources(monkeypatch
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        response = _push(client, token, [
+        response = _collect(client, [
             {"kind": "social_post", "post_id": "1", "content": "Kimi 新模型",
              "author": {"handle": "Kimi_Moonshot", "name": "Kimi"}},
             {"kind": "social_post", "post_id": "2", "content": "a new lab post",
@@ -96,7 +122,7 @@ def test_social_posts_resolve_presets_and_create_provisional_sources(monkeypatch
         ])
         assert response.status_code == 200, response.text
         results = response.json()["results"]
-        again = _push(client, token, [
+        again = _collect(client, [
             {"kind": "social_post", "post_id": "2", "author": {"handle": "new_lab"}},
         ]).json()["results"]
     assert [r["status"] for r in results] == ["created", "created", "created", "rejected"]
@@ -112,7 +138,7 @@ def test_social_posts_resolve_presets_and_create_provisional_sources(monkeypatch
     assert _row(engine, SourceIdentityKeyRecord, "x:user_id:9001").source_id == "x_new_lab"
     article = _row(engine, ArticleRecord, "x_new_lab_2")
     assert (article.ingest_channel, article.ingest_actor, article.content_type) == (
-        "push", "research-agent", "social_post"
+        "manual", "admin", "social_post"
     )
     with Session(engine) as session:
         picks = session.exec(select(ArticlePickRecord)).all()
@@ -135,8 +161,7 @@ def test_articles_resolve_sites_dedupe_urls_and_strip_system_keys(monkeypatch, t
     assert asyncio.run(sink.save(existing)) is True
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             {"kind": "article", "url": "https://www.anthropic.com/news/claude-x", "title": "Claude X",
              "content": "正文", "note": "值得一读"},
             {"kind": "article", "url": "https://blog.example.com/p/1", "title": "Example",
@@ -167,7 +192,7 @@ def test_articles_resolve_sites_dedupe_urls_and_strip_system_keys(monkeypatch, t
     with Session(engine) as session:
         assert session.exec(select(ArticlePickRecord).where(
             ArticlePickRecord.article_id == "rss_simonwillison_x"
-        )).one().actor == "research-agent"
+        )).one().actor == "admin"
 
 
 def test_podcast_episode_creates_a_provisional_podcast_source(monkeypatch, tmp_path):
@@ -176,8 +201,7 @@ def test_podcast_episode_creates_a_provisional_podcast_source(monkeypatch, tmp_p
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [{
+        results = _collect(client, [{
             "kind": "podcast_episode", "title": "EP1", "guid": "ep-1",
             "audio_url": "https://cdn.pod.test/ep1.mp3", "summary": "简介",
             "source": {"feed_url": "https://pod.test/feed.xml", "name": "Pod Show"},
@@ -201,13 +225,19 @@ def test_push_rejects_reserved_hidden_and_quota_but_not_nodes_with_an_upstream(m
         token = _issue_token(client, daily_limit=2)
         with Session(sink.engine) as session:
             set_source_hidden(session, "x_sama", True)
+        # 令牌只能推它绑定的源(issue #344);已下架的源可以绑,推送仍被「下架」拒收。
+        quota_source = _register(client, kind="article", name="Q", url="https://q.test")
+        token_id = _bind(client, token, "x_sama", quota_source)
+        assert client.post(
+            f"/api/admin/ingest/tokens/{token_id}/bindings", json={"source_id": "dorami_daily_brief"}
+        ).status_code == 400
         results = _push(client, token, [
             {"kind": "article", "url": "https://a.test/1", "source": {"source_id": "dorami_daily_brief"}},
             {"kind": "social_post", "post_id": "1", "author": {"handle": "sama"}},
             {"kind": "article", "url": "https://a.test/2", "source": {"source_id": "nope_missing"}},
         ]).json()["results"]
         assert [r["status"] for r in results] == ["rejected"] * 3
-        assert "下架" in results[1]["reason"]
+        assert "没有绑定" in results[0]["reason"] and "下架" in results[1]["reason"]
         # 日额度按收录条数计(含去重命中);超出的逐条拒收。
         ok = _push(client, token, [
             {"kind": "article", "url": "https://q.test/1"},
@@ -232,18 +262,18 @@ def test_admin_ingest_sources_list_admit_and_hide(monkeypatch, tmp_path):
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        _push(client, token, [{"kind": "article", "url": "https://news.example.net/a", "title": "A"}])
+        _issue_token(client)
+        _collect(client, [{"kind": "article", "url": "https://news.example.net/a", "title": "A"}])
         items = client.get("/api/admin/ingest/sources").json()["items"]
         assert [(i["source_id"], i["count"], i["actors"]) for i in items] == [
-            ("web_news_example_net", 1, ["research-agent"])
+            ("web_news_example_net", 1, ["admin"])
         ]
         assert client.post("/api/admin/ingest/sources/web_news_example_net/admit").json()[
             "admission_status"] == "incubating"
         assert client.post("/api/admin/ingest/sources/web_news_example_net/hide").status_code == 200
         assert client.patch("/api/admin/ingest/sources/web_news_example_net",
                             json={"name": "Example News"}).json()["name"] == "Example News"
-        rejected = _push(client, token, [{"kind": "article", "url": "https://news.example.net/b"}])
+        rejected = _collect(client, [{"kind": "article", "url": "https://news.example.net/b"}])
         assert rejected.json()["results"][0]["status"] == "rejected"
         assert client.post("/api/admin/ingest/sources/rss_simonwillison/admit").status_code == 404
     row = _row(sink.engine, SourceConfigRecord, "web_news_example_net")
@@ -253,8 +283,8 @@ def test_admin_ingest_sources_list_admit_and_hide(monkeypatch, tmp_path):
     with Session(sink.engine) as session:
         audits = session.exec(select(AdminAuditRecord).order_by(AdminAuditRecord.id)).all()
     pushes = [a for a in audits if a.path == "/api/public/ingest/v1/items"]
-    assert pushes and pushes[0].username == "ingest:research-agent"
-    assert "收录推送(research-agent)" in pushes[0].summary and "新建临时源 1 个" in pushes[0].summary
+    assert pushes and pushes[0].username == "admin"
+    assert "单条收录(admin)" in pushes[0].summary and "新建临时源 1 个" in pushes[0].summary
     summaries = {a.summary for a in audits}
     assert "签发收录令牌 research-agent" in summaries
     assert "列入收录源 web_news_example_net" in summaries
@@ -397,8 +427,7 @@ def test_review_fixes_identity_dedupe_and_payload(monkeypatch, tmp_path):
     _seed_row(engine, "web_samesite_byguid", "web_samesite", "https://same.example.org/a")
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             {"kind": "article", "url": "https://shared.example.com/post", "title": "public copy"},
             {"kind": "article", "url": "https://x.test/b1", "source": {"feed_url": "https://feeds.example.com/feed?source=bob"}},
             {"kind": "social_post", "post_id": "9", "author": {"handle": "oldhandle", "user_id": "222"}},
@@ -438,8 +467,7 @@ def test_rereview_fixes_batch_identity_podcast_ids_and_numbers(monkeypatch, tmp_
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             {"kind": "social_post", "post_id": "1", "author": {"handle": "sharedname", "user_id": "222"}},
             {"kind": "social_post", "post_id": "2", "author": {"handle": "sharedname", "user_id": "333"}},
             {"kind": "podcast_episode", "guid": "g-1", "url": "https://show.example.com/",
@@ -455,7 +483,7 @@ def test_rereview_fixes_batch_identity_podcast_ids_and_numbers(monkeypatch, tmp_
             content='{"items":[{"kind":"podcast_episode","guid":"g-9","audio_url":"https://c/9.mp3",'
                     '"source":{"feed_url":"https://show.example.com/feed"},"extensions":{"episode":1e309}},'
                     '{"kind":"article","url":"https://n.example.com/ok"}]}',
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={"Content-Type": "application/json"},
         )
         assert overflow.status_code == 200
         assert [r["status"] for r in overflow.json()["results"]] == ["rejected", "created"]
@@ -513,8 +541,7 @@ def test_push_then_fetch_merges_into_one_row_only_for_url_identity_sources(monke
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             # 列表页源,推送只带摘要:抓取到全文后补进同一行。
             {"kind": "article", "url": "https://www.anthropic.com/news/claude-y", "title": "Claude Y",
              "summary": "推送摘要"},
@@ -537,7 +564,7 @@ def test_push_then_fetch_merges_into_one_row_only_for_url_identity_sources(monke
     assert save(news) == db_storage.SAVE_CONTENT_FILLED
     assert news.id == pushed_news  # 管线后续分析 / 媒体预取挂到已有行
     filled = _row(sink.engine, ArticleRecord, pushed_news)
-    assert filled.has_content and filled.content == "抓取全文" and filled.ingest_channel == "push"
+    assert filled.has_content and filled.content == "抓取全文" and filled.ingest_channel == "manual"
     rss = _fetched("rss_anil_dash", "rss_anil_dash_guidhash", "https://anildash.com/2026/11/06/post",
                    content_type="rss_article")
     assert save(rss) == db_storage.SAVE_DUPLICATE
@@ -600,8 +627,7 @@ def test_push_kind_must_match_target_source_shape(monkeypatch, tmp_path):
     app_module, sink = _setup(monkeypatch, tmp_path)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             {"kind": "article", "url": "https://openai.com/index/x", "title": "文章",
              "source": {"source_id": "x_openai"}},
             {"kind": "social_post", "post_id": "1990000000000000101", "content": "帖子",
@@ -643,8 +669,7 @@ def test_article_links_fall_back_to_the_only_curated_source_on_the_host(monkeypa
         session.commit()
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             # rss_openai_news 登记的是 openai.com/news/rss.xml,文章在 /index/…
             {"kind": "article", "url": "https://openai.com/index/some-new-post/", "title": "OpenAI 新文"},
             # 主机上只有 Codex changelog(单页文档类):不兜底,另建临时源。
@@ -677,8 +702,7 @@ def test_sources_the_upstream_also_has_still_accept_pushes(monkeypatch, tmp_path
         session.commit()
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        results = _push(client, token, [
+        results = _collect(client, [
             {"kind": "article", "url": "https://synced.example/blog/post-1", "title": "前缀命中"},
             {"kind": "article", "url": "https://synced.example/elsewhere/post-2", "title": "主机兜底"},
             {"kind": "article", "url": "https://other.example/post-3", "title": "指名",

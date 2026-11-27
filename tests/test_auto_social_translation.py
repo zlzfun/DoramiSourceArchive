@@ -20,8 +20,8 @@ from services import social_translation as service
 from services.title_translation import SUPPRESS_ENQUEUE_KEY
 from storage.impl.db_storage import DatabaseStorage
 
-from tests.test_ingest_push import _issue_token, _login, _push, _setup
-from tests.test_ingest_social_fidelity import _fetched, _run_pipeline, _structured, _x_payload
+from tests.test_ingest_push import _login, _setup
+from tests.test_ingest_social_fidelity import _fetched, _run_pipeline, _sender, _structured, _x_payload
 
 CONFIG = LLMConfig(base_url="http://llm.test", api_key="test", model="main", aux_model="aux", thinking_mode="max")
 TEXT = "We just shipped a new model for long-context coding."
@@ -587,6 +587,20 @@ def _fp_of(sink, article_id):
         return sources, reader_ai._social_fingerprint(sources)
 
 
+def _pusher(client, *, source_exists=False):
+    """收录令牌的发送函数。issue #344 起令牌只能推它绑定的源:先登记 @new_lab 的账号源并绑定;
+
+    抓取器已经为这个账号建过源(``x_new_lab``)时登记会回 409,直接绑定它。
+    """
+    if source_exists:
+        send, _provenance = _sender(client, "push", bind=["x_new_lab"])
+    else:
+        send, _provenance = _sender(client, "push", register={
+            "kind": "social_post", "name": "X · New Lab", "handle": "new_lab", "user_id": "9001", "listed": False,
+        })
+    return send
+
+
 def test_pushed_posts_are_queued_and_a_later_completion_requeues_them(monkeypatch, tmp_path):
     app_module, sink = _setup(monkeypatch, tmp_path)
     monkeypatch.setattr(service.daily_brief, "resolve_llm_config", lambda _session: CONFIG)
@@ -594,9 +608,9 @@ def test_pushed_posts_are_queued_and_a_later_completion_requeues_them(monkeypatc
     fake_provider(monkeypatch, calls)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
+        send = _pusher(client)
         # 第一次推送缺引用帖
-        first = _push(client, token, [_structured("quoted", quoted=None)]).json()["results"]
+        first = send([_structured("quoted", quoted=None)]).json()["results"]
         assert first[0]["status"] == "created", first
         sources, fp = _fp_of(sink, "x_new_lab_2001")
         assert set(sources) == {"text"}
@@ -605,7 +619,7 @@ def test_pushed_posts_are_queued_and_a_later_completion_requeues_them(monkeypatc
         assert run(sink) and job_of(sink, "x_new_lab_2001").status == "succeeded"
         assert zh_of(sink, "x_new_lab_2001")["quoted"] is None
         # 同一条再推一次、这次带上引用帖:原文多了一段,重新排队;旧译文对不上新原文,不再给
-        again = _push(client, token, [_structured("quoted")]).json()["results"]
+        again = send([_structured("quoted")]).json()["results"]
         assert again[0]["status"] != "created", again
     sources, fp = _fp_of(sink, "x_new_lab_2001")
     assert set(sources) == {"text", "quoted"}
@@ -631,8 +645,8 @@ def test_fetched_posts_are_queued_and_adopting_a_pushed_post_follows_the_fetched
     # 先被推送(只有正文、措辞与平台原样不同),随后抓取器抓到同一条:整体换成抓取版,按抓取版的原文重排
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        pushed = _push(client, token, [_structured("quoted", quoted=None, content="Big news (as pasted by the agent)")])
+        send = _pusher(client, source_exists=True)
+        pushed = send([_structured("quoted", quoted=None, content="Big news (as pasted by the agent)")])
         assert pushed.json()["results"][0]["status"] == "created", pushed.text
     _, pushed_fp = _fp_of(sink, "x_new_lab_2001")
     assert job_of(sink, "x_new_lab_2001").source_fp == pushed_fp
@@ -653,8 +667,8 @@ def test_adopting_the_fetched_copy_keeps_a_translation_that_still_matches(monkey
     fake_provider(monkeypatch, calls)
     with TestClient(app_module.app) as client:
         _login(client)
-        token = _issue_token(client)
-        pushed = _push(client, token, [_structured("reposted", post_id="2002")]).json()["results"]
+        send = _pusher(client)
+        pushed = send([_structured("reposted", post_id="2002")]).json()["results"]
         assert pushed[0]["status"] == "created", pushed
     assert run(sink) and job_of(sink, "x_new_lab_2002").status == "succeeded"
     before = zh_of(sink, "x_new_lab_2002")

@@ -26,6 +26,7 @@ from api.textutils import _json_dumps, _now_iso
 from fetchers.registry import admission_status_of
 from models.db import ArticleRecord, SourceConfigRecord
 from services import accounts as accounts_service
+from services import ingest_bindings
 from services import jobs
 from services import article_analysis as article_analysis_service
 from services import podcast_catalog as podcast_catalog_service
@@ -479,6 +480,9 @@ def delete_source_config(
         session.commit()
         return {"status": "success", "disposition": "retired"}
     # Archive Sync emits a source tombstone from this transaction.
+    # 推送绑定跟着源一起删(issue #344):留下的绑定指向不存在的源。退役不删——行还在,
+    # 推送被「已下线」拒收。
+    ingest_bindings.drop_for_source(session, source_id)
     session.delete(record)
     session.commit()
     return {"status": "success", "disposition": "deleted"}

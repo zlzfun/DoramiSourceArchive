@@ -16,6 +16,7 @@ import {
   Layers,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Save,
   ScanSearch,
@@ -23,8 +24,10 @@ import {
   X,
 } from 'lucide-react';
 import {
+  bindIngestSource,
   fetchDailyStats,
   fetchFetchers,
+  fetchIngestTokens,
   fetchFetchRuns,
   fetchRunningProgress,
   fetchSourceHealth,
@@ -36,10 +39,13 @@ import {
   setSourceVisibility,
   triggerBatchFetch,
   triggerFetch,
+  unbindIngestSource,
 } from '../api';
 import Sparkline from './charts/Sparkline';
 import CustomNodeBuilder from './CustomNodeBuilder';
 import SourceReviewSection from './SourceReviewSection';
+import { BindAdd, BindList } from './admin/PushBindings';
+import RegisterSourceDrawer from './admin/RegisterSourceDrawer';
 
 // 高级目标「AI 自定义节点」暂不开放前端入口：后端流程保留，UI 入口与面板用此开关隐藏。
 const ENABLE_CUSTOM_NODE_BUILDER = false;
@@ -55,6 +61,7 @@ import { usePolling } from '../hooks/usePolling';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
 import { scrollBehavior } from '../motion';
+import { ACQUISITION_LABELS, acquisitionOf, lastPushedAt, pushBindingsOf } from '../utils/sourceAcquisition';
 
 // 健康态 → 信号灯样式（后端 SourceStateRecord 只有四态，无独立「告警」态，故灯位取四态 + 全部）。
 const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
@@ -106,19 +113,31 @@ function shapeLabelOf(fetcher) {
   return CONTENT_SHAPE_LABELS[contentShapeOf(fetcher)] || '文章';
 }
 
-// 源管理列全部源(issue #262 第三波):没有采集绑定的源(收录临时源 / 存量 / 系统 / 退役)也在目录里,
-// 只是不能运行 / 试抓 / 编入采集任务;来路说明它从哪来。
+// 源管理列全部源(issue #262 第三波):没有抓取器的源(收录源 / 存量 / 系统 / 退役)也在目录里,
+// 只是不能运行 / 试抓 / 编入采集任务;来路说明它从哪来。源怎么拿到内容有两样,并列(issue #344):
+// 抓取(平台的抓取器去拿)与推送(收录令牌送来),口径在 utils/sourceAcquisition。
 const ORIGIN_LABELS = { catalog: '目录', admin: '配置', reader: '自定', ingest: '收录', legacy: '存量', system: '系统' };
 const isUnbound = (fetcher) => fetcher.bound === false;
 const originLabelOf = (fetcher) => ORIGIN_LABELS[fetcher.origin] || '';
 
 function channelLabelOf(fetcher) {
   if (fetcher.user_source) return 'RSS';
-  if (isUnbound(fetcher)) return '无采集绑定';
-  return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '采集';
+  if (isUnbound(fetcher)) return '无抓取';
+  return labelFrom(SOURCE_CHANNEL_LABELS, fetcher.source_channel) || fetcher.content_type || '抓取';
 }
 
-export default function FetchTab({ availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
+const pushActorsOf = (fetcher) => pushBindingsOf(fetcher).map(binding => binding.actor).join('、');
+
+// 行上「获取方式」一格的悬浮说明:抓取器是哪个、谁在推。
+function acquisitionTitleOf(fetcher) {
+  const parts = [];
+  if (!isUnbound(fetcher)) parts.push(`抓取器：${channelLabelOf(fetcher)}`);
+  const actors = pushActorsOf(fetcher);
+  if (actors) parts.push(`推送：${actors}`);
+  return parts.join(' · ') || '没有抓取器，也没有推送';
+}
+
+export default function FetchTab({ isActive = true, availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [customNodes, setCustomNodes] = useState([]); // 私有用户源由 source-health 补入公共源目录之外
@@ -192,6 +211,21 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
   const [showRetired, setShowRetired] = useState(false);
   const [patches, setPatches] = useState({});
   const [renaming, setRenaming] = useState(null); // { id, name }
+  // 推送绑定(issue #344):检视器「推送」区的令牌下拉、登记来源的抽屉。
+  const [ingestTokens, setIngestTokens] = useState([]);
+  const [bindBusy, setBindBusy] = useState(''); // 'add' | 绑定行的 key
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const loadIngestTokens = useCallback(async () => {
+    try {
+      const res = await fetchIngestTokens();
+      setIngestTokens(res.items || []);
+    } catch (e) {
+      console.error(e); // 取不到令牌:「推送」区只是没有下拉,其余照常
+    }
+  }, []);
+  // 页签切回来时重取令牌:在运维页签发(哪怕是第一个)/ 吊销之后回到这里,「推送」区立刻跟上,
+  // 不必等下一轮轮询(检视 R2 #7)。组件一直挂着,靠 isActive 才知道自己又被看见了。
+  useEffect(() => { if (isActive) loadIngestTokens(); }, [isActive, loadIngestTokens]);
   const loadCatalog = useCallback(async () => {
     try {
       const list = await fetchFetchers({ includeRetired: true });
@@ -298,6 +332,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
 
   const loadSourceHealth = useCallback(async () => {
     loadCatalog(); // 目录与健康一起刷新:挂载 / 轮询 / 手动刷新 / 抓取完成都会带出新建的收录源
+    loadIngestTokens(); // 令牌也一起:在运维页签发 / 吊销之后回到这里,「推送」区与登记抽屉的下拉要跟上
     try {
       const healthItems = await fetchSourceHealth();
       setHealthByFetcher(Object.fromEntries(healthItems.map(item => [item.fetcher_id, item])));
@@ -340,7 +375,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       });
       setTrendBySource({ days: stats.days, bySource });
     } catch { setTrendBySource(null); }
-  }, [loadCatalog]);
+  }, [loadCatalog, loadIngestTokens]);
 
   useEffect(() => {
     loadSourceHealth();
@@ -716,6 +751,77 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     }
   }, [renaming, showToast]);
 
+  // 推送绑定:从源这一边加、解令牌(与运维「收录令牌」抽屉是同一组接口);做完重取目录与令牌。
+  const bindToken = useCallback(async (fetcher, tokenId) => {
+    setBindBusy('add');
+    try {
+      await bindIngestSource(tokenId, fetcher.id);
+      await Promise.all([loadCatalog(), loadIngestTokens()]);
+      return true;
+    } catch (e) {
+      showToast(e.message || '绑定失败', 'error');
+      return false;
+    } finally {
+      setBindBusy('');
+    }
+  }, [loadCatalog, loadIngestTokens, showToast]);
+  const unbindToken = useCallback(async (fetcher, row) => {
+    setBindBusy(row.key);
+    try {
+      await unbindIngestSource(row.id, fetcher.id);
+      await Promise.all([loadCatalog(), loadIngestTokens()]);
+    } catch (e) {
+      showToast(e.message || '解绑失败', 'error');
+    } finally {
+      setBindBusy('');
+    }
+  }, [loadCatalog, loadIngestTokens, showToast]);
+  // 检视器的「推送」区:在推这个源的令牌 + 加一个令牌。与「抓取」区并列。
+  const renderPushSection = (fetcher) => {
+    const bindings = pushBindingsOf(fetcher);
+    const candidates = ingestTokens.filter(token => token.is_active && !bindings.some(b => b.token_id === token.id));
+    if (!bindings.length && !candidates.length) return null;
+    return (
+      <section className="acq-panel">
+        <div className="acq-panel-head">
+          <h3 className="tools-title">推送</h3>
+        </div>
+        <div className="acq-panel-body is-list">
+          <BindList
+            rows={bindings.map(binding => ({
+              key: `${fetcher.id}:${binding.token_id}`,
+              id: binding.token_id,
+              name: binding.actor,
+              mono: binding.token_preview,
+              pushedAt: binding.last_pushed_at,
+              muted: !binding.is_active,
+            }))}
+            onUnbind={row => unbindToken(fetcher, row)}
+            busyKey={bindBusy}
+          />
+          <BindAdd
+            key={fetcher.id}
+            label="令牌"
+            groups={[{ options: candidates.map(token => ({ value: String(token.id), label: `${token.actor} · ${token.token_preview}` })) }]}
+            onBind={value => bindToken(fetcher, Number(value))}
+            onFocus={loadIngestTokens}
+            busy={bindBusy === 'add'}
+            selectClassName="node-param-input inspector-param-select"
+          />
+        </div>
+      </section>
+    );
+  };
+  // 登记完:重取目录与令牌,切到新源所在的内容类型并选中它。
+  const handleRegistered = useCallback(async (res) => {
+    await Promise.all([loadCatalog(), loadIngestTokens()]);
+    // 新源默认归「媒体」、从没运行过:清掉角色与健康筛选,否则它被筛掉、选中会被改回旧的那一个。
+    setRoleFilter('all');
+    setHealthFilter('all');
+    if (CONTENT_SHAPE_LABELS[res?.shape]) setShapeFilter(res.shape);
+    if (res?.source_id) setSelectedNodeId(res.source_id);
+  }, [loadCatalog, loadIngestTokens]);
+
   const renderParamInput = (fetcherId, param) => {
     const value = (fetchConfigs[fetcherId] || {})[param.field] ?? param.default ?? '';
     if (param.type === 'boolean') {
@@ -771,6 +877,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
     // 用户自定源仍走专用 source-config 通道;公共 Podcast 已并入统一通道;没有采集绑定的源不能运行 / 编入任务。
     const isUserSource = Boolean(fetcher.user_source);
     const unbound = isUnbound(fetcher);
+    const acquisition = acquisitionOf(fetcher);
     const isBatchableNode = !isUserSource && !unbound;
     const shape = contentShapeOf(fetcher);
     const itemNoun = shape === 'podcast' ? '期' : ITEM_KIND_SHORT.has(fetcher.default_kind) ? '条' : shape === 'social' ? '则' : '篇';
@@ -786,7 +893,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           title={isUserSource
             ? `读者自定源 · 创建者 ${fetcher.owner_username}${health?.latest_run_at ? ` · 上次运行 ${formatDateTime(health.latest_run_at)}` : ''}`
             : unbound
-              ? `${fetcher.retired ? '已退役' : originLabelOf(fetcher) || '来路未知'} · 无采集绑定`
+              ? `${fetcher.retired ? '已退役' : originLabelOf(fetcher) || '来路未知'} · ${pushActorsOf(fetcher) ? `推送：${pushActorsOf(fetcher)}` : '无抓取'}`
               : (health?.latest_run_at ? `上次运行 ${formatDateTime(health.latest_run_at)}` : '从未运行')}
         >
           {selectMode && (
@@ -798,7 +905,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               onClick={e => e.stopPropagation()}
               onChange={() => isBatchableNode && toggleChecked(fetcher.id)}
               aria-label={!isBatchableNode ? `${fetcher.name}(当前不可加入批量任务)` : `选择：${fetcher.name}`}
-              title={isUserSource ? '用户自定源请用行内「立即运行」' : unbound ? '没有采集绑定,不能编入批量任务' : undefined}
+              title={isUserSource ? '用户自定源请用行内「立即运行」' : unbound ? '没有抓取器,不能编入批量任务' : undefined}
             />
           )}
           <span className={`signal-dot signal-dot-${HEALTH_SIGNAL[status] || 'idle'}`} title={statusLabel} />
@@ -818,21 +925,18 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               {fetcher.admission_status === 'provisional' && !fetcher.retired && (
                 <span className="tier-pill provisional-pill" title="临时源:收录时自动建,未列入目录;列入后读者发现页可见、进入观察期">临时</span>
               )}
-              {/* 没有采集绑定:条目只经收录进来,不能运行 / 编入采集任务 */}
-              {unbound && !fetcher.retired && (
-                <span className="tier-pill unbound-pill" title="没有采集绑定:条目只经收录进来,不能运行或编入采集任务">无采集</span>
-              )}
               {fetcher.retired && (
                 <span className="tier-pill reader-hidden-pill" title="已退役:不再采集,历史条目保留">已退役</span>
               )}
             </span>
             <span className="board-node-sid" title={fetcher.id}>{fetcher.id}</span>
           </span>
+          {/* 获取方式(issue #344):抓取 / 推送 / 两样都有 / 都没有。内容形态由上面的页签表达,这里不再重复 */}
           <span
-            className="chip board-node-type"
-            title={`内容形态：${shapeLabelOf(fetcher)} · 采集通道：${channelLabelOf(fetcher)}`}
+            className={`chip board-node-type ${acquisition === 'none' ? 'acq-none' : ''}`}
+            title={acquisitionTitleOf(fetcher)}
           >
-            {shapeLabelOf(fetcher)}
+            {ACQUISITION_LABELS[acquisition]}
           </span>
           {/* 常驻占位保 grid 对齐;无数据时 Sparkline 返回 null,格空 */}
           <span className="board-node-trend" aria-hidden="true">
@@ -846,10 +950,11 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             )}
           </span>
           <span className="board-node-last">
-            <span className="board-node-last-time">{unbound ? '—' : formatRelativeTime(health?.latest_run_at)}</span>
+            {/* 没有抓取器的源:这一格是最近一批推送的时间(没推过就是 —) */}
+            <span className="board-node-last-time">{unbound ? formatRelativeTime(lastPushedAt(fetcher), '—') : formatRelativeTime(health?.latest_run_at)}</span>
             <span className={`board-node-last-res ${status === 'failing' ? 'is-bad' : ''}`}>
               {unbound
-                ? `${fetcher.retired ? '已退役' : '无采集'} · 累计 ${totalArticles} ${itemNoun}`
+                ? `${fetcher.retired ? '已退役 · ' : ''}累计 ${totalArticles} ${itemNoun}`
                 : status === 'failing'
                   ? (consecutiveFailures > 0 ? `连续 ${consecutiveFailures} 次失败` : '最近失败')
                   : status === 'running'
@@ -1050,19 +1155,20 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
       );
     }
 
-    // 没有采集绑定的源(收录临时源 / 存量 / 系统 / 退役):只看来路、累计条目与读者面可见性;收录源可列入 / 改名。
+    // 没有抓取器的源(收录源 / 存量 / 系统 / 退役):看来路、累计条目、读者面可见性与推送绑定;收录源可列入 / 改名。
     if (isUnbound(fetcher)) {
       const totalSourceItems = health?.total_articles ?? 0;
       const isIngest = fetcher.origin === 'ingest';
       const isProvisional = fetcher.admission_status === 'provisional';
       const homepage = fetcher.homepage_url || fetcher.base_url || fetcher.feed_url;
       const isRenaming = renaming?.id === fetcher.id;
-      const stamp = fetcher.retired ? '已退役' : isProvisional ? '临时' : originLabelOf(fetcher) || '无采集';
+      const stamp = fetcher.retired ? '已退役' : isProvisional ? '临时' : originLabelOf(fetcher) || '无抓取';
+      const pushSection = fetcher.retired ? null : renderPushSection(fetcher);
       return (
         <>
           <div className="inspector-head">
             <div className="inspector-head-top">
-              <span className="signal-dot signal-dot-idle" title="无采集绑定" />
+              <span className="signal-dot signal-dot-idle" title={ACQUISITION_LABELS[acquisitionOf(fetcher)]} />
               {isRenaming ? (
                 <input
                   type="text"
@@ -1084,7 +1190,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </div>
             <div className="inspector-sid">
               <span className="font-mono truncate" title={fetcher.id}>{fetcher.id}</span>
-              <span className="inspector-sid-dot">{shapeLabelOf(fetcher)} · {originLabelOf(fetcher) || '来路未知'} · 无采集绑定</span>
+              <span className="inspector-sid-dot">{shapeLabelOf(fetcher)} · {originLabelOf(fetcher) || '来路未知'}</span>
             </div>
           </div>
 
@@ -1147,9 +1253,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               </div>
             )}
 
-            <p className="inspector-hint">
-              {fetcher.retired ? '已退役' : '没有采集绑定'}
-            </p>
+            {/* 顺序与有抓取器的源一致:先抓取(这里只有一句「没有抓取器」),后推送 */}
+            {(fetcher.retired || pushBindingsOf(fetcher).length === 0) && (
+              <p className="inspector-hint">
+                {fetcher.retired ? '已退役' : '没有抓取器'}
+              </p>
+            )}
+            {pushSection}
           </div>
         </>
       );
@@ -1241,104 +1351,109 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
             </button>
           </div>
 
-          <div className="inspector-section">
-            <div className="inspector-section-head">
-              <h3 className="micro-label">运行参数</h3>
+          <section className="acq-panel">
+            <div className="acq-panel-head">
+              <h3 className="tools-title">抓取</h3>
+              <span className="acq-fetcher">{channelLabelOf(fetcher)}</span>
             </div>
-            {params.length === 0 ? (
-              <div className="inspector-empty-mini">该源无需抓取参数</div>
-            ) : (
-              <div className="inspector-params">
-                {params.map(param => (
-                  <div key={param.field} className="inspector-param">
-                    <label className="inspector-param-label" title={param.field}>
-                      {param.label || param.field}
-                      {param.hint && <span className="inspector-param-hint">{param.hint}</span>}
-                    </label>
-                    {renderParamInput(fetcher.id, param)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="inspector-actions">
-            <button
-              type="button"
-              className="action-button action-button-primary inspector-act"
-              disabled={isRunning}
-              onClick={() => runSingleFetcher(fetcher)}
-            >
-              {isRunning ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 立即运行
-            </button>
-            <button
-              type="button"
-              className="action-button action-button-quiet inspector-act"
-              disabled={preview?.status === 'running'}
-              onClick={() => runNodePreview(fetcher)}
-            >
-              <FlaskConical /> 试抓预览
-            </button>
-            <button
-              type="button"
-              className="action-button action-button-quiet inspector-act"
-              onClick={() => saveNodeAsJob(fetcher)}
-            >
-              <Save /> 存为采集任务
-            </button>
-          </div>
-
-          {preview && (
-            <div className="inspector-preview">
-              {preview.status === 'running' ? (
-                <div className="inspector-preview-head">
-                  <span className="inspector-spin" /> 试抓中（每源 {TEST_RUN_LIMIT} 条）…
-                </div>
-              ) : preview.status === 'error' ? (
-                <div className="inspector-preview-head is-bad">
-                  <AlertTriangle className="h-3.5 w-3.5" /> 试抓失败{preview.error ? `：${preview.error}` : ''}
-                </div>
+            <div className="acq-panel-body">
+              {params.length === 0 ? (
+                <div className="inspector-empty-mini">该源无需抓取参数</div>
               ) : (
-                <>
-                  <div className="inspector-preview-head">
-                    试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
-                  </div>
-                </>
+                <div className="inspector-params">
+                  {params.map(param => (
+                    <div key={param.field} className="inspector-param">
+                      <label className="inspector-param-label" title={param.field}>
+                        {param.label || param.field}
+                        {param.hint && <span className="inspector-param-hint">{param.hint}</span>}
+                      </label>
+                      {renderParamInput(fetcher.id, param)}
+                    </div>
+                  ))}
+                </div>
               )}
-            </div>
-          )}
 
-          <div className="inspector-section">
-            <h3 className="micro-label">近期运行</h3>
-            {inspectorRunsLoading ? (
-              <div className="inspector-empty-mini">加载中…</div>
-            ) : inspectorRuns.length === 0 ? (
-              <div className="inspector-empty-mini">尚无运行记录，首次运行后这里会出现批次时间线</div>
-            ) : (
-              <div className="inspector-runlist">
-                {inspectorRuns.map(run => {
-                  const meta = runStatusMeta(run.status);
-                  return (
-                    <button
-                      key={run.id}
-                      type="button"
-                      className="inspector-runrow"
-                      onClick={() => onViewRuns?.(fetcher.id)}
-                      title="查看运行历史"
-                    >
-                      <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
-                      <b>{meta.label}</b>
-                      <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
-                      {(run.skipped_count ?? 0) > 0 && (
-                        <span className="inspector-run-skip">跳过 {run.skipped_count}</span>
-                      )}
-                      <time>{formatRelativeTime(run.started_at)}</time>
-                    </button>
-                  );
-                })}
+              <div className="inspector-actions">
+                <button
+                  type="button"
+                  className="action-button action-button-primary inspector-act"
+                  disabled={isRunning}
+                  onClick={() => runSingleFetcher(fetcher)}
+                >
+                  {isRunning ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 立即运行
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button-quiet inspector-act"
+                  disabled={preview?.status === 'running'}
+                  onClick={() => runNodePreview(fetcher)}
+                >
+                  <FlaskConical /> 试抓预览
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button-quiet inspector-act"
+                  onClick={() => saveNodeAsJob(fetcher)}
+                >
+                  <Save /> 存为采集任务
+                </button>
               </div>
-            )}
-          </div>
+
+              {preview && (
+                <div className="inspector-preview">
+                  {preview.status === 'running' ? (
+                    <div className="inspector-preview-head">
+                      <span className="inspector-spin" /> 试抓中（每源 {TEST_RUN_LIMIT} 条）…
+                    </div>
+                  ) : preview.status === 'error' ? (
+                    <div className="inspector-preview-head is-bad">
+                      <AlertTriangle className="h-3.5 w-3.5" /> 试抓失败{preview.error ? `：${preview.error}` : ''}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="inspector-preview-head">
+                        试抓完成:新增 {preview.saved ?? 0} 条{preview.failed ? `，失败 ${preview.failed}` : ''}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="acq-sec">
+                <h4 className="micro-label">近期运行</h4>
+                {inspectorRunsLoading ? (
+                  <div className="inspector-empty-mini">加载中…</div>
+                ) : inspectorRuns.length === 0 ? (
+                  <div className="inspector-empty-mini">尚无运行记录，首次运行后这里会出现批次时间线</div>
+                ) : (
+                  <div className="inspector-runlist">
+                    {inspectorRuns.map(run => {
+                      const meta = runStatusMeta(run.status);
+                      return (
+                        <button
+                          key={run.id}
+                          type="button"
+                          className="inspector-runrow"
+                          onClick={() => onViewRuns?.(fetcher.id)}
+                          title="查看运行历史"
+                        >
+                          <span className={`inspector-run-dot inspector-run-${meta.tone}`} />
+                          <b>{meta.label}</b>
+                          <span className="inspector-run-saved">+{run.saved_count ?? 0}</span>
+                          {(run.skipped_count ?? 0) > 0 && (
+                            <span className="inspector-run-skip">跳过 {run.skipped_count}</span>
+                          )}
+                          <time>{formatRelativeTime(run.started_at)}</time>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {renderPushSection(fetcher)}
 
           <SourceReviewSection source={fetcher} />
         </div>
@@ -1379,6 +1494,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
           )}
           <button
             type="button"
+            onClick={() => { loadIngestTokens(); setRegisterOpen(true); }}
+            className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
+          >
+            <Plus /> 登记来源
+          </button>
+          <button
+            type="button"
             onClick={() => setShowRetired(value => !value)}
             className="action-button action-button-quiet min-h-[32px] px-3 text-xs"
             aria-pressed={showRetired}
@@ -1400,7 +1522,7 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
               onClick={handleBatchRun}
               disabled={fetchLoading || batchableFetchers.length === 0}
               className="action-button action-button-primary min-h-[32px] px-3 text-xs"
-              title="对当前筛选下所有有采集绑定的源触发临时抓取"
+              title="对当前筛选下所有有抓取器的源触发临时抓取"
             >
               {fetchLoading ? <RefreshCw className="animate-spin" /> : <Play className="fill-current" />} 批量运行 {batchableFetchers.length}
             </button>
@@ -1578,6 +1700,13 @@ export default function FetchTab({ availableFetchers, showToast, view, setView, 
         )}
       </div>
 
+      <RegisterSourceDrawer
+        open={registerOpen}
+        onClose={() => setRegisterOpen(false)}
+        tokens={ingestTokens}
+        onRegistered={handleRegistered}
+        showToast={showToast}
+      />
     </div>
   );
 }
