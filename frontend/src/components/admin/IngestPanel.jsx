@@ -58,14 +58,19 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const [catalog, setCatalog] = useState(null); // 源目录(每次打开抽屉时重取)
 
   const load = useCallback(async () => {
-    const snapshot = gate.current.snapshot();
-    try {
-      const tokenRes = await fetchIngestTokens();
-      if (!gate.current.accept(snapshot)) return; // 取数期间有过修改:作废,修改结束后会再取
-      setTokens(tokenRes.items || []);
-    } catch (error) {
-      showToast(error.message || '获取收录令牌失败', 'error');
-      setTokens((prev) => prev ?? []);
+    for (;;) {
+      const snapshot = gate.current.snapshot();
+      try {
+        const tokenRes = await fetchIngestTokens();
+        const verdict = gate.current.check(snapshot);
+        if (verdict === 'again') continue; // 取数期间有过修改、现在已结束:这份作废,立即再取
+        if (verdict === 'use') setTokens(tokenRes.items || []);
+        return; // 'later':修改还在途,它结束时会再取
+      } catch (error) {
+        showToast(error.message || '获取收录令牌失败', 'error');
+        setTokens((prev) => prev ?? []);
+        return;
+      }
     }
   }, [showToast]);
 
