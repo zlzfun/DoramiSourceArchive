@@ -2414,6 +2414,8 @@ async def _require_admin_session_impl(request: Request, call_next):
             and path.startswith("/api/admin/ingest/tokens/")
             and path.endswith("/bindings")
         )
+        # 令牌「可以自己登记来源」的开关(issue #344 第二个 PR):摘要要写开还是关
+        or (normalized_method == "PATCH" and path.startswith("/api/admin/ingest/tokens/"))
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")

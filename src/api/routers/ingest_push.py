@@ -3,6 +3,8 @@
 - ``POST /api/public/ingest/v1/items``:收录令牌(``Authorization: Bearer ding_…``)推送一批条目,
   或管理员会话做「单条收录」(通道 ``manual``);``/api/public/*`` 免会话、按令牌鉴权(与订阅 /
   聚合令牌同一门控),会话由本路由自己核对。批处理主循环在 ``services/ingest_batch.py``。
+- ``POST /api/public/ingest/v1/sources``:有登记权限的收录令牌自己登记一个来源(issue #344 第二个 PR),
+  登记的源先是待列入并绑定给这个令牌;只认令牌,管理员在 ``/api/admin/ingest/sources`` 登记。
 - ``/api/admin/ingest/*``:令牌签发 / 吊销、推送绑定(令牌 ↔ 源)、登记不带抓取的源、收录源列表与
   「列入 / 下架 / 恢复 / 改名」;管理前缀,仅管理员,写操作入审计。
 """
@@ -101,27 +103,36 @@ class IngestBatch(BaseModel):
     items: List[IngestItem] = PydanticField(default_factory=list, max_length=ingest_push.MAX_BATCH)
 
 
+def _token(request: Request, session: Session) -> Optional[IngestTokenRecord]:
+    """请求带的收录令牌;没带返回 None,带了但无效 401,节点不收录 403。"""
+    header = request.headers.get("authorization", "")
+    raw = header[7:].strip() if header.lower().startswith("bearer ") else read_bearer_or_query_token(request)
+    if not raw:
+        return None
+    record = ingest_push.authenticate(session, raw)
+    if record is None:
+        raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
+    if not _app().runtime_collector_enabled():
+        # 收录写的是归档:采集面关闭的节点(runtime role = reader)不接受,与旧入口经中间件的
+        # collector 门控一致(检视 R1 #3)。
+        raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
+    return record
+
+
 def _caller(request: Request, session: Session) -> tuple[ingest_batch.IngestCaller, Optional[IngestTokenRecord]]:
     """收录令牌优先;没带令牌时认管理员会话(运维「单条收录」,通道 manual,不计令牌额度)。
 
     ``/api/public/*`` 在中间件里免会话,这里自己核对:只认 role=admin 的会话,游客与读者一律拒绝。
     会话 Cookie 是 SameSite=Lax,跨站 POST 带不上,与其它管理写接口同一水平。
     """
-    header = request.headers.get("authorization", "")
-    raw = header[7:].strip() if header.lower().startswith("bearer ") else read_bearer_or_query_token(request)
-    if raw:
-        record = ingest_push.authenticate(session, raw)
-        if record is None:
-            raise HTTPException(status_code=401, detail="收录令牌无效或已吊销")
-        if not _app().runtime_collector_enabled():
-            # 收录写的是归档:采集面关闭的节点(runtime role = reader)不接受,与旧入口经中间件的
-            # collector 门控一致(检视 R1 #3)。
-            raise HTTPException(status_code=403, detail="本节点未开启采集面,不接受收录")
+    record = _token(request, session)
+    if record is not None:
         remaining = max(0, int(record.daily_limit or 0) - ingest_push.picks_today(session, record.actor))
         return ingest_batch.IngestCaller(
             actor=record.actor, remaining=remaining,
             # 令牌只能往它绑定的源推(issue #344);没有绑定就是空集,一条也推不进来。
             token_id=record.id, bound=ingest_bindings.bound_source_ids(session, record.id),
+            can_register=bool(record.can_register_sources),
         ), record
     auth = _app().current_auth_session(request)
     if auth and auth.get("role") == "admin" and not _app().is_guest_session(auth):
@@ -227,6 +238,83 @@ async def push_items(batch: IngestBatch, request: Request):
     }
 
 
+# ==================== 令牌自己登记来源(issue #344 第二个 PR) ====================
+
+
+class IngestSourceSelfRegister(_Open):
+    """字段比管理员登记(``IngestSourceRegister``)少三个:没有 ``listed`` 与 ``token_id``(令牌登记的源一律
+    先是待列入,并绑定给它自己),也没有 ``homepage_url``(主页由出处派生——主页地址会进入认出处的前缀索引,
+    不能由令牌指到别的站点上去,检视 R1 #2)。带了这些字段不拒收,写进回执的 ``warnings``。"""
+
+    kind: str = ""
+    name: str = ""
+    handle: str = ""
+    user_id: str = ""
+    url: str = ""
+    feed_url: str = ""
+    source_id_suffix: str = ""
+    avatar_url: str = ""
+    description: str = ""
+
+
+def _source_payload(session: Session, row: SourceConfigRecord) -> dict[str, Any]:
+    view = source_catalog.get(session, row.source_id)
+    return {
+        "status": "success",
+        "source_id": row.source_id,
+        "name": view.name,
+        "shape": view.shape,
+        "admission_status": view.admission_status,
+        "open": row.source_id.startswith(ingest_push.OPEN_SOURCE_PREFIX),
+    }
+
+
+# 路径写字面量:前端的接口对账测试按字面量读路由(frontend/test/feedEndpoints.test.mjs);
+# 与 ``ingest_push.REGISTER_PATH``(拒收提示与审计用)是同一个地址。
+@router.post("/api/public/ingest/v1/sources")
+def register_source_by_token(
+    params: IngestSourceSelfRegister, request: Request, session: Session = Depends(deps.get_session)
+):
+    """令牌登记一个来源:待列入、自动绑定给它;出处已有来源回 409 并给出那个源的 id。"""
+    token = _token(request, session)
+    if token is None:
+        # 只认收录令牌:管理员登记走管理面接口(可以直接列入、可以绑给任意令牌)。
+        raise HTTPException(status_code=401, detail="这个接口只接受收录令牌")
+    unknown: list[str] = []
+    fields = _strip_extras(params, "", unknown)
+    actor = token.actor
+    try:
+        row = ingest_bindings.register_by_token(session, token, **fields)
+    except ingest_bindings.BindingError as exc:
+        session.rollback()
+        detail: Any = str(exc)
+        if exc.existing_source_id:
+            detail = {"message": str(exc), "source_id": exc.existing_source_id, "bound": bool(exc.bound)}
+        raise HTTPException(status_code=exc.status, detail=detail)
+    session.commit()
+    session.refresh(token)
+    body = {
+        **_source_payload(session, row),
+        "bound": True,
+        "registered_today": ingest_push.registered_today(token),
+        "daily_limit": ingest_push.REGISTER_DAILY_LIMIT,
+    }
+    if unknown:
+        body["warnings"] = [f"未识别的字段:{'、'.join(unknown)}(已忽略)"]
+    try:
+        admin_audit_service.record_audit(
+            deps.get_db_sink().engine,
+            username=f"ingest:{actor}",
+            method="POST",
+            path=ingest_push.REGISTER_PATH,
+            status_code=200,
+            body={"actor": actor, "source_id": row.source_id, "name": body["name"], "kind": fields.get("kind", "")},
+        )
+    except Exception:  # noqa: BLE001
+        _logger.debug("登记来源的审计写入失败", exc_info=True)
+    return body
+
+
 # ==================== 管理面 ====================
 
 
@@ -234,6 +322,11 @@ class TokenCreate(BaseModel):
     actor: str
     daily_limit: int = ingest_push.DEFAULT_DAILY_LIMIT
     source_ids: List[str] = PydanticField(default_factory=list, max_length=200)
+    can_register_sources: bool = False
+
+
+class TokenUpdate(BaseModel):
+    can_register_sources: Optional[bool] = None
 
 
 class BindingCreate(BaseModel):
@@ -288,6 +381,7 @@ def create_token(params: TokenCreate, request: Request, session: Session = Depen
             actor=params.actor,
             created_by=created_by,
             daily_limit=params.daily_limit,
+            can_register_sources=params.can_register_sources,
             commit=False,
         )
         for source_id in source_ids:
@@ -312,6 +406,20 @@ def revoke_token(token_id: int, session: Session = Depends(deps.get_session)):
     record = ingest_push.revoke_token(session, token_id)
     if record is None:
         raise HTTPException(status_code=404, detail="令牌不存在")
+    return _token_payload(record, ingest_bindings.by_token(session))
+
+
+@router.patch("/api/admin/ingest/tokens/{token_id}")
+def update_token(token_id: int, params: TokenUpdate, session: Session = Depends(deps.get_session)):
+    """开 / 关这个令牌「可以自己登记来源」的权限。"""
+    record = session.get(IngestTokenRecord, token_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="令牌不存在")
+    if params.can_register_sources is not None:
+        try:
+            record = ingest_push.set_register_permission(session, token_id, params.can_register_sources)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     return _token_payload(record, ingest_bindings.by_token(session))
 
 
@@ -367,15 +475,7 @@ def register_ingest_source(
         session.rollback()
         raise _binding_error(exc)
     session.commit()
-    view = source_catalog.get(session, row.source_id)
-    return {
-        "status": "success",
-        "source_id": row.source_id,
-        "name": view.name,
-        "shape": view.shape,
-        "admission_status": view.admission_status,
-        "open": row.source_id.startswith(ingest_push.OPEN_SOURCE_PREFIX),
-    }
+    return _source_payload(session, row)
 
 
 def _ingest_source_rows(session: Session) -> list[SourceConfigRecord]:

@@ -5727,6 +5727,9 @@ input[type="radio"] {
   .bind-main .acct-name,
   .bind-main .acct-mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bind-main .acct-mono { color: var(--dorami-faint); }
+  /* 名称后的徽标(待列入的来源标「临时」):名称让出宽度并省略,徽标不压缩 */
+  .bind-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .bind-name > .tier-pill { flex: none; }
   .bind-time { color: var(--dorami-faint); }
   .bind-add {
     display: grid;
@@ -5740,6 +5743,12 @@ input[type="radio"] {
   /* 收录令牌表「来源」列:名称一行排开,排不下省略 */
   .tok-sources { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dorami-ink-2); font-size: 13px; }
   .tok-sources.is-none { color: var(--dorami-faint); }
+  /* 令牌抽屉「自行登记来源」:一行——小节标题、今日个数、开关(开关取 .ledger-switch)。
+     标题吃掉剩余宽度,开关始终贴右缘:今日个数只在打开时出现,有没有它开关都不挪位置。 */
+  .tok-perm { display: flex; align-items: center; gap: 12px; }
+  .tok-perm > .drawer-sec-title { flex: 1; min-width: 0; margin-bottom: 0; }
+  .tok-perm > .ledger-switch { flex: none; }
+  .tok-perm-count { color: var(--dorami-faint); }
 
   /* 登记来源抽屉里的表单 */
   .reg-form { display: grid; gap: 14px; }

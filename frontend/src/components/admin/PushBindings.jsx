@@ -4,7 +4,7 @@ import { formatDateTime, formatRelativeTime } from '../../utils/datetime';
 
 /**
  * 推送绑定清单(issue #344)。令牌抽屉里列它的来源,源检视器里列在推它的令牌——同一套行:
- * 名称 + 等宽小字(源 id / 令牌尾号)· 最近一批 · 解绑。
+ * 名称(可带徽标 `pill`)+ 等宽小字(源 id / 令牌尾号)· 最近一批 · 解绑。
  */
 export function BindList({ rows, onUnbind, busyKey = '' }) {
   if (!rows.length) return null;
@@ -13,7 +13,10 @@ export function BindList({ rows, onUnbind, busyKey = '' }) {
       {rows.map((row) => (
         <div key={row.key} className={`bind-row ${row.muted ? 'is-muted' : ''}`}>
           <span className="bind-main">
-            <span className="acct-name" title={row.name}>{row.name}</span>
+            <span className="bind-name">
+              <span className="acct-name" title={row.name}>{row.name}</span>
+              {row.pill && <span className="tier-pill provisional-pill">{row.pill}</span>}
+            </span>
             <span className="acct-mono" title={row.mono}>{row.mono}</span>
           </span>
           <span className="acct-mono bind-time" title={row.pushedAt ? formatDateTime(row.pushedAt) : undefined}>
@@ -39,13 +42,16 @@ export function BindList({ rows, onUnbind, busyKey = '' }) {
   );
 }
 
-/** 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染;`onFocus` 给调用方在下拉获得焦点时重取候选。 */
-export function BindAdd({ label, groups, onBind, busy = false, onFocus, selectClassName = 'form-input form-input-inline' }) {
+/**
+ * 加一条绑定:下拉(可分组)+「绑定」。选项为空时不渲染;`onFocus` 给调用方在下拉获得焦点时重取候选。
+ * `busy` 是这一条绑定自己在途(按钮转圈);`disabled` 是同一对象上别的修改在途(整行不可点)。
+ */
+export function BindAdd({ label, groups, onBind, busy = false, disabled = false, onFocus, selectClassName = 'form-input form-input-inline' }) {
   const [value, setValue] = useState('');
   const hasOptions = groups.some((group) => group.options.length > 0);
   if (!hasOptions) return null;
   const submit = async () => {
-    if (!value || busy) return;
+    if (!value || busy || disabled) return;
     const done = await onBind(value);
     if (done !== false) setValue('');
   };
@@ -64,7 +70,7 @@ export function BindAdd({ label, groups, onBind, busy = false, onFocus, selectCl
       <button
         type="button"
         className="action-button action-button-secondary min-h-[32px] px-3 text-xs"
-        disabled={!value || busy}
+        disabled={!value || busy || disabled}
         onClick={submit}
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '绑定'}

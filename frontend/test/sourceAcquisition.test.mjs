@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  ACQUISITION_LABELS, acquisitionOf, bindableSources, hasFetcher, lastPushedAt, pushBindingsOf, registerPayload,
+  ACQUISITION_LABELS, acquisitionOf, bindableSources, bindingPillOf, hasFetcher, lastPushedAt, pushBindingsOf,
+  registerPayload, registerQuotaOf,
 } from '../src/utils/sourceAcquisition.js';
 
 const push = (actor, at = null) => ({ actor, token_preview: '...abc', is_active: true, last_pushed_at: at });
@@ -62,4 +63,19 @@ test('登记表单:定向源给出处,合集给 push_ 后缀,填得不够不出�
     registerPayload({ ...base, kind: 'podcast_episode', identity: 'https://pod.test/feed', tokenId: '' }),
     { kind: 'podcast_episode', name: 'Grok 推荐', listed: true, feed_url: 'https://pod.test/feed' },
   );
+});
+
+test('今日登记:有权限的令牌写「已登记 / 上限」,没有权限的不写', () => {
+  assert.equal(registerQuotaOf({ can_register_sources: true, registered_today: 3, register_daily_limit: 20 }), '3 / 20');
+  assert.equal(registerQuotaOf({ can_register_sources: true, register_daily_limit: 20 }), '0 / 20');
+  // 没有权限:即使今天早些时候登记过(之后被关掉),也不写数字
+  assert.equal(registerQuotaOf({ can_register_sources: false, registered_today: 3, register_daily_limit: 20 }), '');
+  assert.equal(registerQuotaOf(null), '');
+});
+
+test('绑定行的徽标:只有待列入的来源标「临时」', () => {
+  assert.equal(bindingPillOf({ source_id: 'x_new_lab', admission_status: 'provisional' }), '临时');
+  assert.equal(bindingPillOf({ source_id: 'x_openai', admission_status: 'incubating' }), '');
+  assert.equal(bindingPillOf({ source_id: 'x_openai' }), '');
+  assert.equal(bindingPillOf(null), '');
 });
