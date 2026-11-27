@@ -404,3 +404,50 @@ def test_heat_context_filters_old_rows_inside_the_database(storage, monkeypatch)
     assert heat["signals"][0]["distinct_source_count"] == 4
     # 595 篇旧文章被 SQL 挡掉;回到 Python 的只有 5 篇窗口内的。
     assert len(calls) <= 10
+
+
+def _tagged(session: Session, tag, article_id: str, source_id: str) -> None:
+    stamp = (NOW - dt.timedelta(days=1)).isoformat(timespec="seconds")
+    session.add(ArticleRecord(
+        id=article_id, title=article_id, content_type="article", source_id=source_id,
+        source_url=f"https://example.invalid/{article_id}", publish_date=stamp, fetched_date=stamp,
+        has_content=True, content="正文", extensions_json="{}",
+    ))
+    session.flush()
+    session.add(ArticleTagAssignmentRecord(
+        article_id=article_id, tag_id=tag.id, tag_kind=tag.kind, relevance=0.8,
+        assignment_source="llm", created_at=STAMP, updated_at=STAMP,
+    ))
+
+
+def _one_tag(session: Session):
+    tag = CmsTagRecord(
+        code="topic-agents", kind="topic", name_zh="智能体", name_en="Agents",
+        normalized_name="agents", status="active", created_at=STAMP, updated_at=STAMP,
+    )
+    session.add(tag)
+    session.flush()
+    return tag, [TaxonomyTagDTO(id=tag.id, code=tag.code, kind=tag.kind, name_zh=tag.name_zh)]
+
+
+def test_heat_context_does_not_count_any_system_source(storage, second_system_source):
+    """issue #72:话题热度数的是「有几个来源在报」,系统源的条目(日报、其它生成流程的产出)不算来源。"""
+    with Session(storage.engine) as session:
+        tag, dtos = _one_tag(session)
+        _tagged(session, tag, "from-feed", "feed-a")
+        _tagged(session, tag, "from-brief", "dorami_daily_brief")
+        _tagged(session, tag, "from-other-flow", second_system_source)
+        session.commit()
+        context = build_topic_heat_context(session, article_id="someone-else", active_tags=dtos, now=NOW)
+    assert [signal["distinct_source_count"] for signal in context["signals"]] == [1]
+
+
+def test_heat_context_counts_an_unlisted_dorami_id(storage):
+    """反向对照:名单里没有它时,同一个 id 照常算一个来源。"""
+    with Session(storage.engine) as session:
+        tag, dtos = _one_tag(session)
+        _tagged(session, tag, "from-feed", "feed-a")
+        _tagged(session, tag, "from-other-flow", "dorami_test_flow")
+        session.commit()
+        context = build_topic_heat_context(session, article_id="someone-else", active_tags=dtos, now=NOW)
+    assert [signal["distinct_source_count"] for signal in context["signals"]] == [2]

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 产出 · 样页总览(第二轮)</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  h3 { font-size: 15px; margin: 32px 0 2px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 18px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { margin-left: auto; }
+  .frame { position: relative; overflow: hidden; width: calc(var(--vw, 1440) * var(--s, 0.5) * 1px); height: calc(var(--vh, 900) * var(--s, 0.5) * 1px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: calc(var(--y, 0) * var(--s, 0.5) * -1px); left: calc(var(--x, 0) * var(--s, 0.5) * -1px); width: 1440px; height: calc(var(--ih, 900) * 1px); border: 0; transform: scale(var(--s, 0.5)); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1280px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 18px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; }
+  td:first-child { white-space: nowrap; color: var(--faint); }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+
+  /* 六种组合:列 = 名册放哪,行 = 所选流程怎么排 */
+  .matrix { display: grid; grid-template-columns: max-content repeat(3, max-content); gap: 10px 20px; margin-top: 18px; align-items: start; }
+  .matrix .col { font-size: 14px; font-weight: 600; }
+  .matrix .rowh { font-size: 14px; font-weight: 600; padding-top: 6px; white-space: nowrap; }
+  .matrix .frame { --s: 0.27; }
+  .matrix a.open { display: block; margin-top: 4px; font-size: 13px; text-align: right; }
+  .pick { font-size: 12px; font-weight: 600; color: var(--accent); margin-left: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI 产出 · 样页总览(第二轮,2026-11-27)</h1>
+  <p class="lede">方向定了 B:名册 + 所选流程。这一轮只看它怎么排——名册放哪,所选流程怎么排。</p>
+  <p>画框下面可以打开可点的原型;原型底部的深色条是样页开关(名册 / 详情 / 状态 / 主题),不属于产品界面。第一轮(概念两节与 A、B、C 三个方向)在 <a href="../r1/index.html">r1/index.html</a>。</p>
+
+  <h2>1 · 六种组合</h2>
+  <p>两件事可以分开选。名册有三种放法,所选流程有两种排法;原型里两个开关任意搭配。</p>
+  <div class="matrix">
+    <span></span>
+    <span class="col">左栏</span>
+    <span class="col">顶部磁贴</span>
+    <span class="col">顶部表格</span>
+
+    <span class="rowh">两栏<br>配置 ｜ 近期</span>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=left&det=cols&bare&v=2" loading="lazy" title="左栏 · 两栏"></iframe></div><a class="open" href="../app.html?dir=b&lay=left&det=cols" target="_blank">打开<span class="pick">B1</span></a></div>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=cols&bare&v=2" loading="lazy" title="顶部磁贴 · 两栏"></iframe></div><a class="open" href="../app.html?dir=b&lay=tiles&det=cols" target="_blank">打开</a></div>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=table&det=cols&bare&v=2" loading="lazy" title="顶部表格 · 两栏"></iframe></div><a class="open" href="../app.html?dir=b&lay=table&det=cols" target="_blank">打开<span class="pick">B3</span></a></div>
+
+    <span class="rowh">三段<br>取材 → 加工 → 产出</span>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=left&det=pipe&bare&v=2" loading="lazy" title="左栏 · 三段"></iframe></div><a class="open" href="../app.html?dir=b&lay=left&det=pipe" target="_blank">打开</a></div>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&bare&v=2" loading="lazy" title="顶部磁贴 · 三段"></iframe></div><a class="open" href="../app.html?dir=b&lay=tiles&det=pipe" target="_blank">打开<span class="pick">B2</span></a></div>
+    <div><div class="frame"><iframe src="../app.html?dir=b&lay=table&det=pipe&bare&v=2" loading="lazy" title="顶部表格 · 三段"></iframe></div><a class="open" href="../app.html?dir=b&lay=table&det=pipe" target="_blank">打开</a></div>
+  </div>
+
+  <h2>2 · 三个方向</h2>
+  <p>从六种里挑出三个各自成立的搭配。每个方向左边选中日报,右边选中精读。</p>
+
+  <h3>B1 · 左栏名册 + 两栏</h3>
+  <p>与「任务与运行」同一副骨架:名册在左,一行三层(名称与上次结果、期数与 cron、近 7 日与距下次)。</p>
+  <div class="row">
+    <figure><figcaption><b>日报</b><a href="../app.html?dir=b&lay=left&det=cols" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=left&det=cols&bare&v=2" loading="lazy" title="B1 · 日报"></iframe></div></figure>
+    <figure><figcaption><b>精读</b><a href="../app.html?dir=b&lay=left&det=cols&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=left&det=cols&flow=picks&bare&v=2" loading="lazy" title="B1 · 精读"></iframe></div></figure>
+  </div>
+
+  <h3>B2 · 顶部磁贴 + 三段</h3>
+  <p>名册横过来放在纸的顶上,选中的那块底边一道;下面整幅宽度按 取材 → 加工 → 产出 排。阶段条平时就在「加工」里,生成时它就是进度。</p>
+  <div class="row">
+    <figure><figcaption><b>日报</b><a href="../app.html?dir=b&lay=tiles&det=pipe" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&bare&v=2" loading="lazy" title="B2 · 日报"></iframe></div></figure>
+    <figure><figcaption><b>精读</b><a href="../app.html?dir=b&lay=tiles&det=pipe&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&flow=picks&bare&v=2" loading="lazy" title="B2 · 精读"></iframe></div></figure>
+  </div>
+
+  <h3>B3 · 顶部表格 + 两栏</h3>
+  <p>流程一行一个。定时列里直接改 cron、拨开关,生成列里点生成,所以下面没有题条;选中一行,下面是它的配置与产出。</p>
+  <div class="row">
+    <figure><figcaption><b>日报</b><a href="../app.html?dir=b&lay=table&det=cols" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=table&det=cols&bare&v=2" loading="lazy" title="B3 · 日报"></iframe></div></figure>
+    <figure><figcaption><b>精读</b><a href="../app.html?dir=b&lay=table&det=cols&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=table&det=cols&flow=picks&bare&v=2" loading="lazy" title="B3 · 精读"></iframe></div></figure>
+  </div>
+
+  <table>
+    <tr><th></th><th>B1 · 左栏名册 + 两栏</th><th>B2 · 顶部磁贴 + 三段</th><th>B3 · 顶部表格 + 两栏</th></tr>
+    <tr><td>名册占的地方</td><td>常驻 300px 宽</td><td>顶上 93px 高</td><td>表头 35px + 每行 44px</td></tr>
+    <tr><td>所选流程的宽度</td><td>1440 窗口下 1018px</td><td>1318px</td><td>1318px</td></tr>
+    <tr><td>流程多了以后</td><td>名册往下排,900 高的窗口一屏 8 个</td><td>1440 窗口下一排 4 个,再多横向滚</td><td>5 行以内不滚,再多在表格里滚</td></tr>
+    <tr><td>开关、cron、立即生成</td><td>所选流程的题条</td><td>所选流程的题条</td><td>每一行上,不用先选中</td></tr>
+    <tr><td>一眼能比较各流程</td><td>能(三层小字)</td><td>能(同样三层)</td><td>最清楚(对齐成列,多一列取材)</td></tr>
+    <tr><td>窄窗口(1280)</td><td>两栏正常;换成三段时产出一段只剩 360px</td><td>正常</td><td>正常</td></tr>
+    <tr><td>与邻页的关系</td><td>与「任务与运行」左栏同构</td><td>磁贴的选中记号取自「任务与运行」的统计条</td><td>表格取自「任务与运行」的运行表</td></tr>
+  </table>
+
+  <h2>3 · 这一轮一起改的</h2>
+  <p>下面几处在六种组合里都一样,与名册放哪无关。</p>
+  <div class="row">
+    <figure><figcaption><b>现网</b>AI 日报<a href="../app.html?dir=now" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=now&bare&v=2" loading="lazy" title="现网"></iframe></div></figure>
+    <figure><figcaption><b>样页</b>B2<a href="../app.html?dir=b&lay=tiles&det=pipe" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&bare&v=2" loading="lazy" title="样页 · B2"></iframe></div></figure>
+  </div>
+  <table>
+    <tr><th></th><th>现网</th><th>样页</th></tr>
+    <tr><td>骨架</td><td>一张卡浮在页面上,下面留白,整页滚</td><td>页头 + 一张铺到底的纸,各区自己滚;与「任务与运行」「源管理」相同</td></tr>
+    <tr><td>题条</td><td>开关与 cron 在左栏表单里,立即生成在右栏标题旁</td><td>一条:上次结果、名称、产出源 id ｜ cron、开关、立即生成。每个流程同一副</td></tr>
+    <tr><td>配置</td><td>标签在上、输入框在下,一项连间距 71px;整栏 604px 高;取值范围写在标签里</td><td>参数行:名称在左、控件在右,一项 46px(源管理检视器的写法);两栏排法里六行共 245px;取值范围进悬停提示</td></tr>
+    <tr><td>区头</td><td>15px 的「定时配置」「近期日报」</td><td>一行 36px 的列头,字与表头相同(12px、加字距、灰),不与参数名争层级</td></tr>
+    <tr><td>历史行末尾</td><td>每一行都是同一个「已生成」徽标</td><td>那一期的生成时刻</td></tr>
+    <tr><td>阶段条</td><td>只在生成时出现</td><td>三段排法里一直在「加工」里;两栏排法里照现网</td></tr>
+  </table>
+
+  <h2>4 · 状态</h2>
+  <h3>生成中</h3>
+  <p>手动点了一次精读。</p>
+  <div class="row">
+    <figure><figcaption><b>B1</b><a href="../app.html?dir=b&lay=left&det=cols&flow=picks&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=left&det=cols&flow=picks&state=run&bare&v=2" loading="lazy" title="B1 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>B2</b><a href="../app.html?dir=b&lay=tiles&det=pipe&flow=picks&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&flow=picks&state=run&bare&v=2" loading="lazy" title="B2 · 生成中"></iframe></div></figure>
+    <figure><figcaption><b>B3</b><a href="../app.html?dir=b&lay=table&det=cols&flow=picks&state=run" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=table&det=cols&flow=picks&state=run&bare&v=2" loading="lazy" title="B3 · 生成中"></iframe></div></figure>
+  </div>
+  <h3>失败与跳过</h3>
+  <p>日报今天失败;精读今天跳过(当日榜单没入库)。三段排法里,跳过的原因写在「取材」那一段。</p>
+  <div class="row">
+    <figure><figcaption><b>B1</b>选中日报<a href="../app.html?dir=b&lay=left&det=cols&state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=left&det=cols&state=bad&bare&v=2" loading="lazy" title="B1 · 失败"></iframe></div></figure>
+    <figure><figcaption><b>B2</b>选中精读<a href="../app.html?dir=b&lay=tiles&det=pipe&state=bad&flow=picks" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=tiles&det=pipe&state=bad&flow=picks&bare&v=2" loading="lazy" title="B2 · 跳过"></iframe></div></figure>
+    <figure><figcaption><b>B3</b>选中日报<a href="../app.html?dir=b&lay=table&det=cols&state=bad" target="_blank">打开</a></figcaption>
+      <div class="frame" style="--s: 0.33; --vh: 620"><iframe src="../app.html?dir=b&lay=table&det=cols&state=bad&bare&v=2" loading="lazy" title="B3 · 失败"></iframe></div></figure>
+  </div>
+
+  <h2>5 · 待拍板</h2>
+  <table>
+    <tr><th>#</th><th>问题</th><th>建议</th></tr>
+    <tr><td>1</td><td>名册放哪:左栏 / 顶部磁贴 / 顶部表格</td><td>顶部磁贴。流程不会多,横着放不占宽度;到六七个再换成表格,下面的东西不用动</td></tr>
+    <tr><td>2</td><td>所选流程怎么排:两栏 / 三段</td><td>三段。取材、加工、产出这三样每个流程都有,版面直接把它排出来;跳过的原因也有地方写</td></tr>
+    <tr><td>3</td><td>配置改成参数行</td><td>改。日报的配置从 604px 高降到 245px;取值范围挪进悬停提示</td></tr>
+    <tr><td>4</td><td>历史行末尾的「已生成」换成生成时刻</td><td>换。列表里本来就都是已生成的</td></tr>
+    <tr><td>5</td><td>阶段条平时也显示(三段排法)</td><td>显示。它同时说明这个流程分几步,生成时就是进度</td></tr>
+    <tr><td>6</td><td>精读的「取材」写出日榜最近一次入库的时间</td><td>写。日榜没入库时一眼看得出为什么跳过</td></tr>
+    <tr><td>7</td><td>保存配置放哪</td><td>三段排法里放在「加工」底部,连同取材范围一起存;与现网的「保存配置」同一个动作</td></tr>
+    <tr><td colspan="3" style="color: var(--faint); padding-top: 18px;">上一轮还没定的</td></tr>
+    <tr><td>8</td><td>叫什么</td><td>页签「AI 产出」,导轨短名「产出」;里面的一个叫「流程」</td></tr>
+    <tr><td>9</td><td>源管理 · 系统那两行写什么</td><td>把「无采集」换成「生成」(样页里还是照现网写的「无采集」)</td></tr>
+    <tr><td>10</td><td>跳过怎么算</td><td>不算失败:琥珀色记号,近 7 日里那天留空</td></tr>
+    <tr><td>11</td><td>新流程默认开还是关</td><td>关</td></tr>
+    <tr><td>12</td><td>精读的旋钮</td><td>挑选个数(1–10,默认 6)、只看 AI 相关(默认开)</td></tr>
+    <tr><td>13</td><td>精读这一期送不送入库分析</td><td>不送</td></tr>
+  </table>
+
+  <h2>6 · 样页的边界</h2>
+  <p>日报的历史行、cron 与各项取值来自开发库副本,日期平移到了今天;每一期的生成时刻、精读这个流程的全部数字是示意。</p>
+  <p>原型里能点的是:导轨上的三个页签、名册里的两个流程、产出源 id 与取材的源名(去源管理)。开关、cron、保存、立即生成都不会改动任何数据;历史行不能展开。</p>
+  <p>没有画的:读者面、新流程第一次打开时的空态、日报「自定名单」展开后的样子(现网是一组可增删的源)、手机壳(管理面不在手机壳里)。</p>
+</main>
+</body>
+</html>

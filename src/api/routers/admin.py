@@ -20,8 +20,8 @@ from sqlmodel import Session, func, select
 from api import deps
 from api.serializers import serialize_user
 from api.sources import (
-    DAILY_BRIEF_SOURCE_ID,
-    DAILY_BRIEF_SOURCE_META,
+    system_source_meta,
+    system_source_name,
     _friendly_source_name,
     _registry_source_meta,
     _source_category,
@@ -220,9 +220,7 @@ def admin_home(days: int = 30, top: int = 8, session: Session = Depends(deps.get
     registry_meta = _registry_source_meta()
 
     def _name(source_id: str) -> str:
-        meta = registry_meta.get(source_id, {})
-        if source_id == DAILY_BRIEF_SOURCE_ID:
-            meta = {**DAILY_BRIEF_SOURCE_META, **meta}
+        meta = {**(system_source_meta(source_id) or {}), **registry_meta.get(source_id, {})}
         return meta.get("name") or _friendly_source_name(source_id, registry_meta)
 
     ranked = sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
@@ -647,9 +645,7 @@ def admin_content(top: int = 12, session: Session = Depends(deps.get_session)):
     source_ids = set(by_source) | set(subs_by_source) | set(favorites_by_source) | set(reads_by_source)
     sources: List[Dict[str, Any]] = []
     for source_id in source_ids:
-        meta = registry_meta.get(source_id, {})
-        if source_id == DAILY_BRIEF_SOURCE_ID:
-            meta = {**DAILY_BRIEF_SOURCE_META, **meta}
+        meta = {**(system_source_meta(source_id) or {}), **registry_meta.get(source_id, {})}
         info = by_source.get(source_id, {})
         article_count = int(info.get("article_count", 0))
         content_type = info.get("primary_content_type") or meta.get("content_type") or ""
@@ -793,8 +789,9 @@ def _reader_defaults_payload(session: Session) -> Dict[str, Any]:
     unknown = set(reader_defaults_service.unknown_source_ids(session, effective, registry_meta))
 
     def _name(source_id: str) -> str:
-        if source_id == DAILY_BRIEF_SOURCE_ID:
-            return DAILY_BRIEF_SOURCE_META["name"]
+        system_name = system_source_name(source_id)
+        if system_name:
+            return system_name
         if source_id in configured and configured[source_id]:
             return configured[source_id]
         return _friendly_source_name(source_id, registry_meta)
@@ -875,8 +872,7 @@ def _guest_payload(session: Session, days: int) -> Dict[str, Any]:
         "default_sources": [
             {
                 "source_id": sid,
-                "name": DAILY_BRIEF_SOURCE_META["name"] if sid == DAILY_BRIEF_SOURCE_ID
-                else _friendly_source_name(sid, registry_meta),
+                "name": system_source_name(sid) or _friendly_source_name(sid, registry_meta),
             }
             for sid in default_ids
         ],

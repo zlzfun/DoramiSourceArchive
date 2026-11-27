@@ -19,17 +19,21 @@ from services.source_naming import friendly_source_name
 
 
 
-# 日报作为「特殊源」的展示元数据。日报不是抓取器（不进 FetcherRegistry），
-# 在内容源目录里直接特判其名称/图标/简介，避免被采集触发流程误调。
+# 系统源(公共日报等)不是抓取器(不进 FetcherRegistry),内容源目录里的名称 / 图标 / 简介 / 条目类型 /
+# 出品方不能从注册表来:写在策展源目录文件的 ``[[system]]`` 条目里(``system.toml``),这里按 id 取。
+# 以前是日报一个常量(``DAILY_BRIEF_SOURCE_META``);issue #72 起系统源可以不止一个。
 DAILY_BRIEF_SOURCE_ID = daily_brief_service.DAILY_BRIEF_SOURCE_ID
-DAILY_BRIEF_SOURCE_META = {
-    "name": "哆啦美·AI资讯日报",
-    "icon": "🤖",
-    "desc": "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。",
-    "content_type": "daily_brief",
-    # 归到哆啦美自有品牌身份，使前端徽标走品牌色「美」字而非通用齿轮兜底。
-    "source_owner": "dorami",
-}
+
+
+def system_source_meta(source_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """系统源的目录元数据(``name`` / ``icon`` / ``desc`` / ``content_type`` / ``source_owner``);不是系统源返回 None。"""
+    return source_catalog.system_source_meta(source_id)
+
+
+def system_source_name(source_id: Optional[str]) -> str:
+    """系统源的名称;不是系统源返回空串。"""
+    meta = source_catalog.system_source_meta(source_id)
+    return meta["name"] if meta else ""
 
 
 def subscription_source_ids(subscription: ReaderSubscriptionRecord) -> List[str]:

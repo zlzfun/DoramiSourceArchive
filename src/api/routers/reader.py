@@ -43,7 +43,7 @@ from api.tokens import (
 )
 from api.sources import (
     DAILY_BRIEF_SOURCE_ID,
-    DAILY_BRIEF_SOURCE_META,
+    system_source_meta,
     _friendly_source_name,
     _registry_source_meta,
     _source_category,
@@ -214,8 +214,10 @@ def _configured_source_meta(session: Session) -> Dict[str, Dict[str, Any]]:
     result: Dict[str, Dict[str, Any]] = {}
     for record in session.exec(select(SourceConfigRecord)).all():
         if (record.origin or "") == "system":
-            # 系统源(公共日报)有自己的目录元数据(DAILY_BRIEF_SOURCE_META),系统行只为满足
-            # 「每个 source_id 都有一行」的不变量,不覆盖它(issue #262 R1c)。
+            # 系统源(公共日报等)有自己的目录元数据(策展源目录的 [[system]] 条目,见
+            # api.sources.system_source_meta),系统行只为满足「每个 source_id 都有一行」的不变量,
+            # 不覆盖它(issue #262 R1c)。也因此:还没有任何条目的系统源不会出现在读者目录里
+            # (公共日报除外,下面单独预先列出,便于提前订阅)。
             continue
         result[record.source_id] = {
             "id": record.source_id,
@@ -1370,9 +1372,7 @@ def _reader_sources_catalog(
     def _ensure_entry(source_id: str, content_type: Optional[str] = None) -> Dict[str, Any]:
         entry = by_source.get(source_id)
         if entry is None:
-            meta = source_meta.get(source_id, {})
-            if source_id == DAILY_BRIEF_SOURCE_ID:
-                meta = {**DAILY_BRIEF_SOURCE_META, **meta}
+            meta = {**(system_source_meta(source_id) or {}), **source_meta.get(source_id, {})}
             resolved_type = content_type or meta.get("content_type") or ""
             cached_profile = x_user_caches.get(source_id, {})
             entry = {

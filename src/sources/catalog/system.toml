@@ -3,14 +3,21 @@
 
 # ── 系统源 ──────────────────────────────────────────────────────────────────
 # 由本系统自己产出内容的源:没有抓取器,没有采集绑定。
+# 系统源的条目不回流:不进公共日报候选、个人早报、榜单、兴趣与 Taxonomy 的取证,推送也不能往里写
+# (各处读 services.source_catalog.system_source_ids(),不认 id 前缀)。
+# 可选键:icon / description(读者目录与管理面的展示)、analysis(这个源的条目默认送不送入库分析,
+# 缺省 true;只是建源行时的初值)。
+# 这类条目的 content_type 是代码里的事实,在 services/source_catalog._SYSTEM_CONTENT_TYPES。
 
 [[system]]
 id = "dorami_daily_brief"
 name = "哆啦美·AI资讯日报"
 shape = "article"
-owner = "dorami"
+owner = "dorami"                  # 归到哆啦美自有品牌身份:前端徽标走品牌色「美」字,不是通用齿轮
 scope = "aggregator"
 tier = "tier1_curated"
+icon = "🤖"
+description = "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。"
 
 # ── 墓碑 ────────────────────────────────────────────────────────────────────
 # 历次节点审计里下线的策展源(docs/sources/node_audit_playbook.md):抓取器类与目录条目已删,

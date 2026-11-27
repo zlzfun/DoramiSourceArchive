@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 from llm.article_analysis_prompt import CONTENT_VALUE_SCORING_VERSION
 from models.analysis_contracts import PERSONAL_DIGEST_LISTEN_MIN_VALUE, PERSONAL_DIGEST_READ_MIN_VALUE
 from models.db import ArticleAnalysisRecord, ArticleRecord, EventMemberRecord
-from services import event_board
+from services import event_board, source_catalog
 from services.article_time import in_time_window, parse_article_time
 from services.content_classification import ITEM_KIND_LABELS, classify_item, source_default_kinds
 from services.content_recommendations import recommendation_value
@@ -36,8 +36,12 @@ Shape = Literal["article", "podcast"]
 WINDOW_DAYS = 7
 LIMIT = 10
 PODCAST_CONTENT_TYPE = "podcast_episode"
-EXCLUDED_SOURCE_IDS = ("dorami_daily_brief",)        # 公共日报记录(与早报候选池同一排除)
 EXCLUDED_CONTENT_TYPES = ("daily_brief",)
+
+
+def _excluded_source_ids() -> tuple[str, ...]:
+    """系统源的条目(公共日报记录等)不上榜,与早报候选池同一排除;名单在策展源目录里。"""
+    return tuple(sorted(source_catalog.system_source_ids()))
 MIN_VALUE: dict[str, float] = {
     "article": PERSONAL_DIGEST_READ_MIN_VALUE,
     "podcast": PERSONAL_DIGEST_LISTEN_MIN_VALUE,
@@ -75,7 +79,7 @@ def _candidate_rows(
             ArticleAnalysisRecord.quality_score.is_not(None),
             ArticleRecord.source_id.is_not(None),
             ArticleRecord.source_id.not_like(f"{PRIVATE_SOURCE_PREFIX}%"),
-            ArticleRecord.source_id.notin_(EXCLUDED_SOURCE_IDS),
+            ArticleRecord.source_id.notin_(_excluded_source_ids()),
         )
     )
     if shape == "podcast":

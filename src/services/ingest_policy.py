@@ -4,7 +4,7 @@
 ``content_type``),注入路径没有——这里补上同一层的服务端约束:
 
 - 保留 id 不接受注入:读者自定源 ``user_rss_*``、抓取模板 ``generic_*``、
-  公共日报 ``dorami_daily_brief``、已下线源墓碑;
+  系统源(公共日报 ``dorami_daily_brief`` 等,名单在策展源目录里)、已下线源墓碑;
 - 条目 id 一律落在 ``{source_id}_`` 命名空间下(抓取器同一约定),
   调用方给的 id 不能借用他源的主键空间;
 - ``extensions_json`` 只接受 JSON 对象,坏 JSON 显式拒绝而不是静默丢弃;
@@ -41,6 +41,13 @@ def _decommissioned_ids() -> frozenset[str]:
     return source_catalog.tombstone_ids()
 
 
+def _system_source_ids() -> frozenset[str]:
+    # 与墓碑同理:名单在策展源目录文件里,读不到就该报错,不能当成「没有系统源」放行写入。
+    from services import source_catalog
+
+    return source_catalog.system_source_ids()
+
+
 def reserved_source_id_reason(source_id: str, *, allow_daily_brief: bool = False) -> str | None:
     """注入通道不得写入的 source_id;返回拒绝原因,可写时返回 None。
 
@@ -51,8 +58,12 @@ def reserved_source_id_reason(source_id: str, *, allow_daily_brief: bool = False
         return "source_id 不能为空"
     if sid.startswith(USER_SOURCE_PREFIX):
         return "读者自定源只能由其抓取器写入"
-    if sid == DAILY_BRIEF_SOURCE_ID and not allow_daily_brief:
-        return "公共日报源只能由日报生成写入"
+    if sid == DAILY_BRIEF_SOURCE_ID:
+        if not allow_daily_brief:
+            return "公共日报源只能由日报生成写入"
+    elif sid in _system_source_ids():
+        # 其它系统源的条目只由各自的生成流程写入;「手工补一期日报」的口子不延伸到它们
+        return "系统源只能由其生成流程写入"
     if sid in _registry_template_ids():
         return "抓取模板不是来源,不能直接写入"
     if sid in _decommissioned_ids():

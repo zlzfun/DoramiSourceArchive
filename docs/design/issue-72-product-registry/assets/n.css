@@ -1,0 +1,201 @@
+/* issue #72 样页:泳道(定稿方向,.lane-*)与第三轮台账(.pm-*)的样式。取值只用 index.css 现有 token;
+   与上一轮共用的小块(.pf-cron / .pf-icon / .pf-when / .pf-save / .pf-input / .pf-cursor / .px-bar)在 proto.css。 */
+
+/* ══ 泳道:流程 × 阶段。一行一个流程,列头就是 取材 → 加工 → 产出;
+      平时每格只有一句概况,点开一行,三格各自的细节落在同一列下面 ══ */
+.lane-paper { flex-direction: column; }
+.lane-wrap { flex: 1 1 0%; min-height: 0; overflow-y: auto; }
+.lane-grid {
+  display: grid;
+  /* 各列最小宽度之和 1156,放得进 1280 窗口下纸的内宽 1158(导轨 64 + 两侧各 28 + 纸的边线);取材一列在宽窗口里放到 240,给自定名单的名字留地方 */
+  grid-template-columns: 236px minmax(200px, 240px) minmax(200px, 1fr) minmax(280px, 360px) 180px 60px;
+}
+/* 列头:与表头同一副字,36px */
+.lane-band {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--dorami-surface);
+  border-bottom: 1px solid var(--dorami-border);
+}
+.lane-band > span {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+}
+.lane-band > span:first-child { padding-left: 20px; }
+.lane-band > span.is-flow::after { content: "→"; margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.lane-lane { border-bottom: 1px solid var(--dorami-border); }
+.lane-row {
+  min-height: 78px;
+  align-items: center;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.lane-row:hover { background: var(--dorami-soft); }
+.lane-lane.is-open > .lane-row { background: var(--dorami-select); }
+.lane-cell { min-width: 0; padding: 12px; }
+.lane-cell:first-child { padding-left: 20px; }
+.lane-id { display: flex; align-items: center; gap: 10px; }
+.lane-id .run-obj-txt { min-width: 0; }
+.lane-caret {
+  flex: none;
+  display: inline-flex;
+  color: var(--dorami-faint);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+.lane-caret svg { width: 14px; height: 14px; }
+.lane-lane.is-open .lane-caret { transform: rotate(90deg); }
+/* 一格两层:上面一句(13px),下面一行小字(.run-obj-sub:等宽 12 faint) */
+.lane-main { font-size: 13px; line-height: 20px; color: var(--dorami-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-main.is-err { color: var(--state-bad); }
+.lane-main.is-warn { color: var(--state-warn); }
+.lane-main.is-run { color: var(--state-run); }
+.lane-main.is-none { color: var(--dorami-faint); }
+.lane-sub { display: flex; align-items: center; gap: 8px; min-height: 18px; margin-top: 3px; }
+.lane-cell .run-obj-sub.is-warn { color: var(--state-warn); }
+.lane-cell .pipeline-note { margin-top: 5px; }
+.lane-cell .pf-rhythm { display: flex; }
+.lane-cell .pf-rhythm + .run-obj-sub { margin-top: 5px; }
+/* 点开:三格细节与列头对齐;往期占 产出 起的三列。
+   第二行是「保存配置」:横跨 取材、加工 两列——它提交的就是这两列里改的东西 */
+.lane-more { grid-template-rows: auto 1fr; align-items: start; border-top: 1px solid var(--dorami-border); }
+.lane-more[hidden] { display: none; }
+.lane-stack { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
+.lane-save {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 12px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dorami-border);
+}
+/* 自定名单:现网的名单框,去掉与上面分段钮之间多出来的那一截 */
+.lane-stack .pf-scope .brief-scope-list { margin-top: 0; }
+.lane-stack .scope-note { margin-top: 0; }
+.lane-stack .inspector-param:first-child { padding-top: 0; }
+.lane-stack .inspector-param:last-child { padding-bottom: 0; }
+/* 窄列里游标分两行:第一行「增量游标 … 重置」,第二行是值 */
+.lane-stack .pf-cursor,
+.pm-config-body .pf-cursor { flex-wrap: wrap; row-gap: 2px; }
+.lane-stack .pf-cursor .brief-cursor-reset,
+.pm-config-body .pf-cursor .brief-cursor-reset { margin-left: auto; }
+.lane-stack .pf-cursor .brief-cursor-val,
+.pm-config-body .pf-cursor .brief-cursor-val { order: 3; flex: 0 0 100%; }
+/* 取材是固定一个源时:入库时间已经在上面那一行里,点开后只留去源管理的入口 */
+.lane-stack .pf-input time { display: none; }
+.lane-stack .pf-src { white-space: nowrap; }
+.lane-list { grid-column: 4 / -1; grid-row: 1 / span 2; padding: 6px 20px 14px 12px; }
+.lane-list .brief-empty { margin-top: 8px; }
+.lane-list .brief-pager-row { margin-top: 8px; }
+
+/* ══ 台账:流程 × 日期。一格一天,往期不再是列表;选中一格,下面是那一期 ══ */
+.pm-paper { flex-direction: column; }
+.pm-grid { display: grid; grid-template-columns: 250px minmax(0, 1fr) 60px 180px 56px 60px; align-items: center; }
+.pm-prev svg { transform: rotate(180deg); }
+.pm-band { border-bottom: 1px solid var(--dorami-border); }
+.pm-band > span {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--dorami-faint);
+  white-space: nowrap;
+}
+.pm-band > span:first-child { padding-left: 20px; }
+.pm-row { min-height: 56px; border-bottom: 1px solid var(--dorami-border); }
+.pm-row > div { min-width: 0; padding: 0 12px; }
+.pm-row > div:first-child { padding-left: 20px; }
+.pm-id { display: flex; align-items: center; gap: 10px; }
+.pm-id .run-obj-txt { min-width: 0; }
+/* 日期轴与格子:一格 26px;轴上的日期用等宽 12px,月初那一天写月份 */
+.pm-days { display: flex; justify-content: flex-end; overflow: hidden; }
+.pm-days > * { flex: 0 0 26px; }
+.pm-axis { height: 35px; align-items: center; }
+.pm-axis span {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--dorami-faint);
+  font-variant-numeric: tabular-nums;
+}
+.pm-axis span.is-month { color: var(--dorami-ink-2); font-weight: 600; }
+.pm-axis span.is-today { color: var(--dorami-ink); font-weight: 600; }
+.pm-day {
+  display: grid;
+  place-items: center;
+  height: 40px;
+  border-radius: var(--r-sm);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+button.pm-day:hover { background: var(--dorami-soft); }
+.pm-day i { width: 14px; height: 14px; border-radius: 3px; background: var(--dorami-well); }
+.pm-day.ok i { background: var(--state-ok); opacity: 0.75; }
+.pm-day.bad i { background: var(--state-bad); transform: rotate(45deg) scale(0.82); border-radius: 2px; }
+.pm-day.skip i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--state-warn); }
+.pm-day.run i { background: var(--state-run); border-radius: 50%; animation: 1.6s ease 0s infinite normal none running stamp-pulse; }
+.pm-day.none i { width: 4px; height: 4px; border-radius: 50%; }
+.pm-day.is-sel { background: var(--dorami-select); box-shadow: inset 0 0 0 1.5px var(--dorami-blue); }
+.pm-row .pf-rhythm { display: flex; }
+/* 这一期:题条 + 正文(条目)+ 可唤出的配置栏 */
+.pm-issue { flex: 1 1 0%; min-height: 0; display: flex; }
+.pm-main { flex: 1 1 0%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pm-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--dorami-border);
+}
+.pm-date { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--dorami-ink); font-variant-numeric: tabular-nums; }
+.pm-facts { font-size: 13px; color: var(--dorami-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pm-facts.is-err { color: var(--state-bad); }
+.pm-facts.is-warn { color: var(--state-warn); }
+.pm-head .pm-acts { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.pm-body { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 6px 20px 20px; }
+.pm-item { display: flex; align-items: center; gap: 12px; height: 40px; border-bottom: 1px solid var(--dorami-border); }
+.pm-item:last-child { border-bottom: 0; }
+.pm-item .pm-score { flex: 0 0 28px; font-family: var(--mono); font-size: 12px; color: var(--dorami-ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pm-item .pm-title { flex: 1 1 0%; min-width: 0; font-size: 13px; color: var(--dorami-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-item .pm-title.is-slot { color: var(--dorami-faint); }
+.pm-item .pm-title b { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--dorami-ink); margin-right: 8px; }
+/* 分类与来源各占一列,左对齐成列 */
+.pm-item .pm-kind, .pm-item .pm-source { font-size: 12px; color: var(--dorami-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-item .pm-kind { flex: 0 0 60px; }
+.pm-item .pm-source { flex: 0 0 160px; }
+.pm-group { padding: 14px 0 2px; font-size: 12px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint); }
+.pm-empty { padding: 40px 0; display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--dorami-faint); font-size: 13px; }
+/* 配置栏:沿用源管理检视器的宽度与内边距(.board-inspector 345px) */
+.pm-config {
+  flex: 0 0 345px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--dorami-border);
+}
+.pm-config[hidden] { display: none; }
+.pm-config .pm-head { gap: 8px; }
+.pm-config .pm-head .tools-title { flex: 1 1 0%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-config-body { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.pm-config-body > * { flex: none; }
+.pm-config-body .scope-note { margin-top: 0; }
+.pm-config-body .inspector-param:first-child { padding-top: 0; }
+.pm-config-body .pf-cursor { flex-wrap: wrap; row-gap: 2px; }
+.pm-sec-label { font-size: 12px; font-weight: 600; letter-spacing: 0.07em; color: var(--dorami-faint); padding-top: 6px; border-top: 1px solid var(--dorami-border); margin-top: 2px; padding-top: 12px; }
+.pm-sec-label:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.pf-icon.is-on { background: var(--dorami-select); color: var(--dorami-ink); }

@@ -209,3 +209,27 @@ def test_guest_reads_picks_endpoint(monkeypatch, tmp_path):
         assert _ids(response.json()) == ["paper"]
         assert client.get("/api/reader/rankings/picks?shape=podcast").json()["empty_reason"] == "no_items"
         assert client.get("/api/reader/rankings/picks?shape=social").status_code == 422
+
+
+def test_system_source_items_never_rank(tmp_path, second_system_source):
+    """issue #72:系统源的条目不上榜,名单在策展源目录里(以前只写死了公共日报一个 id)。"""
+    sink = _sink(tmp_path, "system.db")
+    with Session(sink.engine) as session:
+        _item(session, "paper", "media-a", kind="paper", value=8.2)
+        # 条目类型故意写成普通文章:排除靠的是源在名单里,不是 daily_brief 这个条目类型
+        _item(session, "brief", "dorami_daily_brief", kind="paper", value=9.5)
+        _item(session, "other", second_system_source, kind="paper", value=9.6)
+        session.commit()
+        payload = ranking_picks.read_picks(session, shape="article", now=NOW)
+    assert _ids(payload) == ["paper"]
+
+
+def test_an_unlisted_dorami_id_ranks_like_any_source(tmp_path):
+    """反向对照:名单里没有它时照常上榜。"""
+    sink = _sink(tmp_path, "unlisted.db")
+    with Session(sink.engine) as session:
+        _item(session, "paper", "media-a", kind="paper", value=8.2)
+        _item(session, "other", "dorami_test_flow", kind="paper", value=9.6)
+        session.commit()
+        payload = ranking_picks.read_picks(session, shape="article", now=NOW)
+    assert _ids(payload) == ["other", "paper"]

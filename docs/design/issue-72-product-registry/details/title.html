@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成流程 · 细节:页面叫什么、管什么</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  .grid { display: grid; grid-template-columns: repeat(2, max-content); gap: 22px 28px; margin-top: 18px; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 15px; color: var(--ink); font-weight: 600; }
+  figcaption .pick { font-size: 12px; font-weight: 600; color: var(--accent); }
+  figcaption a { margin-left: auto; }
+  /* 只看左上角:导轨、页面标题、列头、第一行 */
+  .frame { position: relative; overflow: hidden; width: 640px; height: 232px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .frame iframe { position: absolute; top: 0; left: 0; width: 1440px; height: 900px; border: 0; transform: scale(0.8); transform-origin: 0 0; }
+  table { border-collapse: collapse; margin-top: 14px; font-size: 14px; max-width: 1300px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 18px 9px 0; border-top: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--faint); font-size: 13px; border-top: 0; white-space: nowrap; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+  .yes { color: #0f9d6b; } .no { color: #b3261e; }
+</style>
+</head>
+<body>
+<main>
+  <h1>细节:这一页叫什么、管什么</h1>
+  <p class="lede">方向定了 C2 泳道。两个问题连在一起:外部 Agent 推来的内容不在这一页,所以「AI 产出」这个名字就偏大了。</p>
+  <p><b>2026-11-27 定了:页面叫「生成流程」,导轨短名「生成」。</b>下面是当时并排的六个叫法。</p>
+  <p><a href="../index.html">回总览</a></p>
+
+  <h2>1 · 这一页管什么</h2>
+  <p>内容进平台有三条路,按「谁在跑」分;三条路在源管理里是同一格「获取方式」。</p>
+  <table>
+    <tr><th>获取方式</th><th>谁在跑</th><th>平台管得到什么</th><th>在哪管</th></tr>
+    <tr><td>抓取</td><td>平台的抓取器</td><td>参数、定时、每次运行的结果</td><td>源管理;任务与运行</td></tr>
+    <tr><td>推送</td><td>别处的 Agent、bot(不在本服务里)</td><td>来源(登记、列入 / 下架、读者可见、分析开关)与令牌(绑定、日额度、吊销)。它几点跑、怎么写的、失败没有,平台看不到,只知道最近一批什么时候到</td><td>源管理 · 登记来源;运维 · 收录令牌</td></tr>
+    <tr><td>生成</td><td>平台自己的流程</td><td>取材、旋钮、定时、开关、立即生成、进度、每一期</td><td><b>这一页</b></td></tr>
+  </table>
+  <p>所以外部 Agent 自己写了文章再提交,走收录推送就行,不进这一页:这一页上的每一列(取材、加工、定时、生成)对它都是空的。现在的推送接口有两处是照着「转来别处已有的内容」做的,Agent 自己写的内容用起来要知道:</p>
+  <table>
+    <tr><th></th><th>现在的行为</th><th>对 Agent 自己写的内容意味着什么</th></tr>
+    <tr><td>要链接</td><td><code>kind=article</code> 没有 <code>url</code> 就拒收(「文章需要链接」);条目身份也按链接算</td><td>Agent 得给每一篇一个稳定的地址(自己托管,或约定一个固定格式的地址)</td></tr>
+    <tr><td>当普通文章</td><td>入库即 <code>web_article</code>:照常评分,可以进榜单;列入后可以进公共日报候选;被订阅后可以进个人早报</td><td>如果推来的是对站内已有内容的二次加工(汇编、点评),会回流成素材。现在能挡的只有来源上的两个开关:关掉本机分析(没有分数,日报、早报、榜单都进不了),或者不列入(只挡公共日报候选与发现页)</td></tr>
+  </table>
+
+  <h2>2 · 这一页叫什么</h2>
+  <p>每个画框是泳道页的左上角:导轨(短名平时不显示,鼠标移上导轨才出来,这里让它一直显示)、页面标题、第一列的列头。</p>
+  <div class="grid">
+    <figure><figcaption><b>AI 产出</b>现在<a href="../n1.html?title=AI 产出&rail=产出" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=AI%20%E4%BA%A7%E5%87%BA&rail=%E4%BA%A7%E5%87%BA&v=6" loading="lazy" title="AI 产出"></iframe></div></figure>
+    <figure><figcaption><b>生成流程</b><span class="pick">已定</span><a href="../n1.html?title=生成流程&rail=生成" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=%E7%94%9F%E6%88%90%E6%B5%81%E7%A8%8B&rail=%E7%94%9F%E6%88%90&v=6" loading="lazy" title="生成流程"></iframe></div></figure>
+    <figure><figcaption><b>定时生成</b><a href="../n1.html?title=定时生成&rail=生成" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=%E5%AE%9A%E6%97%B6%E7%94%9F%E6%88%90&rail=%E7%94%9F%E6%88%90&v=6" loading="lazy" title="定时生成"></iframe></div></figure>
+    <figure><figcaption><b>自产内容</b><a href="../n1.html?title=自产内容&rail=自产" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=%E8%87%AA%E4%BA%A7%E5%86%85%E5%AE%B9&rail=%E8%87%AA%E4%BA%A7&v=6" loading="lazy" title="自产内容"></iframe></div></figure>
+    <figure><figcaption><b>栏目</b>第一列的列头也叫「栏目」<a href="../n1.html?title=栏目&rail=栏目&obj=栏目" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=%E6%A0%8F%E7%9B%AE&rail=%E6%A0%8F%E7%9B%AE&obj=%E6%A0%8F%E7%9B%AE&v=6" loading="lazy" title="栏目"></iframe></div></figure>
+    <figure><figcaption><b>哆啦美出品</b><a href="../n1.html?title=哆啦美出品&rail=出品" target="_blank">打开</a></figcaption>
+      <div class="frame"><iframe src="../n1.html?bare&railhover&title=%E5%93%86%E5%95%A6%E7%BE%8E%E5%87%BA%E5%93%81&rail=%E5%87%BA%E5%93%81&v=6" loading="lazy" title="哆啦美出品"></iframe></div></figure>
+  </div>
+  <table>
+    <tr><th>叫法</th><th>导轨短名</th><th>字面上排除了推来的内容吗</th><th>与现有叫法</th><th>别的</th></tr>
+    <tr><td>AI 产出</td><td>产出</td><td class="no">没有。外部 Agent 推来的也是 AI 的产出</td><td>沿着原来的「AI 日报」;别的页签都不带「AI」</td><td>「产出」又是泳道第四列的列头</td></tr>
+    <tr><td>生成流程</td><td>生成</td><td class="yes">排除了。生成是平台自己的动作</td><td>对得上源管理的获取方式(抓取 / 推送 / 生成)、行上的「立即生成」、往期的「已生成」;页面里列的就是流程</td><td>平实,不出彩</td></tr>
+    <tr><td>定时生成</td><td>生成</td><td class="yes">排除了</td><td>同上</td><td>也能手动生成;开关关了就不定时,名字说窄了</td></tr>
+    <tr><td>自产内容</td><td>自产</td><td class="yes">排除了。与抓来的、推来的相对,意思最准</td><td>没有先例</td><td>偏口语</td></tr>
+    <tr><td>栏目</td><td>栏目</td><td>看不出来</td><td>与「期」「往期」成一套,读起来像刊物</td><td>同一个东西在读者那边叫源、在这里叫栏目,多一个概念;也看不出是平台生成的</td></tr>
+    <tr><td>哆啦美出品</td><td>出品</td><td class="yes">排除了</td><td>源目录里这些源的出品方本来就写着 dorami</td><td>品牌口吻;别的页签都是直白的名词</td></tr>
+  </table>
+  <p>定的是「生成流程」,导轨短名「生成」,第一列的列头「流程」不变。这样源管理里这些源的获取方式也顺着写「生成」(总览页 §5 第 6 项,还没定)。</p>
+</main>
+</body>
+</html>

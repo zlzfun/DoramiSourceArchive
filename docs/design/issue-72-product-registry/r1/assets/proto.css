@@ -1,0 +1,127 @@
+/* issue #72 样页新增部分的样式。
+   上半是要落地的(取值只用 index.css 现有 token);下半 .px-* 是样页开关,不属于产品界面。 */
+
+/* ── 流程题条:所有流程同一副 ─────────────────────────────────────────────
+   上次结果 · 名称 · 产出源 id ｜ 近 7 日 · 定时 · 距下次 · 开关 · 立即生成。
+   记号沿用「任务与运行」名册的 .tt-last / .tt-dots / .tt-next,不另起一套。 */
+.pf-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--dorami-border);
+  background: var(--dorami-soft);
+}
+.pf-name { font-size: 15px; font-weight: 600; line-height: 21px; color: var(--dorami-ink); white-space: nowrap; }
+.pf-sid {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dorami-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-bar .tt-dots { margin-left: auto; }
+.pf-bar .tt-next { margin-left: 0; min-width: 112px; text-align: right; white-space: nowrap; }
+.pf-bar .action-button { flex: none; }
+/* 定时:cron 一格(题条里、检视器参数行里同一个) */
+.pf-cron.form-input {
+  width: 108px;
+  flex: none;
+  min-height: 30px;
+  padding: 0 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+/* ── 方向 A:一物一卡 ─────────────────────────────────────────────────── */
+.pf-card { overflow: hidden; }
+.pf-card + .pf-card { margin-top: 16px; }
+/* 卡内小节标题降一档(13/600,.tools-title 刻度),不与题条里的流程名同级 */
+.pf-card .brief-col-title,
+.pf-pane .brief-col-title { font-size: 13px; line-height: 18px; }
+.pf-card .brief-col-head .action-button { margin-top: 0; }
+
+/* ── 方向 B:名册 + 所选流程 ──────────────────────────────────────────── */
+/* 外框与左栏沿用 .runs-paper + .timetable(「任务与运行」同一副) */
+.pf-paper { min-height: 640px; align-items: stretch; }
+.pf-detail { flex: 1 1 0%; min-width: 0; display: flex; flex-direction: column; }
+.pf-pane { display: flex; flex-direction: column; flex: 1 1 0%; min-width: 0; }
+.pf-pane[hidden] { display: none; }
+.pf-pane > .pf-bar { background: transparent; }
+.pf-pane > .pf-bar .pf-cron { margin-left: auto; }
+.pf-pane > .brief-card {
+  flex: 1 1 0%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+/* ── 取材:流程读哪个源(固定的那种),点了去源管理 ───────────────────── */
+.pf-src { align-self: flex-start; }
+
+/* ── 方向 C:检视器里的「生成」框 ─────────────────────────────────────
+   以下 .acq-* 逐字取自 PR #350(issue #344,尚未合入主干)的 index.css:「抓取」「推送」两个框用的就是它们,
+   「生成」是同一副框架的第三个。主干合入 #350 后这一段可以删掉。 */
+.board-node-type.acq-none { color: var(--dorami-faint); background: transparent; box-shadow: inset 0 0 0 1px var(--dorami-border); }
+.acq-panel { flex: none; border: 1px solid var(--dorami-border); border-radius: var(--r-control); overflow: hidden; }
+.acq-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--dorami-soft);
+}
+.acq-fetcher { margin-left: auto; font-size: 12px; color: var(--dorami-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acq-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.acq-panel .inspector-param:first-child { padding-top: 0; }
+.acq-panel .inspector-param:last-child { padding-bottom: 0; }
+.acq-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 -12px;
+  padding: 10px 12px 0;
+  border-top: 1px solid var(--dorami-border);
+}
+.acq-sec > .micro-label { color: var(--dorami-faint); }
+/* 以上取自 PR #350 */
+
+/* 「生成」框里的参数行:数字格沿用 .inspector-param-input;cron 与分段靠右 */
+.acq-panel .inspector-param .pf-cron { margin-left: auto; }
+.acq-panel .inspector-param .mini-seg { flex: none; }
+.acq-panel .inspector-param .pf-src { align-self: center; }
+.acq-panel .inspector-param code { font-family: var(--mono); font-size: 12px; color: var(--dorami-muted); }
+
+/* ══ 以下是样页开关,不属于产品界面 ═══════════════════════════════════ */
+.px-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: #14161c;
+  color: #c9ced9;
+  font: 600 12px/1 system-ui, -apple-system, "PingFang SC", sans-serif;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+.px-grp { display: flex; align-items: center; gap: 2px; }
+.px-lbl { margin-right: 6px; color: #7d8494; font-weight: 500; }
+.px-bar a { padding: 7px 9px; border-radius: 7px; color: #c9ced9; text-decoration: none; }
+.px-bar a.is-on { background: #f1f3f7; color: #14161c; }
+.px-bar a:hover:not(.is-on) { background: #262a34; }
+html[data-bare] .px-bar { display: none; }
+/* 嵌进总览页时不要滚动条占位 */
+html[data-bare] { scrollbar-width: none; }
+html[data-bare]::-webkit-scrollbar { display: none; }

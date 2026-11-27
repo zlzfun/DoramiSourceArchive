@@ -394,3 +394,28 @@ def test_verified_result_replaces_old_machine_relevance_instead_of_maxing_confid
             assert assignments==[]
         else:
             assert len(assignments)==1 and assignments[0].relevance==.3
+
+
+def test_window_statistics_exclude_every_system_source(storage, now, second_system_source):
+    """issue #72:候选的取证不算系统源的条目——名单里的每一个,不只是公共日报。"""
+    from services.article_analysis import _refresh_candidate_stats
+    with Session(storage.engine) as session:
+        c = seed_candidate(session, now)
+        add_evidence(session, c, now, "current", published=now.isoformat())
+        add_evidence(session, c, now, "from-brief", source_id="dorami_daily_brief")
+        add_evidence(session, c, now, "from-other-flow", source_id=second_system_source)
+        session.commit()
+        _refresh_candidate_stats(session, c, now)
+        assert (c.support_article_count_7d, c.support_article_count_30d) == (1, 1)
+
+
+def test_window_statistics_count_an_unlisted_dorami_id(storage, now):
+    """反向对照:名单里没有它时,同一个 id 的条目照常算取证。"""
+    from services.article_analysis import _refresh_candidate_stats
+    with Session(storage.engine) as session:
+        c = seed_candidate(session, now)
+        add_evidence(session, c, now, "current", published=now.isoformat())
+        add_evidence(session, c, now, "from-other-flow", source_id="dorami_test_flow")
+        session.commit()
+        _refresh_candidate_stats(session, c, now)
+        assert (c.support_article_count_7d, c.support_article_count_30d) == (2, 2)

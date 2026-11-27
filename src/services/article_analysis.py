@@ -90,6 +90,7 @@ from models.db import (
 from services.article_display_tags import extracted_tag_snapshot
 from services.article_time import in_time_window, parse_article_time
 from services import error_redaction
+from services import source_catalog
 from services import image_insights as image_insights_service
 from services import sync_consumer_policy
 
@@ -1820,7 +1821,8 @@ def build_topic_heat_context(
         .where(
             ArticleTagAssignmentRecord.tag_id.in_(list(relevant)),
             ArticleRecord.id != article_id,
-            ArticleRecord.source_id != "dorami_daily_brief",
+            # 系统源的条目不当取证素材(名单在策展源目录里;上面读日报 included_article_ids 是日报专属)
+            ArticleRecord.source_id.notin_(sorted(source_catalog.system_source_ids())),
             _may_be_seen_since(coarse_start),
         )
     ).all()

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成流程 · 细节:复杂的流程怎么表现</title>
+<style>
+  :root { --ink: #16181d; --ink-2: #454a57; --faint: #7a8090; --line: #dfe2ea; --bg: #f4f5f9; --card: #fff; --accent: #4f46c8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  main { max-width: 1560px; margin: 0 auto; padding: 40px 32px 96px; }
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 56px 0 4px; }
+  h3 { font-size: 15px; margin: 32px 0 2px; }
+  p { margin: 6px 0; max-width: 78ch; color: var(--ink-2); }
+  .lede { font-size: 16px; color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 14px; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--faint); }
+  figcaption b { font-size: 14px; color: var(--ink); font-weight: 600; }
+  figcaption a { margin-left: auto; }
+  h3 .pick { margin-left: 10px; font-size: 12px; font-weight: 600; color: var(--accent); }
+  /* 泳道的左边 880 宽(流程、取材、加工、产出),从纸的左上角起,缩到 0.75 */
+  .lane { position: relative; overflow: hidden; width: 660px; height: calc(var(--vh, 270) * 0.75px); border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .lane iframe { position: absolute; top: -64px; left: -69px; width: 1440px; height: 900px; border: 0; transform: scale(0.75); transform-origin: 0 0; }
+  /* 窗口右边 800 宽的一条(抽屉),缩到 0.8 */
+  .crop { position: relative; overflow: hidden; width: 552px; height: 720px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .crop iframe { position: absolute; top: 0; left: -600px; width: 1440px; height: 900px; border: 0; transform: scale(0.8); transform-origin: 0 0; }
+  ul { margin: 8px 0; padding-left: 22px; max-width: 78ch; color: var(--ink-2); }
+  ul li { margin: 4px 0; }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: #e9ebf2; padding: 1px 5px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>细节:复杂的流程怎么表现</h1>
+  <p class="lede">现在「加工」一格是一行方块。以后的流程可能有并行、有分支、有可能跳过的步骤。结论先说:那一行画的是「阶段」,不是步骤图;复杂的结构留在阶段里面,要看的时候在抽屉里看。</p>
+  <p><b>2026-11-27 定了:泳道用 A;本波只做现在这一行阶段块与阶段内的进度,记号与结构图以后再做。</b></p>
+  <p><a href="../index.html">回总览</a></p>
+
+  <h2>1 · 现在那一行画的是什么</h2>
+  <p>日报的五块(收集、评分、精选、点评、成稿)本来就不是日报内部的全部:</p>
+  <ul>
+    <li>评分、点评是对几十篇候选逐条并行地做;</li>
+    <li>精选里有同事件归并,论文走单独的名额;</li>
+    <li>成稿之前有跨天查重;深度阅读与播客推荐是一条旁路。</li>
+  </ul>
+  <p>生成时后端上报的也只是「到了哪个阶段,这个阶段做了几条」(现网进度的写法是「评分 12/33」「撰写点评 3/12」)。所以这一行已经是一个不那么线性的流程的粗粒度投影,它对流程的要求只有两条:声明一组有序的阶段,运行时上报当前阶段与阶段内的进度。</p>
+
+  <h2>2 · 泳道那一格:三种画法</h2>
+  <p>为了试版面,加了一个<b>假想的</b>流程「专题周报」:归并 → 撰写(事件小结、深度阅读、数据核对三路并行)→ 汇编 → 配图(可能跳过)→ 成稿。平台上没有它,也没有计划做它。每种画法左边是平时,右边是正在跑第二个阶段(三路里完成了两路)。</p>
+
+  <h3>A · 仍是一行阶段块,加记号<span class="pick">已定</span></h3>
+  <p>并行的阶段在名字后面标路数(×3),可能跳过的阶段是虚线框。行高不变。运行时逐段点亮,下面一行小字是阶段内的进度。</p>
+  <div class="row">
+    <figure><figcaption><b>平时</b><a href="phases-proto.html?ph=a" target="_blank">打开</a></figcaption>
+      <div class="lane"><iframe src="phases-proto.html?ph=a&bare&v=10" loading="lazy" title="A"></iframe></div></figure>
+    <figure><figcaption><b>生成中</b><a href="phases-proto.html?ph=a&state=run" target="_blank">打开</a></figcaption>
+      <div class="lane"><iframe src="phases-proto.html?ph=a&state=run&bare&v=10" loading="lazy" title="A · 生成中"></iframe></div></figure>
+  </div>
+
+  <h3>B · 小结构图</h3>
+  <p>一列一个阶段,并行的节点上下排,用线连起来。看得出结构;但这一行要比别的行高(95 对 64),阶段再多一些或者窗口窄一些就放不下。</p>
+  <div class="row">
+    <figure><figcaption><b>平时</b><a href="phases-proto.html?ph=b" target="_blank">打开</a></figcaption>
+      <div class="lane" style="--vh: 300"><iframe src="phases-proto.html?ph=b&bare&v=10" loading="lazy" title="B"></iframe></div></figure>
+    <figure><figcaption><b>生成中</b><a href="phases-proto.html?ph=b&state=run" target="_blank">打开</a></figcaption>
+      <div class="lane" style="--vh: 300"><iframe src="phases-proto.html?ph=b&state=run&bare&v=10" loading="lazy" title="B · 生成中"></iframe></div></figure>
+  </div>
+
+  <h3>C · 只写概况</h3>
+  <p>「5 个阶段 · 3 路并行」。最省地方,多复杂都放得下;但现有两个流程的阶段名也看不到了,运行时只知道是第几个阶段。</p>
+  <div class="row">
+    <figure><figcaption><b>平时</b><a href="phases-proto.html?ph=c" target="_blank">打开</a></figcaption>
+      <div class="lane"><iframe src="phases-proto.html?ph=c&bare&v=10" loading="lazy" title="C"></iframe></div></figure>
+    <figure><figcaption><b>生成中</b><a href="phases-proto.html?ph=c&state=run" target="_blank">打开</a></figcaption>
+      <div class="lane"><iframe src="phases-proto.html?ph=c&state=run&bare&v=10" loading="lazy" title="C · 生成中"></iframe></div></figure>
+  </div>
+
+  <h2>3 · 抽屉里:多一个「流程」框</h2>
+  <p>结构图放在抽屉里才有地方。按阶段分列,列头是阶段名,与泳道上那一行的块一一对应;并行的节点上下排;运行时逐个节点点亮。只有声明了结构的流程才有这个框,日报、精读没有。</p>
+  <div class="row">
+    <figure><figcaption><b>平时</b><a href="phases-proto.html?ph=a&open=weekly" target="_blank">打开</a></figcaption>
+      <div class="crop"><iframe src="phases-proto.html?ph=a&open=weekly&bare&v=10" loading="lazy" title="流程框"></iframe></div></figure>
+    <figure><figcaption><b>生成中</b><a href="phases-proto.html?ph=a&open=weekly&state=run" target="_blank">打开</a></figcaption>
+      <div class="crop"><iframe src="phases-proto.html?ph=a&open=weekly&state=run&bare&v=10" loading="lazy" title="流程框 · 生成中"></iframe></div></figure>
+  </div>
+
+  <h2>4 · 我的建议</h2>
+  <ul>
+    <li><b>泳道用 A。</b>行高与对齐不变;各个流程走到哪一步可以一眼横着比;复杂度用两个小记号带过。B 的结构图放进抽屉。</li>
+    <li><b>本波只做现在这一行阶段块和阶段内的进度</b>(现网已有)。路数的记号、虚线、抽屉里的「流程」框,都等第一个真有并行或分支的流程出现时再做——现在做是给不存在的东西画界面。</li>
+    <li><b>外壳的约定现在就按「阶段」来定</b>:流程登记的是一组有序的阶段(建议不超过 6 个),进度上报是「当前阶段 + 完成数 / 总数」。以后要加路数、可否跳过、节点与连线,都是往阶段上加字段,已有的流程不用改。</li>
+  </ul>
+  <p>阶段超过六七个、一行放不下的流程,说明阶段划得太细,应当并;这是登记流程时的纪律,不靠界面兜。</p>
+
+  <h2>5 · 顺带:不是每天一期的流程</h2>
+  <p>「产出」一格现在写的是「今天 08:31 · …」和近 7 日的圆点,假设每天一期。假想的周报在这里写成「11-23 09:02 · 8 个事件」和近 7 期。现有两个流程都是每天一期,本波不动,记一笔。</p>
+
+  <h2>6 · 边界</h2>
+  <p>「专题周报」是假想的:名字、源 id、阶段、节点、期数都是编的,只用来试版面;定稿的原型里没有它。连线只画了「相邻两列的节点全连」这一种;真有分支条件、回环时,连线与节点的画法还要另想。</p>
+</main>
+</body>
+</html>

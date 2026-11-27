@@ -610,12 +610,15 @@ def collect_candidates(
 def _collect_candidate_batch(session, *, cursor, max_total=120, per_source_cap=DEFAULT_CANDIDATE_PER_SOURCE_CAP, source_ids=None):
     if max_total < 1 or per_source_cap < 1:
         raise ValueError("日报候选上限必须为正数")
+    from services.source_catalog import system_source_ids
     from services.user_sources import USER_SOURCE_PREFIX
 
     base = (select(ArticleRecord.id, ArticleRecord.source_id, ArticleRecord.fetched_date,
                    DailyBriefCandidateRecord.status)
         .outerjoin(DailyBriefCandidateRecord, DailyBriefCandidateRecord.article_id == ArticleRecord.id)
-        .where(ArticleRecord.source_id != DAILY_BRIEF_SOURCE_ID)
+        # 系统源的条目不回流:平台自己加工出来的东西(日报自己、其它生成流程的产出)不当日报的素材。
+        # 缺分的候选会被就地补评,所以不能指望「没有分析行」把它们挡在外面。
+        .where(ArticleRecord.source_id.notin_(sorted(system_source_ids())))
         # Episode value is not event importance. Episodes have their own read-only
         # recommendation pool, independent of this news cursor and inline scoring.
         .where(or_(ArticleRecord.content_type.is_(None), ArticleRecord.content_type != "podcast_episode"))
