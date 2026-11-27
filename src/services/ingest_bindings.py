@@ -6,6 +6,7 @@
 - 令牌只能往它绑定的源推(``bound_source_ids`` → ``ingest_push.resolve_bound_source``);
 - 登记(``register_source``)建一个没有抓取绑定的源行:给了账号 / 站点 / feed 的是定向源,沿用收录通道的
   身份派生;不给的是合集源,id 是 ``push_<后缀>``。
+- 有权限的令牌可以自己登记(``register_by_token``):登记的源先是待列入,自动绑定给它,每天有上限。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
 from sqlmodel import Session, select
 
@@ -22,6 +24,7 @@ from services import ingest_policy, ingest_push, source_catalog, source_identity
 ADMISSION_LISTED = "incubating"
 _SUFFIX = re.compile(r"^[a-z0-9_]{3,40}$")
 MAX_NAME_CHARS = 120
+MAX_URL_CHARS = 2000
 
 
 class BindingError(ValueError):
@@ -31,6 +34,8 @@ class BindingError(ValueError):
         super().__init__(message)
         self.status = status
         self.existing_source_id = existing_source_id
+        # 令牌自己登记、出处已经有源时:这个源是不是已经绑定给它了(None = 不适用)。
+        self.bound: Optional[bool] = None
 
 
 def _now() -> str:
@@ -140,6 +145,8 @@ def by_token(session: Session) -> dict[int, list[dict[str, Any]]]:
             "name": view.name or record.source_id,
             "shape": view.shape,
             "open": record.source_id.startswith(ingest_push.OPEN_SOURCE_PREFIX),
+            # 待列入(provisional)的来源在令牌抽屉里带「临时」徽标:令牌自己登记的源都从这里起步。
+            "admission_status": view.admission_status,
             "last_pushed_at": record.last_pushed_at,
             "created_at": record.created_at,
         })
@@ -177,6 +184,26 @@ def _open_source_id(session: Session, suffix: str) -> str:
     return source_id
 
 
+def _http_url(value: str, label: str) -> str:
+    """登记时给的地址:空串放行,其余必须是 http(s)。
+
+    这些地址会成为源的主页链接与头像,在管理面和读者面直接当链接 / 图片地址用;令牌也能登记来源之后,
+    不能让 ``javascript:`` 之类的东西落进源行。
+    """
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        parts = None
+    if parts is None or parts.scheme.casefold() not in ("http", "https") or not parts.hostname:
+        raise BindingError(f"{label}要是 http(s) 地址")
+    if len(url) > MAX_URL_CHARS:
+        raise BindingError(f"{label}太长(最多 {MAX_URL_CHARS} 个字符)")
+    return url
+
+
 def register_source(
     session: Session,
     *,
@@ -204,12 +231,12 @@ def register_source(
         raise BindingError("名称不能为空")
     content_type = ingest_push.CONTENT_TYPE_BY_KIND[kind]
     admission = ADMISSION_LISTED if listed else source_catalog.ADMISSION_PROVISIONAL
-    avatar = str(avatar_url or "").strip()
-    homepage = str(homepage_url or "").strip()
+    avatar = _http_url(avatar_url, "头像地址")
+    homepage = _http_url(homepage_url, "主页地址")
     handle = str(handle or "").strip().lstrip("@")
     user_id = str(user_id or "").strip()
-    url = str(url or "").strip()
-    feed_url = str(feed_url or "").strip()
+    url = _http_url(url, "站点地址")
+    feed_url = _http_url(feed_url, "feed 地址")
     if kind == "social_post":
         described = bool(handle or user_id)
         if described and not source_identity.normalize_handle(handle):
@@ -266,4 +293,42 @@ def register_source(
     if row is not None and podcast_feed:
         row.url = podcast_feed
         session.add(row)
+    return row
+
+
+# ── 令牌自己登记来源(issue #344 第二个 PR) ──────────────────────────────────
+
+SELF_REGISTERED_BY = "ingest:"  # 绑定行 created_by 的前缀:是令牌自己登记时绑上的,后面跟调用方名
+
+
+def register_by_token(session: Session, token: IngestTokenRecord, **fields: Any) -> SourceConfigRecord:
+    """令牌自己登记一个来源:先是待列入(临时源状态),并绑定给这个令牌。调用方提交,出错时调用方回滚。
+
+    - 是令牌的一项权限,默认没有;
+    - 只能新建:出处已经有源时抛 409,``existing_source_id`` 给出那个源,``bound`` 说明它是否已经绑定
+      给这个令牌(绑了就直接推,没绑要管理员绑);
+    - 每个令牌每天(UTC)最多登记 ``ingest_push.REGISTER_DAILY_LIMIT`` 个。名额先占、失败回滚时退还。
+    """
+    if not token.can_register_sources:
+        raise BindingError("这个令牌没有登记来源的权限;请管理员在运维「自定源与收录」里打开", status=403)
+    if not ingest_push.reserve_registration(session, token.id):
+        raise BindingError(
+            f"今天登记的来源已到上限({ingest_push.REGISTER_DAILY_LIMIT} 个);明天(UTC)再登记", status=429
+        )
+    try:
+        row = register_source(session, listed=False, **fields)
+    except BindingError as exc:
+        if not exc.existing_source_id:
+            raise
+        bound = exc.existing_source_id in bound_source_ids(session, token.id)
+        conflict = BindingError(
+            f"这个出处已经有来源 {exc.existing_source_id}"
+            + (",这个令牌已经绑定,直接推送即可" if bound else ";请管理员把它绑定给这个令牌"),
+            status=409, existing_source_id=exc.existing_source_id,
+        )
+        conflict.bound = bound
+        raise conflict from exc
+    if row is None:
+        raise BindingError("登记失败:这个 id 不能用作来源")
+    bind(session, token.id, row.source_id, created_by=f"{SELF_REGISTERED_BY}{token.actor}")
     return row

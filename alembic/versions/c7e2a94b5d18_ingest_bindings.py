@@ -4,7 +4,7 @@
 最近一次有条目被这个源接受的时间。推送绑定是源的一种获取方式,与源行上的抓取绑定并列。
 
 不回填:升级后现有令牌都没有绑定,推送会被逐条拒收,直到管理员在运维「自定源与收录」里绑定来源
-(方案 docs/plans/issue-344-push-binding.md §7)。只在收录入口所在的节点用,不随 Archive Sync 导出,
+(方案 docs/archive/issue-344-push-binding.md §7)。只在收录入口所在的节点用,不随 Archive Sync 导出,
 与混版本窗口无关。downgrade 删表。
 
 Revision ID: c7e2a94b5d18

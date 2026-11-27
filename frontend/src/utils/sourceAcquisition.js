@@ -37,6 +37,17 @@ export function bindableSources(catalog, boundIds = []) {
   ));
 }
 
+// 令牌自行登记来源(issue #344 第二个 PR):今天登记了几个 / 每日上限;没有这项权限返回空串。
+export function registerQuotaOf(token) {
+  if (!token?.can_register_sources) return '';
+  return `${Number(token.registered_today || 0)} / ${Number(token.register_daily_limit || 0)}`;
+}
+
+// 绑定行上的徽标:还没列入的来源(令牌自己登记的源都从待列入起步)标「临时」,与源管理同一个词。
+export function bindingPillOf(binding) {
+  return binding?.admission_status === 'provisional' ? '临时' : '';
+}
+
 // ── 登记来源(源管理页头的抽屉) ──
 const SUFFIX = /^[a-z0-9_]{3,40}$/;
 const FEED_LIKE = /(\.xml|\.rss|\.atom|\/feed\/?|\/rss\/?)(\?.*)?$/i;

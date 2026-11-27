@@ -1,10 +1,11 @@
-# 收录推送接口(issue #262 波 1;推送绑定 issue #344)
+# 收录推送接口(issue #262 波 1;推送绑定与令牌自己登记来源 issue #344)
 
 一个公开的推送接口:调用方(主动式 Agent、自动化流程,或人手工调用)把发现的文章、推文、播客单集推进
 本节点(通常是外网 authority)。两种调用方走同一个端点、同一套载荷与查重,出处的认法不同:
 
 - **收录令牌**(Agent、自动化流程)只能往**它绑定的源**推;认不出出处、或出处没有绑给这个令牌的条目
-  逐条拒收,不建源(issue #344,见「推送绑定」)。
+  逐条拒收,不建源(issue #344,见「推送绑定」)。管理员给了登记权限的令牌可以先自己登记来源
+  (`POST /api/public/ingest/v1/sources`,见「令牌自己登记来源」)。
 - **管理员「单条收录」**由平台**认出出处**:认得的归到已有源,认不出的自动建**临时源**(源行来路
   `origin=ingest`;不进发现目录、不计入多源印证、默认不进公共日报,管理员可在运维「源管理」
   列入 / 下架 / 改名)。
@@ -19,7 +20,7 @@
 
 - 管理员在运维「自定源与收录 → 收录」签发**收录令牌**(`ding_` 前缀;明文只在签发时显示一次,
   库里只存 HMAC hash),每个令牌绑定一个调用方名 actor(写进条目来路与审计)和日额度(默认 500 条)。
-- 请求头 `Authorization: Bearer ding_…`。令牌只放行推送端点,不能读任何数据。
+- 请求头 `Authorization: Bearer ding_…`。令牌只放行推送端点(以及有权限时的登记端点),不能读任何数据。
 - **管理员会话**也可直接调用(运维知识台账「单条收录」):通道记 `manual`、收录者记管理员本人、不计令牌额度,
   审计记在本人名下;读者 / 游客会话 403。请求带了令牌就只认令牌(无效即 401)。
 - 采集面关闭的节点(`[runtime] role = reader`)403。其余节点不分角色(issue #263):有上游的节点照常接受收录,
@@ -34,7 +35,8 @@
 - 管理端点(仅管理员,入审计):
   - `POST /api/admin/ingest/tokens/{id}/bindings` `{"source_id": "…"}` 绑定;`DELETE …/bindings/{source_id}` 解绑;
   - `POST /api/admin/ingest/tokens` 签发时可带 `source_ids`,有一个绑不了就不签发;
-  - `GET /api/admin/ingest/tokens` 每个令牌带 `bindings`(`source_id` / `name` / `shape` / `open` / `last_pushed_at`);
+  - `GET /api/admin/ingest/tokens` 每个令牌带 `bindings`(`source_id` / `name` / `shape` / `open` /
+    `admission_status` / `last_pushed_at`);
   - `GET /api/fetchers`(源管理目录)每个源带 `push_bindings`(`actor` / `token_preview` / `is_active` / `last_pushed_at`)。
 - 可以绑定的源:存在、不是读者自定源、不是抓取模板、不是公共日报、未退役。平台自己抓取的源也可以绑
   (又抓又推;同一条两条路都到时按「同一条社交帖再次到达」与链接合流处理)。已下架的源可以绑,
@@ -62,12 +64,57 @@
 - **合集源**(不给出处):一个源里可以有很多出处的内容,例如「某 Agent 的推荐」。认法是结构性的:
   id 以 `push_` 开头且没有身份键;只有本端点能建。
 - 登记的源行 `origin=ingest`、没有抓取绑定、`legacy_export=false`;此前建的临时源不用重新登记,直接绑定。
+- `url` / `feed_url` / `avatar_url` / `homepage_url` 给了就必须是 http(s) 地址(最长 2000 个字符),否则 400:
+  它们会成为源的主页链接与头像。
+
+### 令牌自己登记来源
+
+`POST /api/public/ingest/v1/sources`(issue #344 第二个 PR)。Agent 发现一个平台还没有的出处时,不必等管理员
+先登记:有这项权限的令牌可以自己登记,登记完立刻能往里推。
+
+- **是令牌的一项单独权限,默认没有**。管理员在运维「自定源与收录」点开令牌,打开「自行登记来源」
+  (`PATCH /api/admin/ingest/tokens/{id}` `{"can_register_sources": true}`;签发时也可以带这个字段)。
+  升级前签发的令牌都是关的。`GET /api/admin/ingest/tokens` 每个令牌带 `can_register_sources` /
+  `registered_today` / `register_daily_limit`。
+- **只认收录令牌**(`Authorization: Bearer ding_…`);管理员会话调它回 401,管理员登记走上一节的管理端点。
+- 请求体与上一节相同,**没有 `listed` 与 `token_id`**(带了会被忽略,并写进回执的 `warnings`):
+
+  ```json
+  {"kind": "social_post", "name": "X · New Lab", "handle": "new_lab", "user_id": "9001",
+   "avatar_url": "https://…"}
+  ```
+
+- **登记的源先是待列入**(临时源状态,`admission_status=provisional`):内容照收,不进发现目录、不计入
+  多源印证、默认不进公共日报(见「临时源在各环节的行为」);管理员在「源管理」里「列入」后与别的源等同。
+  令牌不能自己决定列入。
+- **自动绑定给登记它的令牌**,别的令牌要推这个源仍由管理员绑定。关掉权限不影响已经登记并绑定的源。
+- **每个令牌每天(UTC)最多登记 20 个**。计的是「今天登记成了几次」,源之后被管理员删掉或解绑不退还;
+  没登记成的请求不占名额。
+
+回执(200):
+
+```json
+{"status": "success", "source_id": "x_new_lab", "name": "X · New Lab", "shape": "social",
+ "admission_status": "provisional", "open": false, "bound": true,
+ "registered_today": 1, "daily_limit": 20}
+```
+
+| 状态码 | 含义 |
+|---|---|
+| 400 | 字段不对(缺名称、播客没给 feed、后缀不合规、地址不是 http(s) …),`detail` 是原因 |
+| 401 | 没带令牌、令牌无效或已吊销 |
+| 403 | 这个令牌没有登记权限;或节点没有开采集面 |
+| 409 | **这个出处已经有来源**:`detail` 是 `{"message", "source_id", "bound"}`。`bound=true`——这个令牌已经绑定它,直接推;`bound=false`——要管理员把它绑给这个令牌 |
+| 429 | 今天的登记名额用完了 |
+
+所以一个 Agent 可以把「登记」当成幂等的准备动作:200 或 `409 + bound=true` 都可以接着推。
 
 ### 令牌推送怎么定出处
 
 1. 带了 `source.source_id`:必须是这个令牌绑定的源,否则拒收「这个令牌没有绑定来源 X」。
 2. 没带:按作者账号 / feed / 链接认(规则同下节),**只认这个令牌绑定的源**;认不出时,绑定里恰好有
-   一个形态相符的合集源就进它;否则拒收「认不出这一条的出处;请给 source.source_id」。
+   一个形态相符的合集源就进它;否则拒收「认不出这一条的出处;请给 source.source_id」。有登记权限的
+   令牌,这条原因与「还没有绑定来源」的原因末尾会多一句「也可以先登记来源(POST /api/public/ingest/v1/sources)」。
 3. 账号源(社交的定向源)只收这个账号的帖子:作者的 `user_id` 或账号名要与源的身份对得上
    (转推时顶层 `author` 是转推者,即这个账号),否则拒收「这条帖子的作者不是来源 X 的账号」。
    合集源不核对作者;文章源与播客源不核对链接所在的站点。
@@ -281,7 +328,7 @@
 
 ## 临时源在各环节的行为
 
-临时源来自管理员「单条收录」遇到的未知出处,或登记时选了不进发现目录(`listed=false`)。
+临时源来自管理员「单条收录」遇到的未知出处、登记时选了不进发现目录(`listed=false`),或令牌自己登记的来源。
 
 | 环节 | 行为 |
 |---|---|
@@ -292,7 +339,7 @@
 | 分析 / 外发 AI | 照常;`kind_hint` 只来自服务端规则 |
 | Archive Sync | 新版内网(`source-catalog-v1`)收到完整源行(名称 / 头像);旧版内网收不到这些行,条目照常同步,与改动前导入内容的表现相同 |
 
-收录与管理操作都入审计(令牌推送记在 `ingest:<actor>` 名下,单条收录记在管理员本人名下)。
+收录与管理操作都入审计(令牌推送与令牌自己登记来源记在 `ingest:<actor>` 名下,单条收录记在管理员本人名下)。
 
 ## 退役的旧入口
 

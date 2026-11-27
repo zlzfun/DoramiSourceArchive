@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ban, Copy, KeyRound, Loader2, X } from 'lucide-react';
 import {
   bindIngestSource, createIngestToken, fetchFetchers, fetchIngestTokens, revokeIngestToken, unbindIngestSource,
+  updateIngestToken,
 } from '../../api';
 import { useConfirm } from '../../hooks/useConfirm';
-import { bindableSources } from '../../utils/sourceAcquisition';
+import { bindableSources, bindingPillOf, registerQuotaOf } from '../../utils/sourceAcquisition';
 import { BindAdd, BindList } from './PushBindings';
 import { SyncDrawerShell } from './sync/syncParts';
 
@@ -36,7 +37,9 @@ function sourceGroups(sources) {
  * 收录令牌(issue #262 波 1,运维 → 自定源与收录)。调用方可以是 Agent、自动化流程或人。
  *
  * 签发(明文只回显这一次)/ 吊销;令牌只能往它绑定的来源推(issue #344)——表里列出每个令牌的来源,
- * 点一行在抽屉里加、解。来源本身(登记 / 列入 / 改名 / 读者面隐藏)在「源管理」里治理。
+ * 点一行在抽屉里加、解。抽屉里还有「自行登记来源」的开关:开了的令牌可以自己登记来源(先是待列入、
+ * 绑定给它自己,每天有上限),表里「今日登记」列写今天登记了几个。来源本身(登记 / 列入 / 改名 /
+ * 读者面隐藏)在「源管理」里治理。
  */
 export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const confirm = useConfirm();
@@ -49,6 +52,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [catalog, setCatalog] = useState(null); // 源目录(每次打开抽屉时重取)
   const [bindBusy, setBindBusy] = useState(''); // 'add' | 绑定行的 key
+  const [permBusy, setPermBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -120,6 +124,16 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
       showToast(error.message || '解绑失败', 'error');
     } finally {
       setBindBusy('');
+    }
+  };
+  const handleRegisterToggle = async () => {
+    setPermBusy(true);
+    try {
+      replaceToken(await updateIngestToken(shown.id, { can_register_sources: !shown.can_register_sources }));
+    } catch (error) {
+      showToast(error.message || '修改失败', 'error');
+    } finally {
+      setPermBusy(false);
     }
   };
   const bindings = useMemo(() => shown?.bindings || [], [shown]);
@@ -195,7 +209,8 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                   <th className="acct-th" style={{ width: 160 }}>调用方</th>
                   <th className="acct-th" style={{ width: 110 }}>令牌</th>
                   <th className="acct-th">来源</th>
-                  <th className="acct-th" style={{ width: 80 }}>日额度</th>
+                  <th className="acct-th is-num" style={{ width: 90 }}>今日登记</th>
+                  <th className="acct-th is-num" style={{ width: 80 }}>日额度</th>
                   <th className="acct-th" style={{ width: 140 }}>签发</th>
                   <th className="acct-th" style={{ width: 140 }}>最近推送</th>
                   <th className="acct-th" style={{ width: 90 }}>状态</th>
@@ -222,6 +237,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                         ? <span className="tok-sources" title={names.join(' · ')}>{names.join(' · ')}</span>
                         : <span className="tok-sources is-none">–</span>}
                     </td>
+                    <td className={`acct-n ${registerQuotaOf(token) ? '' : 'is-zero'}`}>{registerQuotaOf(token) || '–'}</td>
                     <td className="acct-n">{fmtNum(token.daily_limit)}</td>
                     <td><span className="acct-mono">{fmtTime(token.created_at)}</span></td>
                     <td><span className="acct-mono">{fmtTime(token.last_used_at)}</span></td>
@@ -269,6 +285,7 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
                 key: binding.source_id,
                 id: binding.source_id,
                 name: binding.name,
+                pill: bindingPillOf(binding),
                 mono: binding.source_id,
                 pushedAt: binding.last_pushed_at,
               }))}
@@ -278,6 +295,21 @@ export default function IngestPanel({ showToast, refreshTick = 0 }) {
             {shown.is_active && (
               <BindAdd label="来源" groups={addGroups} onBind={handleBind} busy={bindBusy === 'add'} />
             )}
+          </section>
+        )}
+        {shown?.is_active && (
+          <section className="tok-perm">
+            <span className="drawer-sec-title">自行登记来源</span>
+            {shown.can_register_sources && <span className="acct-mono tok-perm-count">今日 {registerQuotaOf(shown)}</span>}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(shown.can_register_sources)}
+              aria-label={`${shown.actor} 自行登记来源`}
+              disabled={permBusy}
+              onClick={handleRegisterToggle}
+              className={`ledger-switch ${shown.can_register_sources ? 'is-on' : ''}`}
+            />
           </section>
         )}
       </SyncDrawerShell>

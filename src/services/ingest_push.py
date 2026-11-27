@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import func
+from sqlalchemy import case, func, or_, update
 from sqlmodel import Session, select
 
 from models.content import BaseContent, PodcastEpisodeContent, SocialPostContent, WebPageArticleContent
@@ -50,6 +50,9 @@ TOKEN_PREFIX = "ding_"
 CHANNEL_PUSH = "push"
 MAX_BATCH = 100
 DEFAULT_DAILY_LIMIT = 500
+# 令牌自己登记来源(issue #344 第二个 PR):每个令牌每天(UTC)最多登记的个数。
+REGISTER_DAILY_LIMIT = 20
+REGISTER_PATH = "/api/public/ingest/v1/sources"
 
 KINDS = ("article", "social_post", "podcast_episode")
 CONTENT_TYPE_BY_KIND = {
@@ -145,6 +148,7 @@ def create_token(
     actor: str,
     created_by: str,
     daily_limit: int = DEFAULT_DAILY_LIMIT,
+    can_register_sources: bool = False,
     commit: bool = True,
 ) -> tuple[IngestTokenRecord, str]:
     """签发令牌。``commit=False`` 时只 flush,由调用方与后续写入(推送绑定)一起提交。"""
@@ -160,6 +164,7 @@ def create_token(
         is_active=True,
         created_by=str(created_by or ""),
         created_at=_now(),
+        can_register_sources=bool(can_register_sources),
     )
     session.add(record)
     if commit:
@@ -193,6 +198,51 @@ def authenticate(session: Session, raw_token: str) -> Optional[IngestTokenRecord
     return record
 
 
+def _utc_day() -> str:
+    return dt.datetime.now(dt.timezone.utc).date().isoformat()
+
+
+def registered_today(record: IngestTokenRecord) -> int:
+    """这个令牌今天(UTC)已经登记的来源数。"""
+    return int(record.register_count or 0) if record.register_day == _utc_day() else 0
+
+
+def reserve_registration(session: Session, token_id: int) -> bool:
+    """占一个今天的登记名额;到上限返回 False。调用方提交(回滚即退还)。
+
+    一条语句完成「看有没有名额 + 记一笔」:并发的两次登记不会都看到同一个旧计数。计数记在令牌行上,
+    源之后被删掉或解绑也不回退。
+    """
+    day = _utc_day()
+    result = session.execute(
+        update(IngestTokenRecord)
+        .where(
+            IngestTokenRecord.id == token_id,
+            or_(IngestTokenRecord.register_day != day, IngestTokenRecord.register_count < REGISTER_DAILY_LIMIT),
+        )
+        .values(
+            register_count=case((IngestTokenRecord.register_day == day, IngestTokenRecord.register_count + 1), else_=1),
+            register_day=day,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return bool(result.rowcount)
+
+
+def set_register_permission(session: Session, token_id: int, enabled: bool) -> Optional[IngestTokenRecord]:
+    """开 / 关「可以自己登记来源」。令牌不存在返回 None;已吊销的抛 ValueError。提交在这里。"""
+    record = session.get(IngestTokenRecord, token_id)
+    if record is None:
+        return None
+    if not record.is_active or record.revoked_at:
+        raise ValueError("令牌已吊销")
+    record.can_register_sources = bool(enabled)
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
 def serialize_token(record: IngestTokenRecord) -> dict[str, Any]:
     return {
         "id": record.id,
@@ -204,6 +254,9 @@ def serialize_token(record: IngestTokenRecord) -> dict[str, Any]:
         "created_at": record.created_at,
         "last_used_at": record.last_used_at,
         "revoked_at": record.revoked_at,
+        "can_register_sources": bool(record.can_register_sources),
+        "registered_today": registered_today(record),
+        "register_daily_limit": REGISTER_DAILY_LIMIT,
     }
 
 
@@ -722,6 +775,7 @@ def resolve_bound_source(
     allowed: frozenset[str],
     author: Optional[dict[str, Any]] = None,
     item_url: str = "",
+    can_register: bool = False,
 ) -> ResolvedSource:
     """令牌推送的出处解析:只在这个令牌绑定的源(``allowed``)里找,永不建源。
 
@@ -730,8 +784,10 @@ def resolve_bound_source(
        合集源就进它;
     3. 账号源核对帖子的作者。
     """
+    # 有登记权限的令牌:拒收原因里点出可以先自己登记(``can_register``,issue #344 第二个 PR)。
+    register_hint = f";也可以先登记来源(POST {REGISTER_PATH})" if can_register else ""
     if not allowed:
-        raise IngestRejected("这个令牌还没有绑定来源;请管理员在运维「自定源与收录」里绑定")
+        raise IngestRejected(f"这个令牌还没有绑定来源;请管理员在运维「自定源与收录」里绑定{register_hint}")
     if kind != "social_post":
         for candidate in (item_url, source.get("url"), source.get("site"), source.get("feed_url")):
             if _social_only_host(str(candidate or "")):
@@ -755,7 +811,9 @@ def resolve_bound_source(
                 if source_is_open(ctx, sid) and _shape_mismatch(ctx, sid, kind) is None
             )
             if len(fallback) != 1:
-                raise IngestRejected("认不出这一条的出处;请给 source.source_id(这个令牌绑定的来源之一)")
+                raise IngestRejected(
+                    f"认不出这一条的出处;请给 source.source_id(这个令牌绑定的来源之一){register_hint}"
+                )
             target = fallback[0]
     # 三条路的结果都要查目标还在:源被删掉后留下的绑定不能让存储层把它补建回来(检视 R1 #1)。
     if not source_catalog.get(ctx.session, target).known:

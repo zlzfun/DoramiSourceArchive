@@ -37,6 +37,8 @@ class IngestCaller:
     # (管理员「单条收录」:照旧认出处、认不出建临时源)。
     token_id: Optional[int] = None
     bound: Optional[frozenset[str]] = None
+    # 这个令牌可以自己登记来源:认不出出处的拒收原因里会点出来。
+    can_register: bool = False
 
 
 def social_source(item: dict[str, Any]) -> dict[str, Any]:
@@ -100,6 +102,7 @@ def _resolve_all(
                     resolved = ingest_push.resolve_bound_source(
                         ctx, kind, source,
                         allowed=caller.bound, author=author, item_url=str(item.get("url") or ""),
+                        can_register=caller.can_register,
                     )
                 prepared.append((index, item, resolved, None))
             except ValueError as exc:

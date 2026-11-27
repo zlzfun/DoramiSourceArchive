@@ -1,8 +1,9 @@
 # 推送绑定:登记过的推送是源的一种获取方式(issue #344)
 
-> 状态:进行中(2026-11-25 立项并拍板;第一个 PR——后端 + 管理面界面 + 读者面一行——已在分支上实现,待检视与目检;第二个 PR 是 Agent 自助登记,见 §8)。
-> 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §11)。分支 `feat/issue-344-push-binding`。
-> 关联:[issue #344](https://github.com/zlzfun/DoramiSourceArchive/issues/344);前情是收录推送 [issue #262](./issue-262-agent-ingest-sources.md) 与三层源模型 [重构方案](./issue-262-source-model-refactor.md);上一波 [#341](../archive/issue-341-ingest-social-fidelity.md)。
+> **归档于 2026-11-27(issue #344,PR #350 与第二个 PR,开发版 3.70.5-alpha)**:现状以 `docs/contracts/ingest_push.md`、`docs/architecture/fetchers-and-sources.md`、`src/services/ingest_bindings.py` 与 `tests/test_ingest_bindings.py` / `tests/test_ingest_self_register.py` 为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-25 立项并拍板;第一个 PR——后端 + 管理面界面 + 读者面一行——2026-11-27 合入 main(PR #350);第二个 PR——Agent 自助登记,§8——同日在分支 `feat/issue-344-agent-register` 上实现)。带两条迁移,同步流不变。
+> 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §11)。
+> 关联:[issue #344](https://github.com/zlzfun/DoramiSourceArchive/issues/344);前情是收录推送 [issue #262](../plans/issue-262-agent-ingest-sources.md) 与三层源模型 [重构方案](../plans/issue-262-source-model-refactor.md);上一波 [#341](./issue-341-ingest-social-fidelity.md)。
 
 ## 1. 起因
 
@@ -144,14 +145,28 @@
 - **每个有本机收录令牌的节点,升级后这些令牌都没有绑定,推送会被逐条拒收**,直到管理员登记来源并绑定。发版说明要写:部署后先在运维「自定源与收录」给令牌绑定来源,再让 Agent 恢复推送;Agent 的载荷同时要改(带 `source.source_id`,或依赖 §4-3 的规则)。
 - 读者面的那一处文字只在前端,随外网与内网各自的版本生效。
 
-## 8. Agent 自助登记(第二个 PR;2026-11-25 用户同意按此做)
+## 8. Agent 自助登记(第二个 PR;2026-11-25 用户同意按此做,2026-11-27 实现)
 
 `POST /api/public/ingest/v1/sources`,字段同 §5.1(没有 `listed` 与 `token_id`)。
 
-- **是令牌的一项权限**(`ingest_tokens` 加一列,签发时勾选,默认不给)。
+- **是令牌的一项权限**(`ingest_tokens.can_register_sources`,默认不给)。
 - **登记的源先是待列入**(临时源状态):内容照收,不进发现页、不算独立信源、不进公共日报;管理员「列入」后与抓取源等同。现有的列入 / 下架 / 改名直接可用。
 - **自动绑定到登记它的令牌**。只能新建:出处已经是平台的源时回 409 并给出已有的源 id,由管理员绑定。
 - 每个令牌每天登记数量有上限(默认 20)。
+
+实现时定下来的细节(用户没有逐条确认,目检时一并看):
+
+1. **权限在哪里开**。上面原来写的是「签发时勾选」;落地改成**令牌抽屉里的开关**(`PATCH /api/admin/ingest/tokens/{id}` `{can_register_sources}`):升级前签发的令牌也能开,不用重签、重绑、再去改 Agent 的配置。签发接口仍接受 `can_register_sources`(脚本用),界面的签发条没有加勾选框。已吊销的令牌不能改。
+2. **只认令牌**。管理员会话调这个接口回 401:管理员登记走 §5.1 的管理端点(可以直接列入、可以绑给任意令牌),两条路的差别不靠同一个接口上的角色判断来表达。带了 `listed` / `token_id` 的请求不拒收,这两个字段不认,写进回执的 `warnings`(与 #341 「没被采用的内容要说出来」同一做法)。
+3. **409 多带一个 `bound`**:这个出处已有的源是不是已经绑给了这个令牌。绑了(包括它自己早先登记的)就可以直接推,没绑要管理员绑。Agent 因此可以把「登记」当成幂等的准备动作:200 或 `409 + bound=true` 都接着推。
+4. **每日上限怎么计**。记在令牌行上(`register_day` / `register_count`,UTC 日;上限是常量 `ingest_push.REGISTER_DAILY_LIMIT = 20`,没有做成每个令牌可配)。占名额是一条 `UPDATE`(看有没有名额 + 记一笔),并发的两次登记不会都看到同一个旧计数;登记与绑定在同一事务里,没登记成就回滚、名额退还。**计的是「今天登记成了几次」,源之后被删掉或解绑不退还**——没有用「数今天的绑定行」:读者自定源的日限当初就因为「建了再删能绕过」改成了事件计数,这里取同一口径。
+5. **地址校验**。`url` / `feed_url` / `avatar_url` / `homepage_url` 给了就必须是 http(s)(有主机、不超过 2000 个字符)。它们会成为源的主页链接(源管理检视器里是直接的 `<a href>`)与头像;此前只有管理员能写这些字段,令牌也能登记来源之后不能让 `javascript:` 之类的值落进源行。校验放在共用的 `register_source` 里,**管理员登记(第一个 PR 的端点,尚未发版)同样生效**。
+6. **拒收原因里点出可以登记**。有这项权限的令牌推送时,「还没有绑定来源」与「认不出这一条的出处」两条原因末尾多一句「也可以先登记来源(POST /api/public/ingest/v1/sources)」;没有权限的令牌看到的文字不变。
+7. **审计**。登记成功记在 `ingest:<调用方>` 名下(摘要「登记来源 名称(源 id)」),与令牌推送同一个记法;权限开关是管理端点,摘要写「允许 / 不再允许收录令牌 N 登记来源」。
+8. **界面**(没有出样页:只有一个开关与一列数字,直接在沙箱里看真实页面——见 §12)。运维「自定源与收录」的收录令牌表加一列**「今日登记」**(有权限写「已登记 / 上限」,没有写「–」);令牌抽屉在「来源」小节下面加一行**「自行登记来源」**(今日个数 + 开关,已吊销的令牌没有这一行);抽屉里还没列入的来源名字后面带**「临时」**徽标(与源管理同一个词、同一个样式),令牌自己登记的来源都从这里起步。来源的列入 / 改名 / 隐藏仍在源管理。
+9. **部署与混版本**:迁移 `d4a7c1e93b52` 给 `ingest_tokens` 加三列。这张表只在收录入口所在的节点,不进 Archive Sync,两端任意顺序部署互不影响;存量令牌的权限一律是关的。回滚同 §7(库的迁移版本旧版不认识,要连部署前的库快照一起恢复)。
+
+没有做:每个令牌单独的上限;登记时由 Agent 指定策展维度(信息角色、公司);Agent 查询自己绑定了哪些来源的读接口(令牌不能读任何数据,这一条没有放开);登记后通知管理员有来源待列入(源管理的「收录」组与令牌抽屉里的「临时」徽标是现在的入口)。
 
 ## 9. 拍板项(2026-11-25 用户:「待定项按你的建议」)
 
@@ -241,3 +256,14 @@
 **检视修复(2026-11-25)**:见 §11。新增 `ingest_bindings.drop_for_source`、`ingest_push.feed_identity_key`、`frontend/src/utils/socialPost.js`;`ingest_push.create_token` 加 `commit` 参数。
 
 **还没做**:Agent 自助登记(§8,第二个 PR)。
+
+**第二个 PR:令牌自己登记来源(2026-11-27,分支 `feat/issue-344-agent-register`)**:
+
+- 表与迁移:`IngestTokenRecord` 加 `can_register_sources` / `register_day` / `register_count`;`alembic/versions/d4a7c1e93b52_ingest_token_register_sources.py`(加列;收养路径上这些列可能已由 `create_all` 建好,只补缺的——首稿直接加列,在「有表、没有版本表」的库上批量改表报循环依赖,迁移测试拦住)。
+- `services/ingest_push.py`:`REGISTER_DAILY_LIMIT`、`registered_today`、`reserve_registration`(一条 `UPDATE` 占名额)、`set_register_permission`;令牌序列化带权限与今日个数;`resolve_bound_source(can_register=…)` 给拒收原因加提示。
+- `services/ingest_bindings.py`:`register_by_token`(权限 → 占名额 → 登记为待列入 → 绑定;已有出处时 409 带 `bound`)、`_http_url`(登记时的地址校验,管理员登记同样走)、绑定清单带 `admission_status`。
+- 路由 `api/routers/ingest_push.py`:`POST /api/public/ingest/v1/sources`(只认令牌,自己记审计)、`PATCH /api/admin/ingest/tokens/{id}`;审计摘要两条(`services/admin_audit.py`),中间件为权限开关采集请求体(`api/app.py`)。路由路径写的是字面量:前端的接口对账测试(`frontend/test/feedEndpoints.test.mjs`)按字面量读路由,写成常量它读不出来。
+- 前端:`IngestPanel.jsx`(「今日登记」列、抽屉里的开关)、`PushBindings.jsx`(名称后的徽标)、`utils/sourceAcquisition.js`(`registerQuotaOf` / `bindingPillOf`)、`index.css`(`.tok-perm` / `.bind-name`)。
+- 验证:`tests/test_ingest_self_register.py` 14 例;后端全量 5030 通过 / 1 跳过;反向对照 30 项(`.review/mutations.py`)全部拦住——首轮漏了「绑定清单不带准入状态」,补断言后复验拦住;前端 569 通过、lint 与构建通过;沙箱里真实请求走过「登记账号源与合集 → 推送 → 已有出处 409」,Playwright 新界面 28 项 + 第一个 PR 的 55 项回归,零页面 / 控制台报错。
+- 自查时看到、没有改的一处(第一个 PR 之前就有):没有描述的来源,源管理检视器里主页地址出现两遍(描述回落成主页地址,下面又是主页链接)。令牌登记的来源通常没有描述,会更常见;记了 backlog,待用户定。
+

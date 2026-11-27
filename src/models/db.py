@@ -1491,6 +1491,9 @@ class IngestTokenRecord(SQLModel, table=True):
     """收录令牌(issue #262 波 1):``ding_`` 前缀,与 ``dsub_`` 同法只存 HMAC hash。
 
     作用域只放行推送端点;绑定一个 actor 名,写进条目来路与审计;日额度为软上限(条)。
+    ``can_register_sources`` 是一项单独的权限(issue #344 第二个 PR):开了的令牌可以自己登记来源
+    (``POST /api/public/ingest/v1/sources``),登记的源先是待列入并自动绑定给它;``register_day`` /
+    ``register_count`` 是当天(UTC)已登记的个数,计数不随源被删除回退。
     """
 
     __tablename__ = "ingest_tokens"
@@ -1505,6 +1508,9 @@ class IngestTokenRecord(SQLModel, table=True):
     created_at: str = Field(description="签发时间")
     last_used_at: Optional[str] = Field(default=None, description="最近一次推送")
     revoked_at: Optional[str] = Field(default=None, description="吊销时间")
+    can_register_sources: bool = Field(default=False, description="可以自己登记来源")
+    register_day: str = Field(default="", description="最近一次自己登记来源的日期(UTC,YYYY-MM-DD)")
+    register_count: int = Field(default=0, description="register_day 当天已登记的来源数")
 
 
 class IngestBindingRecord(SQLModel, table=True):

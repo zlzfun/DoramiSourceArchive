@@ -4,7 +4,7 @@ import { formatDateTime, formatRelativeTime } from '../../utils/datetime';
 
 /**
  * 推送绑定清单(issue #344)。令牌抽屉里列它的来源,源检视器里列在推它的令牌——同一套行:
- * 名称 + 等宽小字(源 id / 令牌尾号)· 最近一批 · 解绑。
+ * 名称(可带徽标 `pill`)+ 等宽小字(源 id / 令牌尾号)· 最近一批 · 解绑。
  */
 export function BindList({ rows, onUnbind, busyKey = '' }) {
   if (!rows.length) return null;
@@ -13,7 +13,10 @@ export function BindList({ rows, onUnbind, busyKey = '' }) {
       {rows.map((row) => (
         <div key={row.key} className={`bind-row ${row.muted ? 'is-muted' : ''}`}>
           <span className="bind-main">
-            <span className="acct-name" title={row.name}>{row.name}</span>
+            <span className="bind-name">
+              <span className="acct-name" title={row.name}>{row.name}</span>
+              {row.pill && <span className="tier-pill provisional-pill">{row.pill}</span>}
+            </span>
             <span className="acct-mono" title={row.mono}>{row.mono}</span>
           </span>
           <span className="acct-mono bind-time" title={row.pushedAt ? formatDateTime(row.pushedAt) : undefined}>

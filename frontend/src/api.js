@@ -1251,6 +1251,11 @@ export function createIngestToken(payload) {
   return request('/admin/ingest/tokens', { method: 'POST', body: payload, errorMsg: '签发收录令牌失败' });
 }
 
+// 开 / 关这个令牌「可以自行登记来源」的权限(issue #344 第二个 PR);返回更新后的令牌。
+export function updateIngestToken(tokenId, payload) {
+  return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}`, { method: 'PATCH', body: payload, errorMsg: '修改失败' });
+}
+
 export function revokeIngestToken(tokenId) {
   return request(`/admin/ingest/tokens/${encodeURIComponent(tokenId)}/revoke`, { method: 'POST', errorMsg: '吊销失败' });
 }
