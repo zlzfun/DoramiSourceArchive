@@ -81,7 +81,8 @@ def test_daily_brief_system_source_equals_the_old_constant():
     )
     assert (view.source_owner, view.source_scope, view.provenance_tier) == ("dorami", "aggregator", "tier1_curated")
     assert view.fetcher_id == "" and not view.retired and view.role == "media"
-    assert set(catalog_files.REQUIRED_SYSTEM_IDS) == {source_catalog.DAILY_BRIEF_SOURCE_ID}
+    # issue #72 起代码按 id 引用的系统源有两个:公共日报、GitHub Trending 精读
+    assert set(catalog_files.REQUIRED_SYSTEM_IDS) == {source_catalog.DAILY_BRIEF_SOURCE_ID, "dorami_trending_picks"}
 
 
 # ── 消费方读的是目录 ─────────────────────────────────────────────────────────
@@ -230,6 +231,11 @@ name = "日报"
 shape = "article"
 owner = "dorami"
 
+[[system]]
+id = "dorami_trending_picks"
+name = "精读"
+shape = "article"
+
 [[tombstone]]
 id = "x_gone"
 name = "X · Gone"
@@ -264,6 +270,7 @@ def test_loader_reads_the_reserved_files(tmp_path):
         "dorami_daily_brief": catalog_files.SystemEntry(
             id="dorami_daily_brief", name="日报", shape="article", owner="dorami",
         ),
+        "dorami_trending_picks": catalog_files.SystemEntry(id="dorami_trending_picks", name="精读", shape="article"),
     }
     assert loaded.tombstones == {
         "x_gone": catalog_files.TombstoneEntry(id="x_gone", name="X · Gone", shape="social", platform="x"),
@@ -285,6 +292,11 @@ id = "dorami_daily_brief"
 name = "日报"
 shape = "article"
 
+[[system]]
+id = "dorami_trending_picks"
+name = "精读"
+shape = "article"
+
 [reader_defaults]
 subscriptions = []
 '''
@@ -300,8 +312,11 @@ subscriptions = []
     # system.toml
     ({"system": _SYSTEM + '\n[[source]]\nid = "system_x"\n'}, "顶层只允许"),
     ({"system": _SYSTEM.replace('id = "dorami_daily_brief"', 'id = "some_other_system"')}, "缺系统源"),
-    ({"system": _SYSTEM.replace('[[system]]\nid = "dorami_daily_brief"\nname = "日报"\nshape = "article"\nowner = "dorami"\n', "")},
+    ({"system": _SYSTEM.replace('[[system]]\nid = "dorami_daily_brief"\nname = "日报"\nshape = "article"\nowner = "dorami"\n', "")
+                        .replace('[[system]]\nid = "dorami_trending_picks"\nname = "精读"\nshape = "article"\n', "")},
      "没有任何 [[system]]"),
+    # 代码按 id 引用的系统源一个都不能少(issue #72 起有两个)
+    ({"system": _SYSTEM.replace('id = "dorami_trending_picks"', 'id = "some_other_system"')}, "缺系统源"),
     ({"system": _SYSTEM.replace('name = "日报"\n', "")}, "缺必填键"),
     ({"system": _SYSTEM.replace('name = "日报"', 'name = " "')}, "不能为空"),
     ({"system": _SYSTEM.replace('owner = "dorami"', 'daily = "yes"')}, "未知键"),

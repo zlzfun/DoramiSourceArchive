@@ -399,3 +399,22 @@ class GitHubTrendingDigestContent(BaseContent):
 
     items_json: str = field(default="[]", metadata={"description": "当日榜单结构化数组 JSON"})
     repo_count: int = field(default=0, metadata={"description": "榜单条目数"})
+
+
+@dataclass
+class TrendingPicksContent(BaseContent):
+    """GitHub Trending 精读:生成流程的产出(issue #72),写进系统源 ``dorami_trending_picks``。
+
+    一期对应一条日榜(``GitHubTrendingDigestContent``,原始榜单):从榜单里挑几个值得看的仓库,
+    各配一句中文说明与「为什么值得看」。模型只给结构化条目,正文由代码确定性渲染
+    (与公共日报同一个思路:``items`` 是枢纽,Markdown 是渲染)。
+    """
+    content_type: ClassVar[str] = "trending_picks"
+
+    report_date: str = field(default="", metadata={"description": "这一期的日期 YYYY-MM-DD(北京时间)"})
+    items: List[Dict[str, Any]] = field(default_factory=list, metadata={"description": "挑出的仓库:repo / url / description / language / stars / stars_today / group / summary / why"})
+    picks_count: int = field(default=0, metadata={"description": "挑出的仓库数"})
+    repo_count: int = field(default=0, metadata={"description": "所用榜单的条目数"})
+    trending_article_id: str = field(default="", metadata={"description": "所用日榜记录的 id(同一条日榜不写第二期)"})
+    llm_model: str = field(default="", metadata={"description": "生成所用模型"})
+    generated_at: str = field(default="", metadata={"description": "生成完成时间 (ISO)"})

@@ -16,6 +16,9 @@ src/
 │   └── prompts.py           # Daily-brief map/reduce + reader-AI translate/QA (哆啦美 persona) prompt templates
 ├── services/
 │   ├── daily_brief.py       # Daily-brief map-reduce orchestration + same-event dedup_clusters + paper_cap + cursor dedup + in-memory progress; usage attributed to triggered_by (manual admin) else "system"
+│   ├── generation_flows.py  # 生成流程的登记表与外壳 (issue #72): Flow / Knob 声明, 公共日报的薄适配, describe() 给泳道一行的全部数据, list_periods(); 内部各写各的, 不抽共用管道
+│   ├── trending_picks.py    # 生成流程「GitHub Trending 精读」: 取最新一条还没写过精读的日榜 → 辅助模型挑仓库 → 代码渲染正文; 产出写系统源 dorami_trending_picks, 不送分析
+│   ├── generated_content.py # 生成流程产出的落库 (公共日报用自己的 _persist_brief): 正文为空不写、同事务确保系统源行、同 id 覆盖
 │   ├── reader_ai.py         # 用户面 AI Beta: translate_article (cached zh translation) + answer_question (multi-turn QA); shares resolve_llm_config; 核心层「文章名单→编号上下文+sources」(v3.32,[n] 即引用锚) + assemble_reader_context 范围四档(article/articles 显式名单,subscription/all 经 search_fetch 闭包注入)
 │   ├── reader_search.py     # 订阅域问答检索(v3.30 检索扶正波): LLM 规划(中英关键词+日期窗+意图分流)→ FTS5 召回 → LLM 选篇 → 全文注入; 降级链自持; 日报即索引
 │   ├── source_catalog.py    # 源目录读服务(issue #262): describe → SourceView(行与预设类合并), layers → 两层 + info_role / reader_shape 口径函数, preset_views / preset_binding(预设源身份与绑定事实), row_shape(阅读侧形态判定); 业务代码读注册表身份的唯一入口(守卫 tests/test_source_catalog_boundary.py)
@@ -85,8 +88,8 @@ frontend/src/
     ├── DataTab.jsx          # 知识台账: article list, filters, CRUD; admin-facing (hidden for `user`); 总账条=三格收录量看板(v3.31 向量列/自动向量化开关随 RAG 退役移除)
     ├── FetchTab.jsx         # 源管理(原「节点管理」): 全部源的目录 / 触发 / 治理 (collector)
     ├── FetchRunsTab.jsx     # 任务与运行: scheduled tasks + fetch-run history (collector)
-    ├── DailyBriefTab.jsx    # AI 日报页签 (原「接入集成」页签瘦身改名 v3.9; tab id 已更名 'brief', 历史书签 #/mcp 由 hashToRoute 归一兼容; gating collector): DailyBriefPanel + 只读模型 chip; 交付通道内容 (MCP/聚合接口/技能包) 已并入设置柜
-    ├── DailyBriefPanel.jsx   # 每日 AI 资讯日报: config + manual generate + run history (admin-managed)
+    ├── GenerationFlowsTab.jsx  # 「生成流程」页签 (issue #72, 原「AI 日报」; tab id 仍是 'brief', 历史书签 #/mcp 由 hashToRoute 归一兼容; gating collector): 泳道——一行一个流程, 行上只有开关与立即生成 + 只读模型 chip
+    ├── GenerationFlowDrawer.jsx # 一个流程的抽屉: 「配置」(取材 / 定时 / 旋钮 / 游标, 行由后端按流程声明) + 「往期」(展开读正文 / 删除); 纯函数在 utils/generationFlows.js
     ├── DailyBriefFlow.jsx    # Animated map-reduce stage visualization for the daily-brief generation progress
     ├── SettingsModal.jsx    # 设置柜 (880×576, v3.9 「接入集成并入设置」; v3.19.2 整备): 分组左导航 通用(账户/外观/反馈与建议 — 反馈仅读者账号)/接入集成(聚合接口/MCP 接入/Agent 技能包 — 两角色同享)/管理(数据同步/凭据 — v3.27 凭据整合台)/关于; wash 块选中 (轨语言); initialSection 深链。**内容门控按「当前界面」而非仅角色**(v3.19.2): App 下传 readerSurface, adminConsole = admin 账号 × 管理台界面 —— MCP 启停 switch/「管理员令牌拉走全库」文案/数据同步组/归档中枢产品名只在 adminConsole 出现, admin 切阅读器后设置柜与读者同观感。分区组件在 components/settings/ (FeedTokenSection/McpAccessSection — adminConsole 含 MCP 启停 switch + 向量统计行, 取数范围说明分管理版/读者版/SkillSection/AccountSection/AppearanceSection/DataSyncSection — v3.19.2 重设计为单列整幅实线卡(根治 datetime 截断), 含 RemoteSyncCard 远程同步块(测连/范围三选/进度轮询)与 RemoteSyncScheduleCard 定时同步卡(开关+只写不回显凭据+频率预设)/CredentialsSection — v3.27 凭据整合台:LLM/X 编辑卡+只读回指行,onNavigate 柜内跳数据同步/FeedbackSection — v3.18 读者反馈入口/AboutSection)
     ├── SecretField.jsx      # 统一凭据输入件(v3.26): 只写不回显契约的表单半边——掩码预览即占位(无预览时「已设置」), 空值起步 留空=保留/输入=覆盖, 语义挂 title; X/LLM/定时同步三处共用

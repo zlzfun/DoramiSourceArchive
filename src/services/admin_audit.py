@@ -24,6 +24,8 @@ AUDIT_PATH_PREFIXES = (
     "/api/collection-jobs",
     "/api/llm",
     "/api/daily-brief",
+    # 生成流程(issue #72):改开关 / cron / 配置与手动触发都是管理动作。
+    "/api/generation-flows",
     # 全站 MCP 总闸（admin-only 服务级熔断，v3.40.4 审计 M01 补审计）。
     "/api/mcp/toggle",
     # v3.42 审计 M11 补覆盖：文章 CRUD/批量删除、手动触发采集、归档导入

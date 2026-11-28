@@ -61,7 +61,7 @@ import { usePolling } from '../hooks/usePolling';
 import { formatDateTime, formatRelativeTime } from '../utils/datetime';
 import { collectionRunMessage, TEST_RUN_LIMIT } from '../utils/collection';
 import { scrollBehavior } from '../motion';
-import { ACQUISITION_LABELS, acquisitionOf, lastPushedAt, pushBindingsOf } from '../utils/sourceAcquisition';
+import { ACQUISITION_LABELS, acquisitionOf, isGenerated, lastPushedAt, pushBindingsOf } from '../utils/sourceAcquisition';
 
 // 健康态 → 信号灯样式（后端 SourceStateRecord 只有四态，无独立「告警」态，故灯位取四态 + 全部）。
 const HEALTH_SIGNAL = { healthy: 'ok', failing: 'fail', running: 'running', never_run: 'idle' };
@@ -130,6 +130,7 @@ const pushActorsOf = (fetcher) => pushBindingsOf(fetcher).map(binding => binding
 
 // 行上「获取方式」一格的悬浮说明:抓取器是哪个、谁在推。
 function acquisitionTitleOf(fetcher) {
+  if (isGenerated(fetcher)) return '由平台的生成流程产出';
   const parts = [];
   if (!isUnbound(fetcher)) parts.push(`抓取器：${channelLabelOf(fetcher)}`);
   const actors = pushActorsOf(fetcher);
@@ -137,7 +138,7 @@ function acquisitionTitleOf(fetcher) {
   return parts.join(' · ') || '没有抓取器，也没有推送';
 }
 
-export default function FetchTab({ isActive = true, availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
+export default function FetchTab({ isActive = true, availableFetchers, showToast, view, setView, onArticlesChanged, onRunsChanged, onViewArticles, onViewRuns, onViewFlows, onSaveAsJob, pendingFocus, onPendingFocusApplied }) {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [healthByFetcher, setHealthByFetcher] = useState({});
   const [customNodes, setCustomNodes] = useState([]); // 私有用户源由 source-health 补入公共源目录之外
@@ -1163,7 +1164,9 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
       const homepage = fetcher.homepage_url || fetcher.base_url || fetcher.feed_url;
       const isRenaming = renaming?.id === fetcher.id;
       const stamp = fetcher.retired ? '已退役' : isProvisional ? '临时' : originLabelOf(fetcher) || '无抓取';
-      const pushSection = fetcher.retired ? null : renderPushSection(fetcher);
+      // 系统源的条目只由生成流程写入,推送不能往里写(后端拒收):不给绑定令牌的入口
+      const generated = isGenerated(fetcher);
+      const pushSection = fetcher.retired || generated ? null : renderPushSection(fetcher);
       return (
         <>
           <div className="inspector-head">
@@ -1196,6 +1199,13 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
 
           <div className="inspector-body">
             {fetcher.desc && <p className="inspector-desc">{fetcher.desc}</p>}
+
+            {/* 系统源:内容由生成流程产出,开关、定时、往期都在「生成流程」页(issue #72) */}
+            {isGenerated(fetcher) && (
+              <button type="button" className="inspector-metabtn self-start" onClick={() => onViewFlows?.()} title="这个源的内容由生成流程产出">
+                生成流程
+              </button>
+            )}
 
             {homepage && (
               <a className="inspector-url" href={homepage} target="_blank" rel="noreferrer" title="打开来源入口">
@@ -1254,7 +1264,7 @@ export default function FetchTab({ isActive = true, availableFetchers, showToast
             )}
 
             {/* 顺序与有抓取器的源一致:先抓取(这里只有一句「没有抓取器」),后推送 */}
-            {(fetcher.retired || pushBindingsOf(fetcher).length === 0) && (
+            {!generated && (fetcher.retired || pushBindingsOf(fetcher).length === 0) && (
               <p className="inspector-hint">
                 {fetcher.retired ? '已退役' : '没有抓取器'}
               </p>

@@ -62,7 +62,7 @@ def public_review_evidence(session: Session, candidate_id: int, *, now=None):
         source = session.get(SourceConfigRecord, row.source_id)
         if source_is_credentialed(source):
             continue
-        if source_catalog.is_system_source(article.source_id) or article.content_type in {"daily_brief", "personal_digest"}:
+        if source_catalog.is_system_source(article.source_id) or article.content_type in {"daily_brief", "trending_picks", "personal_digest"}:
             continue
         published = parse_article_time(row.published_date or row.created_at)
         if published is None or published > _now(now) or not since <= _date(row) <= today:

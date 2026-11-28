@@ -37,12 +37,12 @@ import { authQueue, decideAuthExpired } from './utils/authSession';
 import { TitlePreferenceContext, useTitlePreferenceState } from './hooks/useTitlePreference';
 
 // Tab 组件按路由惰性加载：各自独立 chunk，登录页与读者态不再下载用不到的重依赖
-// （AdminOpsTab→recharts、ReaderTab/DailyBriefTab→react-markdown）。每个 Tab 挂在独立
+// （AdminOpsTab→recharts、ReaderTab→react-markdown）。每个 Tab 挂在独立
 // Suspense 边界内，故加载新 Tab 不会波及已挂载 Tab（避免切换时整屏闪 fallback）。
 const DataTab = lazy(() => import('./components/DataTab'));
 const FetchTab = lazy(() => import('./components/FetchTab'));
 const FetchRunsTab = lazy(() => import('./components/FetchRunsTab'));
-const DailyBriefTab = lazy(() => import('./components/DailyBriefTab'));
+const GenerationFlowsTab = lazy(() => import('./components/GenerationFlowsTab'));
 const AdminOpsTab = lazy(() => import('./components/AdminOpsTab'));
 const TaxonomyReviewPanel = lazy(() => import('./components/admin/TaxonomyReviewPanel'));
 const ReaderWorkspace = lazy(() => import('./components/ReaderWorkspace'));
@@ -809,7 +809,8 @@ export default function App() {
     { id: 'runs', icon: History, label: '任务与运行', short: '运行', surface: 'collector' },
     // 「接入集成」页签已并入设置柜(交付通道三卡→设置·接入集成组);页签瘦身改名「AI 日报」
     // (只剩日报运营面),id 改为 'brief'(历史 hash #/mcp 由 hashToRoute 归一兼容)。
-    { id: 'brief', icon: Newspaper, label: 'AI 日报', short: '日报', surface: 'collector' },
+    // issue #72:公共日报成为多个生成流程之一,页签改名「生成流程」(导轨短名「生成」);id 与 #/brief 不变。
+    { id: 'brief', icon: Newspaper, label: '生成流程', short: '生成', surface: 'collector' },
     { id: 'admin', icon: ShieldCheck, label: '运维管理', short: '运维', adminOnly: true },
   ].filter(tab => {
     if (tab.onlyReader && !isReaderRole) return false;
@@ -1184,6 +1185,7 @@ export default function App() {
                   onRunsChanged={markRunsDirty}
                   onViewArticles={viewArticlesForSource}
                   onViewRuns={viewRunsForSource}
+                  onViewFlows={() => jumpWithFocus('brief', null, null)}
                   onViewRunning={viewRunningTasks}
                   onSaveAsJob={saveSelectionAsJob}
                   pendingFocus={pendingFocus?.tab === 'fetch' ? pendingFocus.payload : null}
@@ -1214,11 +1216,12 @@ export default function App() {
           {mountedTabs.has('brief') && runtimeInfo.collector_enabled && (
             <div className={`tab-panel${activeTab === 'brief' && !readerView ? '' : ' is-off'}`}>
               <TabBoundary>
-                <DailyBriefTab
+                <GenerationFlowsTab
                   showToast={showToast}
                   collectorEnabled={runtimeInfo.collector_enabled}
                   isAdmin={runtimeInfo.account_role === 'admin'}
                   onOpenModelConfig={() => openSettings('credentials')}
+                  onViewSource={focusSourceNode}
                 />
               </TabBoundary>
             </div>

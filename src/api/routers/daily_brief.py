@@ -162,49 +162,21 @@ def get_daily_brief_config(session: Session = Depends(deps.get_session)):
 
 @router.post("/api/daily-brief/config")
 def set_daily_brief_config(payload: DailyBriefConfigUpdate, session: Session = Depends(deps.get_session)):
-    if payload.cron is not None:
-        cron_expr = payload.cron.strip()
-        if len(cron_expr.split()) != 5:
-            raise HTTPException(status_code=400, detail="cron 表达式必须是 5 段，例如：30 8 * * *")
-    if payload.top_n is not None and not (
-        daily_brief_service.TOP_N_MIN <= payload.top_n <= daily_brief_service.TOP_N_MAX
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=f"精选条数需在 {daily_brief_service.TOP_N_MIN}–{daily_brief_service.TOP_N_MAX} 之间",
-        )
-    if payload.min_score is not None and not (0.0 <= payload.min_score <= 10.0):
-        raise HTTPException(status_code=400, detail="入选门槛需在 0–10 之间")
-    if payload.min_items is not None and not (0 <= payload.min_items <= daily_brief_service.TOP_N_MAX):
-        raise HTTPException(status_code=400, detail=f"正文保底条数需在 0–{daily_brief_service.TOP_N_MAX} 之间")
-    if payload.paper_min_content_value is not None and not (0.0 <= payload.paper_min_content_value <= 10.0):
-        raise HTTPException(status_code=400, detail="论文门槛需在 0–10 之间")
-    if payload.enabled is not None:
-        daily_brief_service.set_setting(
-            session, daily_brief_service.KEY_ENABLED, "true" if payload.enabled else "false"
-        )
-    if payload.min_score is not None:
-        daily_brief_service.set_setting(
-            session, daily_brief_service.KEY_MIN_SCORE, f"{payload.min_score:g}"
-        )
-    if payload.min_items is not None:
-        daily_brief_service.set_setting(
-            session, daily_brief_service.KEY_MIN_ITEMS, str(payload.min_items)
-        )
-    if payload.paper_min_content_value is not None:
-        daily_brief_service.set_setting(
+    # 校验与写入在服务层(「生成流程」的外壳共用同一套);文案与顺序未变
+    try:
+        daily_brief_service.apply_config_update(
             session,
-            daily_brief_service.KEY_PAPER_MIN_CONTENT_VALUE,
-            f"{payload.paper_min_content_value:g}",
+            enabled=payload.enabled,
+            cron=payload.cron,
+            cursor=payload.cursor,
+            top_n=payload.top_n,
+            source_ids=payload.source_ids,
+            min_score=payload.min_score,
+            min_items=payload.min_items,
+            paper_min_content_value=payload.paper_min_content_value,
         )
-    if payload.cron is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_CRON, payload.cron.strip())
-    if payload.cursor is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_CURSOR, payload.cursor.strip())
-    if payload.top_n is not None:
-        daily_brief_service.set_setting(session, daily_brief_service.KEY_TOP_N, str(payload.top_n))
-    if payload.source_ids is not None:
-        daily_brief_service.write_source_scope(session, payload.source_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     # 仅在 collector 运行角色下有调度引擎；reader 角色不接日报 cron。
     app = _app()
     if app.runtime_collector_enabled():

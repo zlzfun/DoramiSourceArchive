@@ -19,6 +19,18 @@ User interests are `follow` only since v3.56 (issue #27 retired the `mute` stanc
 
 推荐分发补充（#178，2026-11-11）：新闻与内容推荐分别选篇。个人早报及榜单「播客精选」只接受全文终评；公共日报另从近7天现有分析中挑选深读 / 播客，独立于新闻游标，不触发付费生成。新增推荐保存在 `extensions.content_recommendations` 并渲染到正文，旧 `items` / `included_article_ids` / `articles_count` 继续表示新闻、既有论文与附录；不由推荐提升新闻热度。默认名额、去重、混版本及历史边界见[方案 §6](../plans/issue-178-content-classification.md)。
 
+## 生成流程(issue #72):公共日报是多个流程之一
+
+平台自己定时把站内已有的内容加工成一份新内容,叫**生成流程**。现在有两个:公共日报、GitHub Trending 精读。`services/generation_flows.py` 只统一外面一层——登记、开关、cron、手动触发、进度、上次结果、往期;**内部各写各的**(`daily_brief.py` / `trending_picks.py`),不抽共用的管道:两份流程的取材、打分、选篇正是它们不一样的地方。加一个流程 = 写一个模块 + 在 `system.toml` 加一条系统源 + 在 `FLOWS` 里登记。
+
+- **外壳认的东西**:一组有序的**阶段**(建议 ≤ 6;是内部过程的粗粒度投影,不是步骤图——日报的评分与点评是逐条并行、论文走单独名额,都在阶段里面)、阶段内进度(完成数 / 总数)、一次运行的结果(成功 / 跳过 / 失败;跳过不算失败)、配置表单的各行(由流程声明,管理面照着画)。并行或分支的画法等真有这样的流程再做,到时往阶段上加字段。
+- **公共日报是薄适配**:配置键 `daily_brief_*`、调度里的 job id `daily_brief`、`/api/daily-brief/*` 都原样保留(神灯与 skill 模板在用);配置的校验与写入在 `daily_brief.apply_config_update`,日报自己的接口与外壳共用。
+- **GitHub Trending 精读**:取最新一条 `github_trending_daily` 日榜——日榜的 id 与日期按 UTC 记,所以认的是「这条日榜有没有被写过」,不按日期对;辅助模型一次调用只返回结构化条目(榜单里没有的仓库、缺说明的、重复的都丢掉),正文由代码渲染;一天一期(北京时间的日期)。定时遇到已写过的榜单一律跳过;手动只在「写的就是今天这一期」时重写。失败不落库,原因记进上次结果。用量记在 `trending_picks`,不进读者预算。
+- **产出是系统源的条目,不回流**:精读的源行 `analysis = false`(不评分、不打标),另有系统源名单的排除(见 [`fetchers-and-sources.md`](./fetchers-and-sources.md))与按条目类型的排除(`source_catalog.system_content_types()`:榜单、同源判重、候选治理)。读者面:别的系统源有了第一期才出现在目录里,日报照旧预先列出;个人早报不等日报以外的系统源。
+- **调度**:`reload_generation_flow_schedule(flow_id)` 按流程 id 增删 cron job,一律经 `add_cron_job`;新流程缺省关。
+- **管理面**:页签「生成流程」(id 仍是 `brief`),泳道一行一个流程,行上只有开关与立即生成;点一行打开抽屉(配置、往期)。样页与取舍见 [`design/issue-72-product-registry/`](../design/issue-72-product-registry/README.md)。
+- **部署**:打开精读之前,接收节点要先升到含本功能的版本(旧版本会让订阅了精读的读者,个人早报每天等到截止);精读要 `github_trending_daily` 每天在采(它在观察期,不进每日自动采集)。详见[方案](../plans/issue-72-generation-flows.md) §7。
+
 ## Analysis visibility and worker draining (v3.46)
 
 Missing historical analysis is absence, not score zero: reader surfaces omit score/tags until a result exists. Pending/running items show 「正在分析」; a forced same-content refresh keeps the prior result readable and shows 「更新中」 until an authority/content-hash-fenced commit replaces it. Changed content hides stale analysis. One scheduler cycle drains a bounded backlog with controlled concurrency instead of processing only one page, and pending/running metrics are reported separately.

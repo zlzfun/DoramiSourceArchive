@@ -751,27 +751,30 @@ export function getXApiQuota() {
   return request('/x-api/quota', { errorMsg: '获取 X API 用量失败' });
 }
 
-export function getDailyBriefConfig() {
-  return request('/daily-brief/config', { errorMsg: '获取日报配置失败' });
+// ── 生成流程(issue #72):公共日报、GitHub Trending 精读等平台自己定时生成的东西 ──
+// 一次取全所有流程的现状(泳道页);改开关 / cron / 配置;手动触发;阶段进度;往期。
+
+export function fetchGenerationFlows() {
+  return request('/generation-flows', { errorMsg: '获取生成流程失败' });
 }
 
-export function saveDailyBriefConfig(payload) {
-  return request('/daily-brief/config', { method: 'POST', body: payload, errorMsg: '保存日报配置失败' });
+export function saveGenerationFlow(flowId, payload) {
+  return request(`/generation-flows/${encodeURIComponent(flowId)}/config`, { method: 'POST', body: payload, errorMsg: '保存失败' });
 }
 
-export function getDailyBriefPipeline() {
-  return request('/daily-brief/pipeline', { errorMsg: '获取日报生成管线失败' });
+export async function runGenerationFlow(flowId) {
+  // 后台任务:提交拿 job_id,再轮询 /api/jobs/{id} 取最终结果;阶段进度由调用方另外轮询 progress。
+  const { job_id: jobId } = await request(`/generation-flows/${encodeURIComponent(flowId)}/generate`, { method: 'POST', errorMsg: '生成失败' });
+  return pollJob(jobId, { defaultError: '生成失败' });
 }
 
-export function getDailyBriefProgress() {
-  return request('/daily-brief/progress', { errorMsg: '获取日报进度失败' });
+export function fetchGenerationFlowProgress(flowId) {
+  return request(`/generation-flows/${encodeURIComponent(flowId)}/progress`, { errorMsg: '获取生成进度失败' });
 }
 
-export async function generateDailyBrief(payload = {}) {
-  // 生成已改为后台任务：提交拿 job_id，再轮询 /api/jobs/{id} 取最终结果（result）。
-  // 细粒度阶段动画仍由调用方轮询 /api/daily-brief/progress 驱动，与此互补。
-  const { job_id: jobId } = await request('/daily-brief/generate', { method: 'POST', body: payload, errorMsg: '生成日报失败' });
-  return pollJob(jobId, { defaultError: '生成日报失败' });
+export function fetchGenerationFlowPeriods(flowId, page = 1, pageSize = 10) {
+  const params = new URLSearchParams({ page, page_size: pageSize });
+  return request(`/generation-flows/${encodeURIComponent(flowId)}/periods?${params}`, { errorMsg: '获取往期失败' });
 }
 
 // ==================== 归档同步（导出/导入，非 JSON 响应） ====================

@@ -187,7 +187,7 @@ def _content_shape(article: ArticleRecord, source_shapes: dict[str, str]) -> str
         return "podcast"
     if article.content_type in {
         "github_release", "github_repository", "hf_model", "huggingface_model",
-        "github_trending", "social_post", "daily_brief",
+        "github_trending", "social_post", "daily_brief", "trending_picks",
     }:
         return "excluded"
     return "article"
@@ -714,7 +714,7 @@ def _all_time_high_scores(
     known_sources = sorted(source_shapes)
     excluded_content_types = {
         "github_release", "github_repository", "hf_model", "huggingface_model",
-        "github_trending", "social_post", "daily_brief",
+        "github_trending", "social_post", "daily_brief", "trending_picks",
     }
     if shape == "podcast":
         fallback_shape = ArticleRecord.content_type == "podcast_episode"

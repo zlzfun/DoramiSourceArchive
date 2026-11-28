@@ -78,7 +78,7 @@ _COLLECTION_TABLES = ("collection",)
 # 代码按 id 引用的系统源(``DAILY_BRIEF_SOURCE_ID``):目录里必须有,少了就是文件被改坏了。
 # 系统源可以不止一个(issue #72);「是不是系统源」一律问目录(``services.source_catalog.system_source_ids``),
 # 这里只列代码里写死了 id 的那些。
-REQUIRED_SYSTEM_IDS = ("dorami_daily_brief",)
+REQUIRED_SYSTEM_IDS = ("dorami_daily_brief", "dorami_trending_picks")
 _COLLECTION_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 

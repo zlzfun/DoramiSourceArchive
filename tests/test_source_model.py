@@ -289,7 +289,10 @@ def test_standalone_node_reconciles_with_analysis_on(tmp_path):
     _reconcile(sink.engine)
     with Session(sink.engine) as session:
         live = [row for row in session.exec(select(SourceConfigRecord)).all() if not row.retired_at]
-        assert live and all(row.ai_analysis_enabled is True for row in live)
+        # 目录条目写了 analysis = false 的系统源除外(issue #72:GitHub Trending 精读的条目不送入库分析)
+        opted_out = {"dorami_trending_picks"}
+        assert live and all(row.ai_analysis_enabled is True for row in live if row.source_id not in opted_out)
+        assert {row.source_id for row in live if not row.ai_analysis_enabled} == opted_out
 
 
 def test_save_ensures_a_source_row_in_the_same_transaction(tmp_path):

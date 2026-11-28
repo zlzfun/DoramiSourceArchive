@@ -1,7 +1,9 @@
 // 源的获取方式(issue #344):抓取(平台的抓取器去拿)与推送(收录令牌送来)并列,一个源可以两样都有。
+// issue #72 加第三种:生成——系统源(公共日报、GitHub Trending 精读)的内容由平台自己的生成流程产出,
+// 没有抓取器,推送也不能往里写;按「谁在跑」分就是 抓取 / 推送 / 生成。
 // 源管理的行、检视器与运维「收录令牌」共用这里的口径。
 
-export const ACQUISITION_LABELS = { fetch: '抓取', push: '推送', both: '抓取 · 推送', none: '无抓取' };
+export const ACQUISITION_LABELS = { fetch: '抓取', push: '推送', both: '抓取 · 推送', generate: '生成', none: '无抓取' };
 
 // 在往这个源推的收录令牌(`GET /api/fetchers` 每条带的 push_bindings)。
 export function pushBindingsOf(source) {
@@ -13,7 +15,13 @@ export function hasFetcher(source) {
   return Boolean(source?.user_source) || source?.bound !== false;
 }
 
+// 系统源:源行的来路是 system(由本系统自己生成内容)。
+export function isGenerated(source) {
+  return source?.origin === 'system';
+}
+
 export function acquisitionOf(source) {
+  if (isGenerated(source)) return 'generate';
   const fetched = hasFetcher(source);
   const pushed = pushBindingsOf(source).length > 0;
   if (fetched && pushed) return 'both';
@@ -29,11 +37,11 @@ export function lastPushedAt(source) {
   }, '');
 }
 
-// 可以挂推送绑定的源:公共源里不是抓取模板、没退役的(服务端另有校验,这里只是不把绑不了的列进下拉)。
+// 可以挂推送绑定的源:公共源里不是抓取模板、没退役、不是系统源的(服务端另有校验,这里只是不把绑不了的列进下拉)。
 export function bindableSources(catalog, boundIds = []) {
   const taken = new Set(boundIds);
   return (Array.isArray(catalog) ? catalog : []).filter((source) => (
-    source && source.id && !source.is_template && !source.retired && !source.user_source && !taken.has(source.id)
+    source && source.id && !source.is_template && !source.retired && !source.user_source && !isGenerated(source) && !taken.has(source.id)
   ));
 }
 

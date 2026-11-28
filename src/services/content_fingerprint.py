@@ -35,7 +35,7 @@ MAX_DISTANCE = 3
 MIN_JACCARD = 0.8
 # SimHash 只取规范化正文前 2 万字,控制超长论文的耗时;sha1 与 Jaccard 复核用全文。
 _SIMHASH_CHARS = 20_000
-_EXCLUDED_CONTENT_TYPES = frozenset({"social_post", "podcast_episode", "daily_brief", "hf_model", "github_trending"})
+_EXCLUDED_CONTENT_TYPES = frozenset({"social_post", "podcast_episode", "daily_brief", "trending_picks", "hf_model", "github_trending"})
 _EXCLUDED_SOURCE_PREFIXES = ("hf_",)
 
 _TAG = re.compile(r"<[^>]+>")

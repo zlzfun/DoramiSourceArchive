@@ -570,6 +570,51 @@ def write_source_scope(session: Session, source_ids: Optional[List[str]]) -> Non
 # LLM 配置合并（ini 默认 ∪ KV 运行期覆盖）
 # ==========================================
 
+def apply_config_update(
+    session: Session,
+    *,
+    enabled: Optional[bool] = None,
+    cron: Optional[str] = None,
+    cursor: Optional[str] = None,
+    top_n: Optional[int] = None,
+    source_ids: Optional[List[str]] = None,
+    min_score: Optional[float] = None,
+    min_items: Optional[int] = None,
+    paper_min_content_value: Optional[float] = None,
+) -> None:
+    """校验并写入日报配置,只动给了的键(``None`` = 不改)。不合法抛 ``ValueError``,文案就是接口的 400 提示。
+
+    ``POST /api/daily-brief/config`` 与「生成流程」的外壳(``services.generation_flows``)共用;
+    先全部校验、再逐项写入,所以不会写到一半。调度由调用方重排。
+    """
+    if cron is not None and len(cron.strip().split()) != 5:
+        raise ValueError("cron 表达式必须是 5 段，例如：30 8 * * *")
+    if top_n is not None and not (TOP_N_MIN <= top_n <= TOP_N_MAX):
+        raise ValueError(f"精选条数需在 {TOP_N_MIN}–{TOP_N_MAX} 之间")
+    if min_score is not None and not (0.0 <= min_score <= 10.0):
+        raise ValueError("入选门槛需在 0–10 之间")
+    if min_items is not None and not (0 <= min_items <= TOP_N_MAX):
+        raise ValueError(f"正文保底条数需在 0–{TOP_N_MAX} 之间")
+    if paper_min_content_value is not None and not (0.0 <= paper_min_content_value <= 10.0):
+        raise ValueError("论文门槛需在 0–10 之间")
+    if enabled is not None:
+        set_setting(session, KEY_ENABLED, "true" if enabled else "false")
+    if min_score is not None:
+        set_setting(session, KEY_MIN_SCORE, f"{min_score:g}")
+    if min_items is not None:
+        set_setting(session, KEY_MIN_ITEMS, str(min_items))
+    if paper_min_content_value is not None:
+        set_setting(session, KEY_PAPER_MIN_CONTENT_VALUE, f"{paper_min_content_value:g}")
+    if cron is not None:
+        set_setting(session, KEY_CRON, cron.strip())
+    if cursor is not None:
+        set_setting(session, KEY_CURSOR, cursor.strip())
+    if top_n is not None:
+        set_setting(session, KEY_TOP_N, str(top_n))
+    if source_ids is not None:
+        write_source_scope(session, source_ids)
+
+
 def resolve_llm_config(session: Session) -> config.LLMConfig:
     """合并 ini/env 默认配置与 KV 运行期覆盖，产出有效 LLMConfig。"""
     base = config.settings.llm

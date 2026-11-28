@@ -376,7 +376,8 @@ def podcast_catalog_source(source_id: str):
 # ── 目录文件里的系统级条目:系统源 / 墓碑 / 合集 / 默认订阅 ──────────────────────
 
 # 系统源产出的条目类型是代码里的事实(谁写的条目谁知道),不进目录文件。
-_SYSTEM_CONTENT_TYPES = {DAILY_BRIEF_SOURCE_ID: "daily_brief"}
+TRENDING_PICKS_SOURCE_ID = "dorami_trending_picks"      # 生成流程 GitHub Trending 精读(issue #72)
+_SYSTEM_CONTENT_TYPES = {DAILY_BRIEF_SOURCE_ID: "daily_brief", TRENDING_PICKS_SOURCE_ID: "trending_picks"}
 _TOMBSTONE_CONTENT_TYPES = {"social": "social_post", "podcast": "podcast_episode"}
 
 
@@ -388,6 +389,15 @@ def system_source_ids() -> frozenset[str]:
     日报专属的行为(问答的「日报即索引」、删最新一期回退游标等)仍按 ``DAILY_BRIEF_SOURCE_ID`` 判断。
     """
     return frozenset(catalog_files.loaded().system)
+
+
+def system_content_types() -> frozenset[str]:
+    """系统源产出的条目类型(``daily_brief`` / ``trending_picks`` …)。
+
+    按条目类型排除的地方(榜单的形态判定、同源判重、候选治理)用它,与 ``system_source_ids`` 是同一条规则的两种问法:
+    条目的 ``source_id`` 在名单里,或者它的类型是系统源才会写的类型。
+    """
+    return frozenset(value for value in _SYSTEM_CONTENT_TYPES.values() if value)
 
 
 def is_system_source(source_id: Optional[str]) -> bool:

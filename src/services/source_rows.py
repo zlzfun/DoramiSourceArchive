@@ -240,6 +240,7 @@ def _ensure_system_row(
     session: Session, source_id: str, *, now: str, analysis_default: bool = True
 ) -> str:
     view = source_catalog._builtin_view(source_id)
+    meta = source_catalog.system_source_meta(source_id) or {}
     row = session.get(SourceConfigRecord, source_id)
     if row is not None:
         if row.origin != source_catalog.ORIGIN_SYSTEM and not (row.collection_authority_id or "").strip():
@@ -258,6 +259,10 @@ def _ensure_system_row(
         source_owner=view.source_owner,
         source_scope=view.source_scope,
         provenance_tier=view.provenance_tier,
+        # 源管理的列表与检视器读的是源行:建行时把目录条目的简介带上(已有的行不回填)。
+        # 两项在目录里都是可选的,没有就是空串
+        description=meta.get("desc") or "",
+        icon=meta.get("icon") or "",
         legacy_export=False,
         is_active=True,
         # 节点的缺省(有上游的节点上新建的行分析默认关)与目录条目的 analysis 都同意才开
