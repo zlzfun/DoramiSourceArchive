@@ -528,6 +528,68 @@ def test_a_period_synced_from_upstream_is_never_rewritten(tmp_path, llm, trigger
         assert session.get(ArticleRecord, "trending_picks_2026-11-27").content == "上游的正文"
 
 
+def test_a_takeover_by_sync_between_the_check_and_the_write_is_caught(tmp_path, monkeypatch):
+    """同步导入在别的线程里跑:本机「看过这一行是自己的」之后、写下去之前,它可能刚好接管这一行。
+    落库先取写锁、取到之后重新读,所以看得到接管(检视 R2)。这里把接管安排在取锁的那一刻之前。"""
+    from services import archive_sync_v2, generated_content
+
+    sink = _sink(tmp_path)
+    with Session(sink.engine) as session:
+        generated_content.persist_generated_article(session, _content("本机的第一版"))
+        session.commit()
+
+    real_gate = archive_sync_v2.acquire_write_gate
+    gates = []
+
+    def takeover_then_gate(session):
+        if not gates:                                       # 只在本机这次落库时插一脚
+            with Session(sink.engine) as other:
+                row = other.get(ArticleRecord, "trending_picks_2026-11-27")
+                row.analysis_authority_id, row.content = "upstream-node", "上游接管后的正文"
+                row.archive_updated_at = "2026-11-27T10:00:00"
+                other.add(row)
+                other.commit()
+        gates.append(session)
+        real_gate(session)
+
+    monkeypatch.setattr(archive_sync_v2, "acquire_write_gate", takeover_then_gate)
+    with Session(sink.engine) as session:
+        stale = session.get(ArticleRecord, "trending_picks_2026-11-27")     # 这个会话早先读过:还是本机的样子
+        assert not (stale.analysis_authority_id or "")
+        with pytest.raises(RuntimeError, match="上游同步"):
+            generated_content.persist_generated_article(session, _content("本机的第二版"))
+        session.rollback()
+    assert len(gates) == 1
+    with Session(sink.engine) as session:
+        row = session.get(ArticleRecord, "trending_picks_2026-11-27")
+        assert (row.content, row.analysis_authority_id, row.archive_updated_at) == (
+            "上游接管后的正文", "upstream-node", "2026-11-27T10:00:00")
+
+
+def test_persisting_takes_the_write_gate_before_reading_the_existing_row(tmp_path, monkeypatch):
+    from sqlalchemy import event
+
+    from services import archive_sync_v2, generated_content
+
+    sink = _sink(tmp_path)
+    order = []
+    real_gate = archive_sync_v2.acquire_write_gate
+    monkeypatch.setattr(archive_sync_v2, "acquire_write_gate", lambda session: (order.append("gate"), real_gate(session))[1])
+
+    def _capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "FROM articles" in statement:
+            order.append("read")
+
+    event.listen(sink.engine, "before_cursor_execute", _capture)
+    try:
+        with Session(sink.engine) as session:
+            generated_content.persist_generated_article(session, _content("第一版"))
+            session.commit()
+    finally:
+        event.remove(sink.engine, "before_cursor_execute", _capture)
+    assert order and order[0] == "gate" and "read" in order
+
+
 def test_an_upstream_period_of_another_day_does_not_block_today(tmp_path, llm):
     sink = _sink(tmp_path)
     _ranking(sink.engine, "2026-11-25")

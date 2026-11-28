@@ -157,6 +157,8 @@ test('草稿跟着服务器走:没改过的项取新值,改过的留着', () => 
   const followed = rebaseDraft(before, before, draftOf(picksAt(8)));
   assert.deepEqual(followed, draftOf(picksAt(8)));
   assert.equal(isDirty(picksAt(8), followed), false);
+  // cron 同理:别处改了定时,本窗口没碰过,跟着走
+  assert.equal(rebaseDraft(before, before, draftOf(picksAt(6, '0 7 * * *'))).cron, '0 7 * * *');
   // 随后只改 cron 再保存:提交的挑选个数是 8,不是本窗口打开时的 6
   assert.deepEqual(payloadOf(picksAt(8), { ...followed, cron: '0 10 * * *' }).payload, { cron: '0 10 * * *', config: { pick_count: 8, ai_only: true } });
 
@@ -188,4 +190,20 @@ test('草稿跟着服务器走:取材范围整体算一项', () => {
   assert.equal(isDirty(saved, rebaseDraft(before, editing, draftOf(saved))), false);
   // 合并出来的是新对象,不与入参共用数组
   assert.notEqual(merged.scopeIds, editing.scopeIds);
+});
+
+// 检视 R2:切到自定、勾一个、再切回全部——不脏,但勾过的还留在草稿里;这不算本地改动
+test('草稿跟着服务器走:切回「全部来源」后留在草稿里的勾选不算改动', () => {
+  const scopedTo = (ids) => flow({ form: [{ ...BRIEF_FORM[0], value: ids }, ...BRIEF_FORM.slice(1)] });
+  const before = draftOf(scopedTo([]));
+  const wandered = { ...before, scopeMode: 'all', scopeIds: ['rss_a'] };
+  assert.equal(isDirty(scopedTo([]), wandered), false);
+  // 别的窗口存了自定名单 rss_b:本窗口跟着走,随后只改 cron 保存,提交的是 rss_b 而不是空名单
+  const followed = rebaseDraft(before, wandered, draftOf(scopedTo(['rss_b'])));
+  assert.deepEqual([followed.scopeMode, followed.scopeIds], ['custom', ['rss_b']]);
+  assert.deepEqual(payloadOf(scopedTo(['rss_b']), { ...followed, cron: '0 9 * * *' }).payload.config.source_ids, ['rss_b']);
+  // 反过来:服务器原来是自定名单,本地切到了「全部来源」(这是改动),别处改了名单——留本地的
+  const custom = draftOf(scopedTo(['rss_a']));
+  const toAll = rebaseDraft(custom, { ...custom, scopeMode: 'all' }, draftOf(scopedTo(['rss_a', 'rss_b'])));
+  assert.equal(toAll.scopeMode, 'all');
 });

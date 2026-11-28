@@ -24,6 +24,9 @@ def is_upstream_copy(record: ArticleRecord) -> bool:
     同步来的行带着上游的版本印记(``analysis_authority_id``):本机改它的正文时,``ArticleRecord`` 的
     ``before_update`` 钩子不会推进 ``archive_updated_at``——改动对同步流不可见,上游重放还会盖回去。
     所以本机的生成流程不重写这样的行。
+
+    v2 同步导入文章时无条件写这个印记(与有没有分析行无关);更早的 v1 导入没有逐条印记,那样的行
+    在这里与在那个钩子里一样,都按本机的行看待。
     """
     return bool((record.analysis_authority_id or "").strip())
 
@@ -39,10 +42,17 @@ def persist_generated_article(session: Session, content_obj: BaseContent) -> Art
         session, content_obj.source_id, operation="collection"
     ):
         raise RuntimeError("当前节点不允许写入这个源")
+    # 先取写锁再看现状:同步导入在别的线程里跑,「看过是本机的行」与「写下去」之间不能让它插进来
+    # 接管这一行——否则留下的是上游的印记配本机的正文(检视 R2)。锁持有到调用方提交。
+    from services import archive_sync_v2
+
+    archive_sync_v2.acquire_write_gate(session)
     record = session.get(ArticleRecord, content_obj.id)
-    if record is not None and is_upstream_copy(record):
-        # 入口(各流程的 generate)先拦一道、记成跳过;这里是兜底,任何流程都不许盖掉上游的版本
-        raise RuntimeError("这一期是从上游同步来的,本机不重写")
+    if record is not None:
+        session.refresh(record)         # 这个会话里早先读过的话,拿到的是旧样子
+        if is_upstream_copy(record):
+            # 入口(各流程的 generate)先拦一道、记成跳过;这里是兜底,任何流程都不许盖掉上游的版本
+            raise RuntimeError("这一期是从上游同步来的,本机不重写")
     metadata = serialize_to_metadata(content_obj)
     source_rows.ensure_source_row(session, content_obj.source_id, content_type=content_obj.content_type)
     if record is None:

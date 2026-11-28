@@ -110,7 +110,8 @@ export function draftOf(flow) {
   return { cron: flow.cron || '', values, scopeMode, scopeIds };
 }
 
-const scopeKey = (draft) => `${draft.scopeMode}\n${[...draft.scopeIds].sort().join('\n')}`;
+// 与 isDirty、提交的语义一致:「全部来源」时名单不算数(切到自定又切回来,勾过的还留在草稿里,但不是改动)
+const scopeKey = (draft) => (draft.scopeMode === 'custom' ? `custom\n${[...draft.scopeIds].sort().join('\n')}` : 'all');
 
 // 服务器上的取值变了(别的窗口改了配置、保存后重取):把草稿挪到新的起点上。
 // baseline = 草稿上次与服务器对齐时的取值;本地没改过的项取服务器的新值,改过的留着。
