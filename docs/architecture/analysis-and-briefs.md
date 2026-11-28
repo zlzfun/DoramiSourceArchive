@@ -29,7 +29,7 @@ User interests are `follow` only since v3.56 (issue #27 retired the `mute` stanc
 - **产出是系统源的条目,不回流**:精读的源行 `analysis = false`(不评分、不打标),另有系统源名单的排除(见 [`fetchers-and-sources.md`](./fetchers-and-sources.md))与按条目类型的排除(`source_catalog.system_content_types()`:榜单、同源判重、候选治理)。读者面:别的系统源有了第一期才出现在目录里,日报照旧预先列出;个人早报不等日报以外的系统源。
 - **调度**:`reload_generation_flow_schedule(flow_id)` 按流程 id 增删 cron job,一律经 `add_cron_job`;新流程缺省关。外壳的写入口用调度同一个解析器(`services.cron_expr`)校验 cron——段数对但字段越界的不让存,否则登记不上、原来的定时会被静默摘掉。
 - **管理面**:页签「生成流程」(id 仍是 `brief`),泳道一行一个流程,行上只有开关与立即生成;点一行打开抽屉(配置、往期)。样页与取舍见 [`design/issue-72-product-registry/`](../design/issue-72-product-registry/README.md)。
-- **部署**:打开精读之前,接收节点要先升到含本功能的版本(旧版本会让订阅了精读的读者,个人早报每天等到截止);精读要 `github_trending_daily` 每天在采(它在观察期,不进每日自动采集)。详见[方案](../plans/issue-72-generation-flows.md) §7。
+- **部署**:打开精读之前,接收节点要先升到含本功能的版本(旧版本会让订阅了精读的读者,个人早报每天等到截止);精读要 `github_trending_daily` 每天在采(它在观察期,不进每日自动采集)。详见[方案](../archive/issue-72-generation-flows.md) §7。
 
 ## Analysis visibility and worker draining (v3.46)
 

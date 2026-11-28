@@ -1,8 +1,9 @@
 # 生成流程:公共日报成为多个流程之一(issue #72)
 
-> 状态:进行中(2026-11-27 样页与 §10 的十二项都已拍板;第一批 PR #354 已合入;第二批 2026-11-28 已实现,见 §14,待检视与目检)。
+> **归档于 2026-11-28(issue #72,PR #354 与 PR #355,开发版 3.70.5-alpha)**:现状以 `docs/architecture/analysis-and-briefs.md` 的「生成流程」一节、`docs/architecture/fetchers-and-sources.md`、`docs/reference/endpoints.md`、`src/services/generation_flows.py` / `src/services/trending_picks.py` 与 `tests/test_generation_flows.py` / `tests/test_trending_picks.py` 为准,文中路径与状态为当时记录。
+> 状态:已落地待发布(2026-11-27 样页与 §10 的十二项拍板;第一批——系统源从一个变成名单——同日合入 main(PR #354);第二批——外壳、泳道页、GitHub Trending 精读——2026-11-28 用户本地目检通过(原话「我认为可以。」)后合入 main(PR #355))。没有迁移,同步流的字段不变;**打开精读之前内网先升级**(§7)。
 > 实现方:Claude Code(Fable 5.2);检视方:Codex(合入前,见 §13)。分支:第一批 `feat/issue-72-product-registry`(已合入并删除),第二批 `feat/issue-72-generation-flows`。
-> 关联:[issue #72](https://github.com/zlzfun/DoramiSourceArchive/issues/72);样页 [`design/issue-72-product-registry/`](../design/issue-72-product-registry/README.md);相邻的两波是三层源模型 [重构方案](./issue-262-source-model-refactor.md)(系统源登记在 `system.toml`)与 [推送绑定](../archive/issue-344-push-binding.md)(源的「获取方式」)。
+> 关联:[issue #72](https://github.com/zlzfun/DoramiSourceArchive/issues/72);样页 [`design/issue-72-product-registry/`](../design/issue-72-product-registry/README.md);相邻的两波是三层源模型 [重构方案](../plans/issue-262-source-model-refactor.md)(系统源登记在 `system.toml`)与 [推送绑定](./issue-344-push-binding.md)(源的「获取方式」)。
 
 ## 1. 起因
 
