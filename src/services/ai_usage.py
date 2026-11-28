@@ -33,6 +33,8 @@ VALID_PURPOSES = (
     "daily_brief_dedup",
     "daily_brief_reduce",
     "article_analysis",
+    # issue #72 生成流程「GitHub Trending 精读」:每期一次辅助档调用(定时归 system,手动归触发的管理员;不进读者预算三处)
+    "trending_picks",
     # v3.52.1(issue #33 §4):个人早报条目标题批量翻译(系统任务,不进读者预算三处)
     "personal_digest_title",
     "auto_title_translate",  # Shared system title cache; separate from reader quota.

@@ -264,11 +264,13 @@ def unbound_source_metadata(record: SourceConfigRecord) -> Dict[str, Any]:
         "podcast": "podcast_episode", "social": "social_post",
     }.get(view.shape, "web_article")
     raw_status = (record.admission_status or "").strip().lower() or view.admission_status
+    # 系统源的图标与简介登记在目录里:源行上没有的(老节点上日报那一行建于登记之前)读目录的,不回填
+    system_meta = source_catalog.system_source_meta(record.source_id) or {}
     return {
         "id": record.source_id,
         "name": view.name or record.source_id,
-        "icon": view.icon,
-        "desc": view.description or view.homepage_url,
+        "icon": view.icon or system_meta.get("icon", ""),
+        "desc": view.description or system_meta.get("desc") or view.homepage_url,
         "admission_status": raw_status,
         "content_type": content_type,
         "shape": view.shape,

@@ -15,7 +15,7 @@ from sqlalchemy import literal_column, or_
 from api.textutils import _date_end_value, _json_loads, _split_csv
 from models.content import BaseContent
 from models.db import ArticleRecord
-from services import content_classification, podcast_premium
+from services import content_classification, podcast_premium, source_catalog
 from services.paper_content import strip_layout_markers
 from services.title_cache import cached_title
 from storage.fts import build_search_components, fts_search_ids
@@ -250,6 +250,7 @@ def apply_article_query_filters(
         fetched_date_start: Optional[str] = None,
         fetched_date_end: Optional[str] = None,
         ingest_channel: Optional[str] = None,
+        exclude_system_sources: bool = False,
         session=None,
 ):
     if content_type:
@@ -270,6 +271,9 @@ def apply_article_query_filters(
     if source_id_list:
         query = query.where(ArticleRecord.source_id.in_(source_id_list))
     exclude_source_id_list = _split_csv(exclude_source_ids)
+    if exclude_system_sources:
+        # 知识台账不列系统源的条目(公共日报、其它生成流程的产出):名单在策展源目录里(issue #72)
+        exclude_source_id_list = sorted({*exclude_source_id_list, *source_catalog.system_source_ids()})
     if exclude_source_id_list:
         query = query.where(ArticleRecord.source_id.notin_(exclude_source_id_list))
 

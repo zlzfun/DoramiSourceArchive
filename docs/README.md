@@ -87,8 +87,6 @@
 - ☐ [plans/issue-298-interest-governance.md](./plans/issue-298-interest-governance.md) — 候选治理、私有条件／话题匹配、审核通知与早报价值优先；持续验证已停止，当前为存量修复与提交整理，工程回归和语义质量分列。
 - ☐ [#313 公共日报跨天去重](plans/issue-313-cross-day-dedup.md) — 逐批取证、双侧事实与盲测验收门槛。
 
-- ☐ [plans/issue-72-generation-flows.md](./plans/issue-72-generation-flows.md) — 生成流程(issue #72,2026-11-27 拍板——泳道 + 右侧抽屉,分两批,第一批实现中):公共日报成为多个流程之一,第一个新流程是 GitHub Trending 精读;与 issue 正文的对账、系统源从一个变成名单(不回流)、外壳与端点、精读、界面、部署顺序与混版本、拍板的十二项。
-
 - ☐ [plans/issue-254-qa-coverage.md](./plans/issue-254-qa-coverage.md) — 问答逐项覆盖、关键 ASR 歧义依据与冻结输入对照评测；语义验收进行中。
 - ☐ [plans/issue-121-event-layer-research.md](./plans/issue-121-event-layer-research.md) — **issue #121 方向调研报告(2026-10-23)**:48 天本机语料 + 三轮精修金标上实测规则 / 词面召回 + 模型 / 向量召回 + 模型 / 纯向量 / LLM 签名 / 日报复用六条路线与产品供给、热度、事件链模拟;结论已回写方案 R2。
 - ☐ [plans/issue-121-event-layer.md](./plans/issue-121-event-layer.md) — **多源事件层:同事件归并、热点榜与早报去重共用一份归属(issue #121 + #103,R1 路径)**:平台级持久事件层、机械召回 + 辅助模型归属、48h/24h 半衰热度、四波(回放 → 事件层 + 榜 → 早报去重 → Agent 查询);2026-10-23 拍板主路线 = FTS5 召回 + 辅助模型(不引入 embedding),排队中。

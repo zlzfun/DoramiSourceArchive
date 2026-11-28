@@ -36,7 +36,7 @@ Shape = Literal["article", "podcast"]
 WINDOW_DAYS = 7
 LIMIT = 10
 PODCAST_CONTENT_TYPE = "podcast_episode"
-EXCLUDED_CONTENT_TYPES = ("daily_brief",)
+EXCLUDED_CONTENT_TYPES = tuple(sorted(source_catalog.system_content_types()))   # daily_brief / trending_picks
 
 
 def _excluded_source_ids() -> tuple[str, ...]:

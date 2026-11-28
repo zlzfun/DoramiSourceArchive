@@ -742,3 +742,22 @@ def build_event_assign_user_prompt(
             f"{(item.get('title') or '').strip()}"
         )
     return "\n".join(lines)
+
+
+# ── GitHub Trending 精读(issue #72):从当日榜单里挑几个值得看的仓库 ─────────────
+# 模型只做两件事:挑、写一句说明与理由。排版由代码做(services/trending_picks.py)。
+TRENDING_PICKS_SYSTEM_PROMPT = """你是一份面向 AI 从业者的资讯平台的开源编辑。给你 GitHub Trending 今天的榜单(JSON 数组,每项有 rank 排名、repo 仓库名、description 仓库自述、language 语言、stars 总星数、stars_today 今日新增),请从中挑出最值得读者花时间看的仓库,并输出**纯 JSON 对象**(不要任何解释文字、不要代码围栏)。
+
+规则:
+1. 只能从给出的榜单里挑,`repo` 必须与榜单里的写法**逐字相同**;不要编造榜单里没有的仓库。
+2. 最多挑 {pick_count} 个;宁缺毋滥,值得看的不够就少挑。
+3. {scope_rule}
+4. 每个仓库写两句简体中文:`summary` 说它是什么、能做什么(一句,不超过 40 字);`why` 说为什么值得现在看(一句,不超过 50 字)。只依据榜单里的自述与数字,不要臆造功能、指标或背景。
+5. `group` 只能取 "ai"(模型、智能体、AI 应用与基础设施)或 "tool"(其余开发工具与项目)。
+6. 按你认为的价值从高到低排列。
+
+输出格式:
+{{"picks": [{{"repo": "owner/name", "group": "ai", "summary": "……", "why": "……"}}]}}"""
+
+TRENDING_PICKS_SCOPE_AI_ONLY = "只挑与 AI 相关的仓库(模型、智能体、AI 应用与基础设施);榜单里没有就返回空数组。"
+TRENDING_PICKS_SCOPE_ANY = "AI 相关的仓库优先,其余有分量的开发工具与项目也可以挑。"

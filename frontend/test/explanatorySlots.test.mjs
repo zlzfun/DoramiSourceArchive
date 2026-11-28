@@ -47,7 +47,8 @@ export const SLOTS = {
   'brief-mast-sub': 2, // 兴趣页报头句:只在首登引导时渲染(条件状态)
   'cred-sub': 1, // 凭据卡:只剩 DeepSeek 模型改名的条件提示
   'csrc-kind-note': 1,
-  'drawer-title-sub': 3, // 抽屉标题旁的 id(数据)
+  'drawer-title-sub': 4, // 抽屉标题旁的 id(数据);issue #72 生成流程的抽屉标题下是源 id
+  'gf-sub': 3, // 生成流程泳道一格里的第二行(数据):取材的入库时刻或跳过原因、近 7 日圆点与期数、距下次
   'ep-params': 1, // 聚合接口:点开一行后这条接口认的参数(参考资料,平时收着;原在 scope-note「接口参数」折叠里)
   'flow-stat-sub': 6,
   'guest-gate-sub': 1, // 游客看到的「登录后可用」下一句(登录提示,豁免)
@@ -73,7 +74,7 @@ export const SLOTS = {
   'opml-note': 2, // OPML 预览里的配额与重复提示(条件状态)
   'ops-tip': 1,
   'paper-content-note': 1,
-  'pipeline-note': 4,
+  'pipeline-note': 5, // 条件状态:生成中当前这一步的进度(泳道行、抽屉各一处)、最近一次生成失败的原因、评分来源异常的提示、展开一期时「加载正文…」
   'pl-note': 3,
   'pl-sub': 1,
   'player-ident-sub': 1,
@@ -94,7 +95,7 @@ export const SLOTS = {
   'reader-side-hint': 1,
   'reader-vrail-tip': 9,
   'rk-kicker': 1,
-  'run-obj-sub': 1,
+  'run-obj-sub': 5, // 数据:运行对象的副题;生成流程泳道上的源 id、取材的入库时刻(或跳过原因)、期数、距下次
   'scope-note': 2, // 折叠的参考内容(启停与取数范围、日报范围);聚合接口的「接口参数」已随 issue #315 挪进各接口行(ep-params)
   'sett-sub': 3, // 设置行名下的小字:账户角色胶囊、游客卡的一句登录提示(豁免)、OPML 导出的数字。不放说明句
   'share-group-note': 2,

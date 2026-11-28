@@ -10,7 +10,7 @@
 > 定稿(2026-11-27,`?v=8`):同日用户「赞成右侧抽屉。对样页整体认可。按你的建议加宽。」原型收成只剩右侧抽屉(640 宽);三种容器并排的那一轮连同它的原型存到 `r5/`。
 > 返修(2026-11-27,`?v=9`):用户看了 640 宽的抽屉指出配置框里数字既不靠右也不居中、一行一个参数显得空旷,问要不要恢复原来的宽度;并提出「加工」现在是一行方块,以后可能有更复杂、非线性的流程,要考虑怎么表现。这一稿:输入框同宽居中、去掉数字框的增减钮;配置排成两列(原型默认 640 · 两列,470 · 一列用 `?cfg=one&dw=470` 看),并排在 `details/config.html`;复杂流程的三种画法与抽屉里的「流程」框在 `details/phases.html`(用了一个假想的流程,定稿原型里没有它)。
 > 拍板(2026-11-27,`?v=10`):用户「470 一列,泳道用 A,其余按建议,开工。」原型默认改成 470 · 一列(640 · 两列留作比较,`?cfg=two&dw=640`),总览页 §5 改成定下来的各项。
-> 方案文档:[`docs/plans/issue-72-generation-flows.md`](../../plans/issue-72-generation-flows.md)(已拍板,分两批实现)。实现后样页不再更新,现行界面以代码为准。issue [#72](https://github.com/zlzfun/DoramiSourceArchive/issues/72)。
+> 方案文档:[`docs/archive/issue-72-generation-flows.md`](../../archive/issue-72-generation-flows.md)(已归档;两批已合入 main:PR #354、PR #355)。样页不再更新,现行界面以代码为准。issue [#72](https://github.com/zlzfun/DoramiSourceArchive/issues/72)。
 
 要回答的是:公共日报怎么从唯一的专属流程变成多个流程之一,以及管理员在哪里管它们。
 

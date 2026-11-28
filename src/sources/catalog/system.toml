@@ -19,6 +19,19 @@ tier = "tier1_curated"
 icon = "🤖"
 description = "由后端大模型每日自动生成的 AI 资讯日报，汇总择优近期归档内容。"
 
+# GitHub Trending 精读(issue #72):生成流程 trending_picks 的产出。取材是 github_trending_daily 的日榜,
+# 所以它的条目不送入库分析——对站内已有内容的二次加工,不评分、不进榜单与候选。
+[[system]]
+id = "dorami_trending_picks"
+name = "GitHub Trending 精读"
+shape = "article"
+owner = "dorami"
+scope = "aggregator"
+tier = "tier1_curated"
+icon = "📈"
+description = "从当天的 GitHub Trending 日榜里挑出值得看的仓库，各配一句中文说明与理由。"
+analysis = false
+
 # ── 墓碑 ────────────────────────────────────────────────────────────────────
 # 历次节点审计里下线的策展源(docs/sources/node_audit_playbook.md):抓取器类与目录条目已删,
 # 历史归档文章仍留在库里。登记在这里,它们才不会经「归档里出现过的来源」回流到读者的订阅目录

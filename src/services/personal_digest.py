@@ -441,6 +441,12 @@ def calculate_due_source_ids(
     }
     due: list[str] = []
     for source_id in expected:
+        # 生成流程的产出(系统源)不是采集来的,没有源状态可等。范围解析本来就把系统源剔掉了,
+        # 这里只是让这个函数被单独喂进系统源时也不算它「该到货」(issue #72);已经冻结在版本上的
+        # 名单由 routers/personal_briefs._source_readiness 在消费时剔。公共日报照旧:它有自己的
+        # 就绪信号(当天那一期在不在)。
+        if source_id != PUBLIC_DAILY_BRIEF_SOURCE_ID and source_catalog.is_system_source(source_id):
+            continue
         config = configs.get(source_id)
         if (
             config is not None

@@ -75,6 +75,7 @@ from api.sources import (
 from api.routers import accounts as accounts_router
 from api.routers import admin as admin_router
 from api.routers import daily_brief as daily_brief_router
+from api.routers import generation_flows as generation_flows_router
 from api.routers import reader as reader_router
 from api.routers import ingest as ingest_router
 from api.routers import ingest_push as ingest_push_router
@@ -115,6 +116,7 @@ from api.routers import remote_sync as remote_sync_router
 from api.routers import share as share_router
 from api.routers import events as events_router
 from services import daily_brief as daily_brief_service
+from services import generation_flows as generation_flows_service
 from services import image_insights as image_insights_service
 from services import remote_sync as remote_sync_service
 from services import sync_consumer_policy
@@ -440,6 +442,8 @@ COLLECTOR_API_PREFIXES = (
     # LLM 配置与日报生成/配置归管理员（collector）。
     "/api/llm",
     "/api/daily-brief",
+    # 生成流程(issue #72):公共日报之外的流程也归管理员;日报自己的接口在上一行,原样保留。
+    "/api/generation-flows",
 )
 
 READER_API_PREFIXES = (
@@ -1943,6 +1947,7 @@ app.include_router(skill_router)
 app.include_router(accounts_router.router)
 app.include_router(admin_router.router)
 app.include_router(daily_brief_router.router)
+app.include_router(generation_flows_router.router)
 app.include_router(reader_router.router)
 app.include_router(ingest_router.router)
 app.include_router(ingest_push_router.router)
@@ -2417,6 +2422,12 @@ async def _require_admin_session_impl(request: Request, call_next):
         # 令牌「可以自己登记来源」的开关(issue #344 第二个 PR):摘要要写开还是关
         or (normalized_method == "PATCH" and path.startswith("/api/admin/ingest/tokens/"))
         or (normalized_method == "POST" and path == "/api/articles/batch-delete")
+        # 生成流程的配置(issue #72):摘要要写开 / 关、cron 与改了哪些配置项
+        or (
+            normalized_method == "POST"
+            and path.startswith("/api/generation-flows/")
+            and path.endswith("/config")
+        )
         or (normalized_method == "POST" and path == "/api/fetch/batch")
         or (normalized_method == "PUT" and path == "/api/admin/analysis/config")
         or (normalized_method == "POST" and path == "/api/admin/analysis/backfills")
@@ -3131,6 +3142,8 @@ def load_tasks_to_scheduler():
         sync_collection_job_schedules(session)
     # 每日 AI 资讯日报(独立于采集任务):启用即幂等注册,停用即摘除。
     reload_daily_brief_schedule()
+    # 其它生成流程(issue #72):同样按各自的开关与 cron 幂等注册。
+    reload_generation_flow_schedule()
     reload_interest_governance_schedule()
     # 当前双节点部署均为 runtime.role=all：文章分析与个人早报和采集共用调度器；
     # 同步写入的文章(带同步印记)不在本机分析,用上游同步来的结果。
@@ -3542,6 +3555,39 @@ def reload_daily_brief_schedule():
         add_cron_job("daily_brief", execute_daily_brief_job, cron_expr, [])
     elif scheduler.get_job("daily_brief"):
         scheduler.remove_job("daily_brief")
+
+
+async def execute_generation_flow_job(flow_id: str):
+    """定时回调:跑一次生成流程(公共日报除外,它有自己的回调)。失败只记录,不影响调度引擎。"""
+    flow = generation_flows_service.get_flow(flow_id)
+    if flow is None:
+        return
+    print(f"⏰ 定时任务触发: 正在生成「{flow.name}」...")
+    try:
+        result = await flow.generate(storage=db_sink, trigger="scheduled", triggered_by=None)
+        print(f"✅ 「{flow.name}」: {result.get('status')} ({result.get('article_id') or result.get('reason') or ''})")
+    except Exception as exc:  # noqa: BLE001 失败原因由流程自己记进上次结果
+        print(f"❌ 「{flow.name}」生成失败: {exc}")
+
+
+def reload_generation_flow_schedule(flow_id: Optional[str] = None):
+    """生成流程的开关 / cron 变更后热生效:精准增删以流程 id 为名的 job(issue #72)。
+
+    不给 ``flow_id`` = 全部流程(公共日报除外——它由 ``reload_daily_brief_schedule`` 管,job id 仍是
+    ``daily_brief``);给了日报的 id 就转给那个函数。一律经 ``add_cron_job``(5 分钟宽限 + 合并)。
+    """
+    if flow_id == generation_flows_service.DAILY_BRIEF.id:
+        reload_daily_brief_schedule()
+        return
+    for flow in generation_flows_service.all_flows():
+        if flow.id == generation_flows_service.DAILY_BRIEF.id or (flow_id is not None and flow.id != flow_id):
+            continue
+        with Session(db_sink.engine) as session:
+            enabled = flow.is_enabled(session)
+            cron_expr = flow.cron(session)
+        registered = enabled and add_cron_job(flow.id, execute_generation_flow_job, cron_expr, [flow.id])
+        if not registered and scheduler.get_job(flow.id):
+            scheduler.remove_job(flow.id)
 
 
 def _configured_podcast_asr_worker():

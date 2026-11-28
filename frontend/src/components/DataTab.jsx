@@ -200,7 +200,7 @@ export default function DataTab({
     setLoading(true);
     const skip = (page - 1) * ARTICLE_PAGE_SIZE;
     // 知识台账只展示采集归档的原始内容；日报是 LLM 加工产物，从台账排除。
-    const queryFilters = { ...filters, search: appliedSearch, exclude_source_ids: 'dorami_daily_brief' };
+    const queryFilters = { ...filters, search: appliedSearch, exclude_system_sources: true };
     let data;
     try {
       data = await runList((signal) =>
@@ -227,7 +227,7 @@ export default function DataTab({
   // 总账条计数：全局概览（仅排除日报源），与分面筛选无关。挂载时 + 文章增删后刷新。
   // 总收录 / 今日 / 近 7 天（后两格用 fetched_date 快捷区间）。
   const loadLedgerStats = useCallback(async () => {
-    const base = { exclude_source_ids: 'dorami_daily_brief' };
+    const base = { exclude_system_sources: true };
     const countFor = async (extra) => {
       try {
         const d = await apiFetchArticles({ ...base, ...extra }, 1, 0, true, { includeContent: false });
@@ -261,7 +261,7 @@ export default function DataTab({
 
   const loadFacets = useCallback(async () => {
     try {
-      const d = await fetchArticleFacets({ exclude_source_ids: 'dorami_daily_brief' });
+      const d = await fetchArticleFacets({ exclude_system_sources: true });
       setFacets(d);
     } catch { /* 分面加载失败不阻断列表 */ }
   }, []);

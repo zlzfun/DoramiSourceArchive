@@ -115,6 +115,7 @@ CONTENT_TYPE_LABELS: dict[str, str] = {
     "podcast_episode": "播客单集",
     "social_post": "社交帖",
     "daily_brief": "日报",
+    "trending_picks": "精读",
     "tech_conference": "技术会议",
     "ai_company_blog": "厂商博客",
     "ai_community": "AI 社区",
@@ -171,10 +172,12 @@ CONTENT_TYPE_DEFAULT_KINDS: dict[str, str] = {
     "huggingface_model": "project",
     "arxiv": "paper",
     "daily_brief": "digest",
+    "trending_picks": "digest",
 }
 # 不经抓取器注册表的特殊源。
 SPECIAL_SOURCE_KINDS: dict[str, str] = {
     "dorami_daily_brief": "digest",
+    "dorami_trending_picks": "digest",
 }
 # 链接形状判定论文原文:锚定在 URL 开头的「协议 + 主机 + 路径」前缀,查询串 / 片段里引用的
 # 论文地址、相似域名(notarxiv.org)都不算。社交帖 / 播客 / 日报的 source_url 指向自身,不套用。
@@ -193,7 +196,7 @@ PAPER_URL_PREFIXES: tuple[str, ...] = tuple(
 # SQLite LIKE 只对 ASCII 字母不区分大小写;Python 侧用同样的「仅 ASCII 小写化」,两边逐字等价。
 _ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 URL_RULE_EXCLUDED_CONTENT_TYPES: frozenset[str] = frozenset({
-    "social_post", "podcast_episode", "daily_brief",
+    "social_post", "podcast_episode", "daily_brief", "trending_picks",
 })
 
 KIND_BASIS_SOURCE = "source"

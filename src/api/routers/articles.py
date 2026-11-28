@@ -65,6 +65,7 @@ from services.article_display_tags import (
 )
 from services import reader_interests as reader_interests_service
 from services import reader_state as reader_state_service
+from services import source_catalog as source_catalog_service
 from services import source_visibility as source_visibility_service
 from services import podcast_premium as podcast_premium_service
 from services import user_sources as user_sources_service
@@ -311,7 +312,8 @@ def get_articles(
         content_type: Optional[str] = None,
         content_types: Optional[str] = None,  # CSV:多类型筛选(类型归组分面用),与 feed 契约对齐
         source_id: Optional[str] = None,
-        exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源（如知识台账排除日报源）
+        exclude_source_ids: Optional[str] = None,  # CSV：从结果中排除的来源
+        exclude_system_sources: bool = False,  # 排除全部系统源的条目(知识台账用:公共日报与其它生成流程的产出)
         ingest_channel: Optional[str] = None,  # 来路:push | manual | import | fetch(抓取器入库,无来路)
         job_id: Optional[int] = None,
         job_run_id: Optional[int] = None,
@@ -384,6 +386,7 @@ def get_articles(
         "content_types": content_types,
         "source_id": source_id,
         "exclude_source_ids": exclude_source_ids,
+        "exclude_system_sources": exclude_system_sources,
         "ingest_channel": ingest_channel,
         "job_id": job_id,
         "job_run_id": job_run_id,
@@ -641,6 +644,7 @@ def get_articles(
 def get_article_facets(
         request: Request,
         exclude_source_ids: Optional[str] = None,
+        exclude_system_sources: bool = False,
         session: Session = Depends(deps.get_session),
 ):
     """分面目录:content_type / source_id 的全量 group-by 计数。
@@ -652,6 +656,8 @@ def get_article_facets(
     facets 曾把私有源 id 列给任意读者,是伪造订阅成员资格的入口。
     """
     excludes = [x.strip() for x in (exclude_source_ids or "").split(",") if x.strip()]
+    if exclude_system_sources:
+        excludes = sorted({*excludes, *source_catalog_service.system_source_ids()})
     auth_session = _app().current_auth_session(request)
     # 非 admin 剔除全部用户源(F2:防私有源 id 经分面泄露);按前缀判定而非配置表
     # (三轮收口:孤儿用户源文章没有配置行,按表判定仍会短暂暴露 id 与计数)。

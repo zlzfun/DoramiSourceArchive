@@ -32,7 +32,14 @@
 - `GET /api/archive/export/articles.jsonl` — collector exports archive records as JSON Lines
 - `POST /api/archive/import/articles.jsonl` — reader imports them (admin-only; no public fetch)
 
-**Daily Brief** (collector/admin-gated; surfaced in the 「AI 日报」 tab)
+**Generation Flows** (collector/admin-gated; the 「生成流程」 tab — issue #72)
+- `GET /api/generation-flows` — every registered flow in one call: name / source id / phases, the input summary, switch / cron / next run, progress, last result (`success` / `skipped` / `failed` + reason), latest period, last 7 days, total periods, and the config form rows (`form`) with current values
+- `POST /api/generation-flows/{flow_id}/config` — partial update `{enabled?, cron?, config?}`; validates everything before writing, then re-registers that flow's cron job. `daily_brief` writes the same `daily_brief_*` KV keys as its own endpoint below
+- `POST /api/generation-flows/{flow_id}/generate` — submit a background run; returns `{status, job_id}` (poll `GET /api/jobs/{job_id}`); `GET /api/generation-flows/{flow_id}/progress` — normalized live progress (`state`, `phase_index`, `message`, `done`, `total`)
+- `GET /api/generation-flows/{flow_id}/periods?page=&page_size=` — past periods, newest first (no body; read a body via `GET /api/articles/{id}`, delete via `DELETE /api/articles/{id}`)
+- Flow ids today: `daily_brief`, `trending_picks`. Flows are code, not data — see `services/generation_flows.py`
+
+**Daily Brief** (collector/admin-gated; kept as-is for 神灯 and the skill template — the 「生成流程」 tab itself uses the endpoints above)
 - `GET`/`POST /api/daily-brief/config` — read/set cron, top-N, LLM overrides (persisted in `AppSettingRecord` KV)
 - `POST /api/daily-brief/generate` — submit a background digest job; returns `{status, job_id}` (poll `GET /api/jobs/{job_id}` for the result)
 - `GET /api/daily-brief/runs` — recent run history; `GET /api/daily-brief/progress` — live in-memory generation progress; `GET /api/daily-brief/pipeline` — stage/pipeline view

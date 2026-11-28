@@ -22,6 +22,7 @@ export const PURPOSE_LABELS = {
   article_ondemand: '文章·点播',
   article_ondemand_narration: '文章·点播旁白',
   taxonomy_bootstrap: '标签·目录初始化',
+  trending_picks: '精读·挑选', // issue #72 生成流程「GitHub Trending 精读」:每期一次从榜单里挑仓库(系统用途)
   event_assignment: '事件·归并', // issue #121 事件层:新文章归入事件的模型判定(系统用途)
   custom_interest_match: '兴趣·匹配',
   taxonomy_review_advice: '标签·审核建议',

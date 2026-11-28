@@ -24,6 +24,8 @@ AUDIT_PATH_PREFIXES = (
     "/api/collection-jobs",
     "/api/llm",
     "/api/daily-brief",
+    # 生成流程(issue #72):改开关 / cron / 配置与手动触发都是管理动作。
+    "/api/generation-flows",
     # 全站 MCP 总闸（admin-only 服务级熔断，v3.40.4 审计 M01 补审计）。
     "/api/mcp/toggle",
     # v3.42 审计 M11 补覆盖：文章 CRUD/批量删除、手动触发采集、归档导入
@@ -182,8 +184,40 @@ def _ingest_push_summary(body: dict | None) -> str:
         return "收录推送"
 
 
+_FLOW_CONFIG_KEYS = (
+    "top_n", "min_score", "min_items", "paper_min_content_value", "source_ids", "cursor", "pick_count", "ai_only",
+)
+
+
+def _generation_flow_config(match: re.Match[str], body: dict | None) -> RenderResult:
+    """生成流程的配置变更(issue #72):写开 / 关、cron、改了哪些配置项(只写键名,不写取值)。"""
+    flow_id = unquote(match.group("target"))
+    payload = body or {}
+    parts: list[str] = []
+    if isinstance(payload.get("enabled"), bool):
+        parts.append("开启定时" if payload["enabled"] else "关闭定时")
+    if isinstance(payload.get("cron"), str) and payload["cron"].strip():
+        parts.append(f"cron {payload['cron'].strip()[:40]}")
+    config = payload.get("config")
+    if isinstance(config, dict):
+        keys = [key for key in _FLOW_CONFIG_KEYS if key in config]
+        if keys:
+            parts.append("配置项 " + "、".join(keys))
+    return f"更新生成流程 {flow_id}" + (":" + ";".join(parts) if parts else ""), flow_id
+
+
 # 语义摘要注册表：顺序即优先级，首个 (method, path regex) 命中即停止。
 AUDIT_SUMMARY_RULES: list[tuple[str, re.Pattern[str], RenderFn]] = [
+    (
+        "POST",
+        re.compile(r"^/api/generation-flows/(?P<target>[^/]+)/config$"),
+        _generation_flow_config,
+    ),
+    (
+        "POST",
+        re.compile(r"^/api/generation-flows/(?P<target>[^/]+)/generate$"),
+        lambda match, _body: (f"手动生成 {unquote(match.group('target'))}", unquote(match.group("target"))),
+    ),
     (
         "PUT",
         re.compile(r"^/api/admin/podcast-asr-quota$"),

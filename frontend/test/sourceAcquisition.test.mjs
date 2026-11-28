@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  ACQUISITION_LABELS, acquisitionOf, bindableSources, bindingPillOf, hasFetcher, lastPushedAt, pushBindingsOf,
+  ACQUISITION_LABELS, acquisitionOf, bindableSources, bindingPillOf, hasFetcher, isGenerated, lastPushedAt, pushBindingsOf,
   registerPayload, registerQuotaOf,
 } from '../src/utils/sourceAcquisition.js';
 
@@ -15,7 +15,22 @@ test('抓取 / 推送 / 两样都有 / 都没有', () => {
   assert.equal(acquisitionOf({ id: 'push_grok', bound: false, push_bindings: [push('grok-bot')] }), 'push');
   assert.equal(acquisitionOf({ id: 'x_temp', bound: false, push_bindings: [] }), 'none');
   assert.equal(acquisitionOf({ id: 'x_temp', bound: false }), 'none');
-  assert.deepEqual(Object.keys(ACQUISITION_LABELS).sort(), ['both', 'fetch', 'none', 'push']);
+  assert.deepEqual(Object.keys(ACQUISITION_LABELS).sort(), ['both', 'fetch', 'generate', 'none', 'push']);
+});
+
+test('系统源的获取方式是「生成」,不是「无抓取」', () => {
+  // issue #72:公共日报、GitHub Trending 精读由平台自己的生成流程产出(源行 origin=system,没有抓取器)
+  const brief = { id: 'dorami_daily_brief', origin: 'system', bound: false };
+  assert.equal(isGenerated(brief), true);
+  assert.equal(acquisitionOf(brief), 'generate');
+  assert.equal(ACQUISITION_LABELS[acquisitionOf(brief)], '生成');
+  assert.equal(acquisitionOf({ id: 'dorami_trending_picks', origin: 'system', bound: false, push_bindings: [] }), 'generate');
+  // 别的没有抓取器的源照旧
+  assert.equal(isGenerated({ id: 'x_temp', origin: 'ingest', bound: false }), false);
+  assert.equal(acquisitionOf({ id: 'x_temp', origin: 'ingest', bound: false }), 'none');
+  assert.equal(isGenerated(undefined), false);
+  // 推送不能往系统源写:绑定令牌的下拉里不列它们
+  assert.deepEqual(bindableSources([brief, { id: 'rss_a' }]).map((source) => source.id), ['rss_a']);
 });
 
 test('读者自定源走专用抓取通道,算有抓取器', () => {

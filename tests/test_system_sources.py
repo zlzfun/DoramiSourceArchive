@@ -27,6 +27,7 @@ from models.db import ArticleRecord, SourceConfigRecord  # noqa: E402
 from services import ingest_policy, source_catalog  # noqa: E402
 
 BRIEF = "dorami_daily_brief"
+PICKS = "dorami_trending_picks"       # 第二批登记的系统源:生成流程 GitHub Trending 精读
 # 搬迁前 api.sources.DAILY_BRIEF_SOURCE_META 的字面量(基线 7e0aab5b),逐字抄在这里
 BRIEF_META_AT_MIGRATION = {
     "name": "哆啦美·AI资讯日报",
@@ -56,8 +57,16 @@ def _seed(engine, article_id, source_id, fetched_date="2026-06-05T00:00:00", *, 
 # ── 目录:名单、元数据、新键 ────────────────────────────────────────────────────
 
 
-def test_repo_catalog_lists_only_the_daily_brief_and_its_meta_is_unchanged():
-    assert source_catalog.system_source_ids() == frozenset({BRIEF})
+def test_repo_catalog_lists_the_two_system_sources_and_the_brief_meta_is_unchanged():
+    assert source_catalog.system_source_ids() == frozenset({BRIEF, PICKS})
+    assert source_catalog.system_content_types() == frozenset({"daily_brief", "trending_picks"})
+    # 精读:目录里登记的展示元数据;条目默认不送入库分析(对站内已有内容的二次加工)
+    assert source_catalog.system_source_meta(PICKS) == {
+        "name": "GitHub Trending 精读", "icon": "📈",
+        "desc": "从当天的 GitHub Trending 日榜里挑出值得看的仓库，各配一句中文说明与理由。",
+        "content_type": "trending_picks", "source_owner": "dorami",
+    }
+    assert source_catalog.system_source_analysis_default(PICKS) is False
     assert source_catalog.is_system_source(BRIEF)
     assert not source_catalog.is_system_source("rss_openai_news")
     assert not source_catalog.is_system_source("") and not source_catalog.is_system_source(None)
@@ -74,7 +83,7 @@ def test_repo_catalog_lists_only_the_daily_brief_and_its_meta_is_unchanged():
 
 
 def test_second_system_source_is_in_the_list(second_system_source):
-    assert source_catalog.system_source_ids() == frozenset({BRIEF, second_system_source})
+    assert source_catalog.system_source_ids() == frozenset({BRIEF, PICKS, second_system_source})
     assert source_catalog.system_source_meta(second_system_source) == {
         "name": "测试流程", "icon": "🧪", "desc": "测试用的第二个系统源。",
         "content_type": "",          # 条目类型是代码里的事实(_SYSTEM_CONTENT_TYPES),没登记就是空
@@ -114,6 +123,11 @@ _TWO_SYSTEM = """
     [[system]]
     id = "dorami_daily_brief"
     name = "日报"
+    shape = "article"
+
+    [[system]]
+    id = "dorami_trending_picks"
+    name = "精读"
     shape = "article"
 
     [[system]]
@@ -169,12 +183,15 @@ def test_reconcile_creates_one_row_per_system_source(tmp_path, second_system_sou
         rows = {row.source_id: row for row in session.exec(
             select(SourceConfigRecord).where(SourceConfigRecord.origin == "system")
         ).all()}
-        assert set(rows) == {BRIEF, second_system_source}
+        assert set(rows) == {BRIEF, PICKS, second_system_source}
         other = rows[second_system_source]
         assert (other.name, other.shape, other.source_owner, other.legacy_export) == ("测试流程", "article", "dorami", False)
         assert not (other.fetcher_id or "")
         # analysis = false 的系统源建出来就不送分析;日报照旧送
         assert rows[BRIEF].ai_analysis_enabled is True and other.ai_analysis_enabled is False
+        # 新建的行带上目录条目的图标与简介(源管理的列表与检视器读源行)
+        assert (other.icon, other.description) == ("🧪", "测试用的第二个系统源。")
+        assert (rows[PICKS].icon, rows[BRIEF].icon) == ("📈", "🤖")
 
         again = source_rows.reconcile_source_rows(session)
         session.commit()
@@ -391,30 +408,118 @@ def test_reconcile_summary_reports_adoption_and_prefers_created(tmp_path, monkey
     extra = catalog_files.SystemEntry(id="dorami_later", name="后来的流程", shape="article")
     both = replace(real, system={**real.system, extra.id: extra})
 
-    # 只有收养:日报那一行在、但 origin 不是 system(存量回填的行)
+    # 只有收养:系统源的行都在、但 origin 不是 system(存量回填的行)
     sink = _make_sink(tmp_path, "adopt.db")
     with Session(sink.engine) as session:
-        session.add(_legacy_row(BRIEF))
+        session.add_all([_legacy_row(BRIEF), _legacy_row(PICKS)])
         session.commit()
         assert source_rows.reconcile_source_rows(session)["system"] == "adopted"
         session.commit()
-        assert session.get(SourceConfigRecord, BRIEF).origin == "system"
+        assert {session.get(SourceConfigRecord, sid).origin for sid in (BRIEF, PICKS)} == {"system"}
         assert source_rows.reconcile_source_rows(session)["system"] == "unchanged"
 
     # 新建与收养并存:日报要收养,另一个系统源要新建
     sink = _make_sink(tmp_path, "both.db")
     monkeypatch.setattr(catalog_files, "loaded", lambda: both)
     with Session(sink.engine) as session:
-        session.add(_legacy_row(BRIEF))
+        session.add_all([_legacy_row(BRIEF), _legacy_row(PICKS)])
         session.commit()
         assert source_rows.reconcile_source_rows(session)["system"] == "created"
         session.commit()
-        assert {session.get(SourceConfigRecord, sid).origin for sid in (BRIEF, "dorami_later")} == {"system"}
+        assert {session.get(SourceConfigRecord, sid).origin for sid in (BRIEF, PICKS, "dorami_later")} == {"system"}
 
     # 带同步印记的行不收养(上游也有这个源,目录字段不碰),也不算变化
     sink = _make_sink(tmp_path, "marked.db")
     with Session(sink.engine) as session:
-        session.add_all([_legacy_row(BRIEF, authority="authority-1"), _legacy_row("dorami_later", authority="authority-1")])
+        session.add_all([_legacy_row(sid, authority="authority-1") for sid in (BRIEF, PICKS, "dorami_later")])
         session.commit()
         assert source_rows.reconcile_source_rows(session)["system"] == "unchanged"
         assert session.get(SourceConfigRecord, "dorami_later").origin == "legacy"
+
+
+def test_a_system_entry_without_icon_or_description_still_gets_its_row(tmp_path, monkeypatch):
+    """图标与简介在目录里是可选的:没有写的条目照样建得出源行,两项都是空串。"""
+    import dataclasses
+
+    from services import collection_nodes, source_rows
+
+    real = catalog_files.loaded()
+    bare = catalog_files.SystemEntry(id="dorami_bare_flow", name="没有简介的流程", shape="article", owner="dorami")
+    patched = dataclasses.replace(real, system={**real.system, bare.id: bare})
+    monkeypatch.setattr(catalog_files, "loaded", lambda: patched)
+
+    sink = _make_sink(tmp_path)
+    with Session(sink.engine) as session:
+        source_rows.reconcile_source_rows(session)
+        session.commit()
+        row = session.get(SourceConfigRecord, bare.id)
+        assert (row.origin, row.icon, row.description) == ("system", "", "")
+        node = {node["id"]: node for node in collection_nodes.source_management_catalog(session)}[bare.id]
+        assert (node["icon"], node["desc"]) == ("", "")
+
+
+def test_source_management_reads_icon_and_description_from_the_catalog_for_an_old_row(tmp_path):
+    """老节点上日报那一行建于「图标 / 简介登记进目录」之前,行上是空的:源管理读目录里的,不回填;
+    行上写了的(管理员改过)以行为准。"""
+    from services import collection_nodes, source_rows
+
+    sink = _make_sink(tmp_path)
+    with Session(sink.engine) as session:
+        source_rows.reconcile_source_rows(session)
+        brief = session.get(SourceConfigRecord, BRIEF)
+        brief.icon, brief.description = "", ""                                # 老行的样子
+        picks = session.get(SourceConfigRecord, PICKS)
+        picks.description = "管理员写的简介"
+        session.add(brief); session.add(picks)
+        session.commit()
+        nodes = {node["id"]: node for node in collection_nodes.source_management_catalog(session)}
+        assert (nodes[BRIEF]["icon"], nodes[BRIEF]["desc"]) == ("🤖", BRIEF_META_AT_MIGRATION["desc"])
+        assert (nodes[PICKS]["icon"], nodes[PICKS]["desc"]) == ("📈", "管理员写的简介")
+        assert (nodes[BRIEF]["origin"], nodes[BRIEF]["bound"]) == ("system", False)
+        assert session.get(SourceConfigRecord, BRIEF).description == ""       # 没有回填
+
+
+# ── 按条目类型排除的几处:系统源的条目类型一个不落 ──────────────────────────────
+
+
+@pytest.mark.parametrize("source_id, content_type", [(BRIEF, "daily_brief"), (PICKS, "trending_picks")])
+def test_sites_keyed_by_content_type_cover_every_system_content_type(tmp_path, source_id, content_type):
+    """除了按源 id 的名单,还有几处是按条目类型排除的(条目的源行已不在、或换过源 id 时靠它兜住):
+    加一个系统源时,这几处都要带上它的条目类型。"""
+    from sqlalchemy import select as sa_select
+
+    from models.db import ArticleAnalysisRecord
+    from services import content_classification as cc, content_fingerprint, ranking_picks, rankings
+
+    assert content_type in source_catalog.system_content_types()
+    assert content_type in ranking_picks.EXCLUDED_CONTENT_TYPES            # 深度阅读 / 播客精选
+    assert content_type in cc.URL_RULE_EXCLUDED_CONTENT_TYPES              # 不按链接形状猜论文
+    assert cc.CONTENT_TYPE_DEFAULT_KINDS[content_type] == "digest"         # 内容类型:汇总
+    assert cc.SPECIAL_SOURCE_KINDS[source_id] == "digest"
+    assert cc.content_type_label(content_type) != content_type            # 有中文叫法
+
+    sink = _make_sink(tmp_path)
+    with Session(sink.engine) as session:
+        # 同源内容判重:不给系统源的条目算指纹
+        assert content_fingerprint.eligible(session, source_id, content_type) is False
+        assert content_fingerprint.eligible(session, "gone_source", content_type) is False
+        # 榜单:源行不在了的条目按类型归到「不上榜」;历史高分榜的 SQL 兜底也一样
+        orphan = ArticleRecord(
+            id="orphan", title="孤儿条目", content_type=content_type, source_id="gone_source", source_url="",
+            publish_date="2026-06-05", fetched_date="2026-06-05T00:00:00", has_content=True, content="正文",
+        )
+        assert rankings._content_shape(orphan, {}) == "excluded"
+        session.add(orphan)
+        session.add(ArticleRecord(
+            id="plain", title="普通文章", content_type="web_article", source_id="gone_source", source_url="",
+            publish_date="2026-06-05", fetched_date="2026-06-05T00:00:00", has_content=True, content="正文",
+        ))
+        session.flush()                                                   # 分析行有外键指向文章行
+        for article_id in ("orphan", "plain"):
+            session.add(ArticleAnalysisRecord(
+                article_id=article_id, status="succeeded", tagging_status="succeeded", quality_score=9.5,
+                analysis_basis="article_body", created_at="2026-06-05T00:00:00", updated_at="2026-06-05T00:00:00",
+            ))
+        session.commit()
+        assert sorted(session.exec(sa_select(ArticleRecord.id)).scalars().all()) == ["orphan", "plain"]
+        assert [row["id"] for row in rankings._all_time_high_scores(session, shape="article")] == ["plain"]

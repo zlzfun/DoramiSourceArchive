@@ -30,6 +30,7 @@ from services import personal_digest_refresh as digest_refresh
 from services import personal_digest_titles as digest_titles
 from services import reader_interests as reader_interest_service
 from services import custom_interests as custom_interest_service
+from services import source_catalog
 from services.article_analysis import source_allows_analysis
 from services.article_time import in_time_window
 from services.source_naming import friendly_source_name
@@ -257,7 +258,13 @@ def _source_readiness(
     edition: PersonalDigestEditionRecord,
     now: dt.datetime,
 ) -> dict[str, Any]:
-    due = tuple(str(value) for value in _parse_json(edition.due_source_ids_json, []) if value)
+    # 生成流程的产出(日报以外的系统源)不是采集来的,没有源状态可等。范围解析本来就不含它们;
+    # 这里兜的是升级前由旧代码冻结的那一版——名单是冻结在版本上的,不会重算(issue #72)。
+    due = tuple(
+        source_id
+        for source_id in (str(value) for value in _parse_json(edition.due_source_ids_json, []) if value)
+        if source_id == PUBLIC_DAILY_BRIEF_SOURCE_ID or not source_catalog.is_system_source(source_id)
+    )
     if not due:
         return {"total": 0, "completed": 0, "pending": 0, "pending_sources": []}
     configs = {
