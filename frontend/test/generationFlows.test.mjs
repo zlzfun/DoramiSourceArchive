@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   LAST_MARK_LABEL, clockOf, countdown, draftOf, isDirty, lastMark, localDate, outputLine, pageWindow, payloadOf,
-  phaseClass, progressNote,
+  phaseClass, progressNote, rebaseDraft,
 } from '../src/utils/generationFlows.js';
 
 const TODAY = '2026-11-27';
@@ -145,4 +145,47 @@ test('改过才亮「保存配置」', () => {
   assert.equal(isDirty(scoped, { ...draftOf(scoped), scopeMode: 'all' }), true);
   const picks = flow({ form: PICKS_FORM });
   assert.equal(isDirty(picks, { ...draftOf(picks), values: { pick_count: '6', ai_only: false } }), true);
+});
+
+// 检视 R1 第 6 条:服务器上的取值变了,本地没碰过的项要跟着走,不然下次保存会把别处的改动写回旧值
+test('草稿跟着服务器走:没改过的项取新值,改过的留着', () => {
+  const picksAt = (count, cron = '30 9 * * *') => flow({
+    id: 'trending_picks', cron, form: PICKS_FORM.map((row) => (row.field === 'pick_count' ? { ...row, value: count } : row)),
+  });
+  const before = draftOf(picksAt(6));
+  // 别的窗口把挑选个数从 6 改成 8,本窗口没碰过草稿:整份跟着走,仍然不脏
+  const followed = rebaseDraft(before, before, draftOf(picksAt(8)));
+  assert.deepEqual(followed, draftOf(picksAt(8)));
+  assert.equal(isDirty(picksAt(8), followed), false);
+  // 随后只改 cron 再保存:提交的挑选个数是 8,不是本窗口打开时的 6
+  assert.deepEqual(payloadOf(picksAt(8), { ...followed, cron: '0 10 * * *' }).payload, { cron: '0 10 * * *', config: { pick_count: 8, ai_only: true } });
+
+  // 本地改了 cron 还没存,别处改了挑选个数:cron 留本地的,挑选个数取服务器的
+  const editing = { ...before, cron: '0 10 * * *' };
+  const merged = rebaseDraft(before, editing, draftOf(picksAt(8)));
+  assert.deepEqual([merged.cron, merged.values.pick_count], ['0 10 * * *', '8']);
+  assert.equal(isDirty(picksAt(8), merged), true);
+  // 同一项两边都改了:留本地的(用户正在填)
+  const both = rebaseDraft(before, { ...before, values: { ...before.values, pick_count: '3' } }, draftOf(picksAt(8)));
+  assert.equal(both.values.pick_count, '3');
+  // 开关也一样
+  const toggled = rebaseDraft(before, { ...before, values: { ...before.values, ai_only: false } }, draftOf(picksAt(8)));
+  assert.deepEqual(toggled.values, { pick_count: '8', ai_only: false });
+});
+
+test('草稿跟着服务器走:取材范围整体算一项', () => {
+  const scopedTo = (ids) => flow({ form: [{ ...BRIEF_FORM[0], value: ids }, ...BRIEF_FORM.slice(1)] });
+  const before = draftOf(scopedTo([]));
+  // 没碰过:别处改成自定名单,跟着走
+  assert.deepEqual(rebaseDraft(before, before, draftOf(scopedTo(['rss_a']))).scopeIds, ['rss_a']);
+  assert.equal(rebaseDraft(before, before, draftOf(scopedTo(['rss_a']))).scopeMode, 'custom');
+  // 本地已切到自定名单并勾了一个:留本地的,不被别处的名单冲掉
+  const editing = { ...before, scopeMode: 'custom', scopeIds: ['rss_b'] };
+  const merged = rebaseDraft(before, editing, draftOf(scopedTo(['rss_a'])));
+  assert.deepEqual([merged.scopeMode, merged.scopeIds], ['custom', ['rss_b']]);
+  // 保存成功之后(服务器的值就是草稿的值):对齐后不脏
+  const saved = scopedTo(['rss_b']);
+  assert.equal(isDirty(saved, rebaseDraft(before, editing, draftOf(saved))), false);
+  // 合并出来的是新对象,不与入参共用数组
+  assert.notEqual(merged.scopeIds, editing.scopeIds);
 });

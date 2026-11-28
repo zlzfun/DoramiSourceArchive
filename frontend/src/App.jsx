@@ -1220,6 +1220,7 @@ export default function App() {
                   showToast={showToast}
                   collectorEnabled={runtimeInfo.collector_enabled}
                   isAdmin={runtimeInfo.account_role === 'admin'}
+                  isActive={activeTab === 'brief' && !readerView}
                   onOpenModelConfig={() => openSettings('credentials')}
                   onViewSource={focusSourceNode}
                 />

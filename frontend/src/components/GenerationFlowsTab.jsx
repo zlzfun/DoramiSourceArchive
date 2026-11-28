@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Play } from 'lucide-react';
 import { fetchGenerationFlows, getLLMConfig, runGenerationFlow, saveGenerationFlow } from '../api';
 import { usePolling } from '../hooks/usePolling';
@@ -19,7 +19,7 @@ import GenerationFlowDrawer from './GenerationFlowDrawer';
  * 点一行从右侧打开抽屉(GenerationFlowDrawer:配置、往期)。
  * 页签 id 仍是 'brief'(#/brief 与历史书签 #/mcp 照旧可用)。版面取自 docs/design/issue-72-product-registry/。
  */
-export default function GenerationFlowsTab({ showToast, collectorEnabled = false, isAdmin = false, onOpenModelConfig, onViewSource }) {
+export default function GenerationFlowsTab({ showToast, collectorEnabled = false, isAdmin = false, isActive = true, onOpenModelConfig, onViewSource }) {
   const canManage = collectorEnabled && isAdmin;
   const [flows, setFlows] = useState(null);
   const [llmStatus, setLlmStatus] = useState(null);
@@ -29,10 +29,16 @@ export default function GenerationFlowsTab({ showToast, collectorEnabled = false
   const [periodsVersion, setPeriodsVersion] = useState(0);            // 生成 / 删除之后让抽屉里的往期重取
   const [now, setNow] = useState(() => Date.now());
 
-  const load = useCallback(
-    () => fetchGenerationFlows().then((data) => setFlows(data.flows || [])).catch(() => {}),
-    [],
-  );
+  // 列表请求带序号:后发的先回来、或者中间存过一次配置时,先发的那个旧响应不许盖掉新的值
+  const listRequest = useRef(0);
+  const load = useCallback(() => {
+    const token = ++listRequest.current;
+    return fetchGenerationFlows()
+      .then((data) => {
+        if (token === listRequest.current) setFlows(data.flows || []);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!canManage) return;
@@ -44,13 +50,17 @@ export default function GenerationFlowsTab({ showToast, collectorEnabled = false
   const anyRunning = startedIds.size > 0 || (flows || []).some((flow) => flow.running);
   usePolling(load, 1200, { immediate: false, pauseWhenHidden: false, enabled: canManage && anyRunning });
   usePolling(load, 60000, { immediate: false, enabled: canManage && !anyRunning });
-  // 倒计时每秒走一格
+  // 倒计时每秒走一格(只在本页签当前时)
   useEffect(() => {
+    if (!isActive) return undefined;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isActive]);
 
-  const replaceFlow = (updated) => setFlows((prev) => (prev || []).map((flow) => (flow.id === updated.id ? updated : flow)));
+  const replaceFlow = (updated) => {
+    listRequest.current += 1;       // 在途的列表请求早于这次写入:它回来时别盖掉刚存的值
+    setFlows((prev) => (prev || []).map((flow) => (flow.id === updated.id ? updated : flow)));
+  };
 
   const handleToggle = async (flow) => {
     const next = !flow.enabled;
@@ -233,7 +243,7 @@ export default function GenerationFlowsTab({ showToast, collectorEnabled = false
       )}
       {canManage && (
         <GenerationFlowDrawer
-          open={drawerOpen}
+          open={drawerOpen && isActive}
           flow={openFlow}
           running={openFlow ? isRunning(openFlow) : false}
           systemSourceIds={(flows || []).map((flow) => flow.source_id)}

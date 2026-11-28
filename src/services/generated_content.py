@@ -18,6 +18,16 @@ from models.content import BaseContent, serialize_to_metadata
 from models.db import ArticleRecord
 
 
+def is_upstream_copy(record: ArticleRecord) -> bool:
+    """这条记录是不是从上游同步来的副本。
+
+    同步来的行带着上游的版本印记(``analysis_authority_id``):本机改它的正文时,``ArticleRecord`` 的
+    ``before_update`` 钩子不会推进 ``archive_updated_at``——改动对同步流不可见,上游重放还会盖回去。
+    所以本机的生成流程不重写这样的行。
+    """
+    return bool((record.analysis_authority_id or "").strip())
+
+
 def persist_generated_article(session: Session, content_obj: BaseContent) -> ArticleRecord:
     """写一期产出;已有同 id 的就覆盖。不提交(调用方与自己的运行记录一起提交)。"""
     if not (content_obj.content or "").strip():
@@ -29,9 +39,12 @@ def persist_generated_article(session: Session, content_obj: BaseContent) -> Art
         session, content_obj.source_id, operation="collection"
     ):
         raise RuntimeError("当前节点不允许写入这个源")
+    record = session.get(ArticleRecord, content_obj.id)
+    if record is not None and is_upstream_copy(record):
+        # 入口(各流程的 generate)先拦一道、记成跳过;这里是兜底,任何流程都不许盖掉上游的版本
+        raise RuntimeError("这一期是从上游同步来的,本机不重写")
     metadata = serialize_to_metadata(content_obj)
     source_rows.ensure_source_row(session, content_obj.source_id, content_type=content_obj.content_type)
-    record = session.get(ArticleRecord, content_obj.id)
     if record is None:
         record = ArticleRecord(
             id=content_obj.id, title=content_obj.title,

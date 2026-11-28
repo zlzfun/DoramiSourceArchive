@@ -110,6 +110,27 @@ export function draftOf(flow) {
   return { cron: flow.cron || '', values, scopeMode, scopeIds };
 }
 
+const scopeKey = (draft) => `${draft.scopeMode}\n${[...draft.scopeIds].sort().join('\n')}`;
+
+// 服务器上的取值变了(别的窗口改了配置、保存后重取):把草稿挪到新的起点上。
+// baseline = 草稿上次与服务器对齐时的取值;本地没改过的项取服务器的新值,改过的留着。
+// 这样「保存配置」提交的整份草稿里,没碰过的项永远是服务器现在的值,不会把别处的改动写回旧值。
+export function rebaseDraft(baseline, draft, server) {
+  const values = {};
+  for (const key of Object.keys(server.values)) {
+    const edited = key in draft.values && String(draft.values[key]) !== String(baseline.values[key]);
+    values[key] = edited ? draft.values[key] : server.values[key];
+  }
+  const cronEdited = (draft.cron || '').trim() !== (baseline.cron || '').trim();
+  const scopeEdited = scopeKey(draft) !== scopeKey(baseline);
+  return {
+    cron: cronEdited ? draft.cron : server.cron,
+    values,
+    scopeMode: scopeEdited ? draft.scopeMode : server.scopeMode,
+    scopeIds: scopeEdited ? [...draft.scopeIds] : [...server.scopeIds],
+  };
+}
+
 // 草稿 → 提交给接口的载荷;填得不对返回 { error }(文案直接进 toast)。
 export function payloadOf(flow, draft) {
   const cron = (draft.cron || '').trim();

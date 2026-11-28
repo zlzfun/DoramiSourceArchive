@@ -195,8 +195,30 @@ def test_picks_outside_the_ranking_or_without_a_summary_are_dropped():
         ("tools/fastgrep", "tool", "组名不认识就算工具"),
     ]
     assert len(picks[1]["why"]) == 160                      # 跑飞的输出截断
-    assert tp.validate_picks({"picks": "nope"}, ITEMS, pick_count=6, ai_only=False) == []
-    assert tp.validate_picks([], ITEMS, pick_count=6, ai_only=False) == []
+
+
+@pytest.mark.parametrize("payload, message", [
+    ({}, "没有 picks 列表"),
+    ([], "没有 picks 列表"),
+    ({"picks": "nope"}, "没有 picks 列表"),
+    ({"picks": None}, "没有 picks 列表"),
+    ({"picks": [{"repo": "ghost/a", "group": "ai", "summary": "榜外"}, {"repo": "ghost/b", "summary": "榜外"}]}, "都不在榜单里"),
+    ({"picks": [{"repo": "acme/agent-kit", "group": "ai", "summary": ""}, {"repo": "acme/tiny-llm", "group": "ai"}]}, "都不在榜单里"),
+    ({"picks": ["不是对象", 3]}, "都不在榜单里"),
+])
+@pytest.mark.parametrize("ai_only", [True, False])
+def test_an_answer_that_is_not_in_shape_is_an_error_not_an_empty_pick(payload, message, ai_only):
+    """答得不成样子是模型出错:不能当成「挑不出」——否则「只看 AI」时会被记成「榜单里没有 AI 相关的仓库」。"""
+    with pytest.raises(LLMError, match=message):
+        tp.validate_picks(payload, ITEMS, pick_count=6, ai_only=ai_only)
+
+
+def test_an_empty_answer_in_shape_is_just_empty():
+    assert tp.validate_picks({"picks": []}, ITEMS, pick_count=6, ai_only=True) == []
+    assert tp.validate_picks({"picks": []}, ITEMS, pick_count=6, ai_only=False) == []
+    # 对得上榜单、也写了说明,只是都不是 AI 一组:「只看 AI」时是合规的空,不是错
+    tools = {"picks": [{"repo": "tools/fastgrep", "group": "tool", "summary": "工具"}, {"repo": "ghost/x", "summary": "榜外"}]}
+    assert tp.validate_picks(tools, ITEMS, pick_count=6, ai_only=True) == []
 
 
 def test_pick_count_caps_and_ai_only_keeps_the_ai_group():
@@ -280,6 +302,32 @@ def test_ai_only_with_no_ai_repo_is_a_skip_but_an_empty_answer_otherwise_fails(t
     with pytest.raises(LLMError, match="没有挑出任何仓库"):
         _run(sink)
     assert _periods(sink.engine) == [] and _last_run(sink.engine)["status"] == "failed"
+
+
+@pytest.mark.parametrize("reply", [
+    {},
+    {"picks": "not a list"},
+    {"picks": [{"repo": "ghost/not-on-the-board", "group": "ai", "summary": "编出来的"}]},
+    {"picks": [{"repo": "acme/agent-kit", "group": "ai", "summary": ""}]},
+])
+def test_a_malformed_answer_fails_even_with_ai_only(tmp_path, llm, reply):
+    """缺省「只看 AI」:模型答得不成样子记失败,不记成「榜单里没有 AI 相关的仓库」(检视 R1 第 4 条)。"""
+    sink = _sink(tmp_path)
+    _ranking(sink.engine)
+    llm.reply = reply
+    with pytest.raises(LLMError):
+        _run(sink)
+    run = _last_run(sink.engine)
+    assert run["status"] == "failed" and run["error_message"] and tp.SKIP_NO_AI_REPOS not in run["error_message"]
+    assert _periods(sink.engine) == []
+
+
+def test_ai_only_with_only_tool_picks_is_a_skip(tmp_path, llm):
+    sink = _sink(tmp_path)
+    _ranking(sink.engine)
+    llm.reply = {"picks": [{"repo": "tools/fastgrep", "group": "tool", "summary": "更快的 grep", "why": "x"}]}
+    result = _run(sink)
+    assert (result["status"], result["reason"]) == ("skipped", tp.SKIP_NO_AI_REPOS)
 
 
 # ── 失败:不落库,原因记下来 ────────────────────────────────────────────────────
@@ -440,6 +488,56 @@ def test_persisting_a_period_refuses_an_empty_body_and_overwrites_the_same_id(tm
         assert seen == [(tp.SOURCE_ID, "collection")]
         session.rollback()
         assert session.get(ArticleRecord, "trending_picks_2026-11-27").content == "第二版"
+
+
+def _upstream_period(engine, day, ranking_id, body="上游的正文"):
+    """一条从上游同步来的精读:带着上游的版本印记(``analysis_authority_id``)。"""
+    with Session(engine) as session:
+        session.add(ArticleRecord(
+            id=f"trending_picks_{day}", title=f"GitHub Trending 精读 · {day}", content_type="trending_picks",
+            source_id=tp.SOURCE_ID, source_url="", publish_date=day, fetched_date=f"{day}T09:30:00",
+            archive_updated_at=f"{day}T09:30:00", analysis_authority_id="upstream-node", has_content=True,
+            content=body, extensions_json=json.dumps({"trending_article_id": ranking_id, "picks_count": 6, "repo_count": 25}),
+        ))
+        session.commit()
+
+
+@pytest.mark.parametrize("trigger", ["scheduled", "manual"])
+def test_a_period_synced_from_upstream_is_never_rewritten(tmp_path, llm, trigger):
+    """接了上游的节点:今天这一期是同步来的,本机不重写(检视 R1 第 2 条)。
+
+    同步来的行带上游印记,本机改它的正文时修订号不会推进——改动对同步流不可见,上游重放又会盖回去。
+    """
+    from services import generated_content
+
+    sink = _sink(tmp_path)
+    _ranking(sink.engine)
+    _upstream_period(sink.engine, "2026-11-27", "github_trending_daily_20261126")
+
+    result = _run(sink, trigger=trigger, triggered_by="admin")
+    assert (result["status"], result["reason"]) == ("skipped", tp.SKIP_UPSTREAM_PERIOD)
+    assert llm.calls == []                                                  # 没有白花一次模型调用
+    with Session(sink.engine) as session:
+        row = session.get(ArticleRecord, "trending_picks_2026-11-27")
+        assert (row.content, row.archive_updated_at, row.analysis_authority_id) == (
+            "上游的正文", "2026-11-27T09:30:00", "upstream-node")
+        # 落库函数自己也拦(兜底:任何流程都不许盖掉上游的版本)
+        with pytest.raises(RuntimeError, match="上游同步"):
+            generated_content.persist_generated_article(session, _content("本机写的"))
+        session.rollback()
+        assert session.get(ArticleRecord, "trending_picks_2026-11-27").content == "上游的正文"
+
+
+def test_an_upstream_period_of_another_day_does_not_block_today(tmp_path, llm):
+    sink = _sink(tmp_path)
+    _ranking(sink.engine, "2026-11-25")
+    _upstream_period(sink.engine, "2026-11-26", "github_trending_daily_20261125")
+    _ranking(sink.engine, "2026-11-26")                                     # 新的一条日榜,还没有被写过
+    result = _run(sink)
+    assert result["status"] == "success" and result["article_id"] == "trending_picks_2026-11-27"
+    with Session(sink.engine) as session:
+        assert session.get(ArticleRecord, "trending_picks_2026-11-26").content == "上游的正文"
+        assert not (session.get(ArticleRecord, "trending_picks_2026-11-27").analysis_authority_id or "")
 
 
 def test_has_new_ranking(tmp_path, llm):

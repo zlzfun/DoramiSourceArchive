@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -31,6 +32,7 @@ from sqlmodel import Session, select
 
 from models.db import ArticleRecord
 from services import daily_brief, trending_picks
+from services.cron_expr import CRON_INVALID_DETAIL, parse_cron_expr
 
 STATUS_SUCCESS = "success"
 STATUS_SKIPPED = "skipped"
@@ -101,6 +103,10 @@ def _validate_cron(expr: str) -> str:
     cleaned = str(expr or "").strip()
     if len(cleaned.split()) != 5:
         raise ValueError("cron 表达式必须是 5 段，例如：30 8 * * *")
+    # 与调度注册(``add_cron_job``)同一个解析器:段数对但字段越界的(``61 9 * * *``)要是存进去,
+    # 注册时解析不了、原来的定时会被摘掉,而界面上开关还开着
+    if parse_cron_expr(cleaned) is None:
+        raise ValueError(CRON_INVALID_DETAIL)
     return cleaned
 
 
@@ -123,9 +129,18 @@ def _brief_read_config(session: Session) -> Dict[str, Any]:
 
 
 def _number(value: Any, label: str, *, integer: bool) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or (integer and int(value) != value):
-        raise ValueError(f"{label}必须是{'整数' if integer else '数字'}")
-    return int(value) if integer else float(value)
+    message = f"{label}必须是{'整数' if integer else '数字'}"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(message)
+    try:
+        # JSON 里写得出无穷大(1e309)与大到转不成浮点的整数:都按填错处理,不让它变成 500
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(message)
+        if integer and int(value) != value:
+            raise ValueError(message)
+        return int(value) if integer else float(value)
+    except OverflowError:
+        raise ValueError(message) from None
 
 
 def _brief_update(session: Session, *, enabled: Optional[bool] = None, cron: Optional[str] = None,
@@ -136,6 +151,8 @@ def _brief_update(session: Session, *, enabled: Optional[bool] = None, cron: Opt
     unknown = sorted(set(config) - set(_BRIEF_CONFIG_KEYS))
     if unknown:
         raise ValueError(f"未知的配置项:{unknown}")
+    if cron is not None:
+        cron = _validate_cron(cron)         # 比日报自己的旧接口严一步:字段越界的也拒(旧接口保持原样)
     fields: Dict[str, Any] = {}
     if "top_n" in config:
         fields["top_n"] = _number(config["top_n"], "精选条数", integer=True)

@@ -15,6 +15,7 @@ import {
   isDirty,
   pageWindow,
   payloadOf,
+  rebaseDraft,
   phaseClass,
   progressNote,
 } from '../utils/generationFlows';
@@ -44,24 +45,43 @@ export default function GenerationFlowDrawer({
   useModalA11y(open, onClose, panelRef);
 
   const flowId = flow?.id || null;
+  // 异步回来时「抽屉现在开着的是哪个流程」:保存 / 删除发出去之后可能已经换了一个流程
+  const flowIdRef = useRef(flowId);
+  useEffect(() => {
+    flowIdRef.current = flowId;
+  }, [flowId]);
   const [draft, setDraft] = useState(() => (flow ? draftOf(flow) : null));
+  const [baseline, setBaseline] = useState(() => (flow ? draftOf(flow) : null));   // 草稿上次与服务器对齐时的取值
   const [draftFor, setDraftFor] = useState(flowId);
   const [saving, setSaving] = useState(false);
   const [sourceCatalog, setSourceCatalog] = useState(null);     // 自定名单的候选:切到自定名单时才取
-  const [periods, setPeriods] = useState(null);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  // 往期连同「属于哪个流程」一起存:不是当前流程的一律当没有,别的流程的旧响应进不了这个抽屉
+  const [periodsState, setPeriodsState] = useState({ flowId: null, items: null, total: 0, page: 1 });
+  const periodsRequest = useRef(0);
   const [loadingPage, setLoadingPage] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [bodyCache, setBodyCache] = useState({});
   const [bodyLoadingId, setBodyLoadingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
-  // 换了一个流程:草稿重来。同一个流程保存 / 别处改动之后,没在编辑(不脏)时才跟着新值走。
-  if (flow && (draftFor !== flowId || (draft && !isDirty(flow, draft) && JSON.stringify(draftOf(flow)) !== JSON.stringify(draft)))) {
-    setDraft(draftOf(flow));
-    setDraftFor(flowId);
+  // 换了一个流程:草稿重来。同一个流程在服务器上的取值变了(保存之后、别的窗口改了):
+  // 本地没改过的项跟着新值走,改过的留着(rebaseDraft)。
+  if (flow) {
+    const server = draftOf(flow);
+    if (draftFor !== flowId || !draft || !baseline) {
+      setDraft(server);
+      setBaseline(server);
+      setDraftFor(flowId);
+    } else if (JSON.stringify(server) !== JSON.stringify(baseline)) {
+      setDraft(rebaseDraft(baseline, draft, server));
+      setBaseline(server);
+    }
   }
+
+  const ownPeriods = periodsState.flowId === flowId;
+  const periods = ownPeriods ? periodsState.items : null;
+  const total = ownPeriods ? periodsState.total : 0;
+  const page = ownPeriods ? periodsState.page : 1;
 
   const ensureSourceCatalog = useCallback(() => {
     if (sourceCatalog !== null) return;
@@ -72,22 +92,24 @@ export default function GenerationFlowDrawer({
 
   const loadPeriods = useCallback((targetPage) => {
     if (!flowId) return Promise.resolve();
+    const token = ++periodsRequest.current;
     setLoadingPage(true);
     setExpandedId(null);
     return fetchGenerationFlowPeriods(flowId, targetPage, PAGE_SIZE)
       .then((data) => {
-        setPeriods(data.items || []);
-        setTotal(data.total || 0);
-        setPage(targetPage);
+        if (token !== periodsRequest.current) return;      // 换了流程或又翻了页:这是旧响应
+        setPeriodsState({ flowId, items: data.items || [], total: data.total || 0, page: targetPage });
       })
       .catch(() => {})
-      .finally(() => setLoadingPage(false));
+      .finally(() => {
+        if (token === periodsRequest.current) setLoadingPage(false);
+      });
   }, [flowId]);
 
   // 打开、换流程、生成或删除之后:回到第一页重取
   useEffect(() => {
     if (!open || !flowId) return;
-    setPeriods(null);
+    setPeriodsState({ flowId, items: null, total: 0, page: 1 });
     setBodyCache({});
     loadPeriods(1);
   }, [open, flowId, periodsVersion, loadPeriods]);
@@ -109,11 +131,17 @@ export default function GenerationFlowDrawer({
       showToast(error, 'error');
       return;
     }
+    const savedFor = flow.id;
     setSaving(true);
     try {
-      const updated = await saveGenerationFlow(flow.id, payload);
-      setDraft(draftOf(updated));
+      const updated = await saveGenerationFlow(savedFor, payload);
       onSaved?.(updated);
+      // 等保存的这会儿抽屉可能已经换了流程:别把这个流程的值写进另一个流程的草稿
+      if (flowIdRef.current === savedFor) {
+        const next = draftOf(updated);
+        setDraft(next);
+        setBaseline(next);
+      }
       showToast(`已保存 ${flow.name} 的配置`, 'success');
     } catch (err) {
       showToast(err.message || '保存失败', 'error');
@@ -147,7 +175,7 @@ export default function GenerationFlowDrawer({
       } catch {
         setBodyCache((prev) => ({ ...prev, [period.article_id]: null }));
       } finally {
-        setBodyLoadingId(null);
+        setBodyLoadingId((current) => (current === period.article_id ? null : current));
       }
     }
   };
@@ -155,13 +183,14 @@ export default function GenerationFlowDrawer({
   const handleDelete = async (period) => {
     const question = ['确认删除这一期?下游订阅将不再能拉取到它。', flow.delete_note].filter(Boolean).join('');
     if (!(await confirm(question))) return;
+    const deletedFor = flow.id;
     setDeletingId(period.article_id);
     try {
       await deleteArticle(period.article_id);
       showToast(`已删除 ${flow.name} ${period.date}`, 'success');
-      // 删掉当页最后一条后回退一页,避免落在空页
+      // 删掉当页最后一条后回退一页,避免落在空页;抽屉已经换了流程就不重取(那个流程自己会取)
       const emptied = (periods?.length || 0) <= 1 && page > 1;
-      await loadPeriods(emptied ? page - 1 : page);
+      if (flowIdRef.current === deletedFor) await loadPeriods(emptied ? page - 1 : page);
       onPeriodsChanged?.();
     } catch (err) {
       showToast(err.message || '删除失败', 'error');
@@ -228,7 +257,15 @@ export default function GenerationFlowDrawer({
       return (
         <div key={key} className="inspector-param">
           <span className="inspector-param-label">{row.label}</span>
-          <button type="button" className="inspector-metabtn" title="去源管理看这个源" onClick={() => onViewSource?.(row.source_id)}>
+          <button
+            type="button"
+            className="inspector-metabtn"
+            title="去源管理看这个源"
+            onClick={() => {
+              onClose?.();          // 先关抽屉:页签只是藏起来不卸载,开着的抽屉会继续拦键盘
+              onViewSource?.(row.source_id);
+            }}
+          >
             {row.text}
           </button>
         </div>

@@ -330,6 +330,43 @@ def test_trending_picks_update_validates_everything_before_writing(tmp_path):
         assert (PICKS.is_enabled(session), PICKS.cron(session)) == (False, "0 10 * * *")
 
 
+@pytest.mark.parametrize("flow", [BRIEF, PICKS], ids=["daily_brief", "trending_picks"])
+@pytest.mark.parametrize("cron", ["61 9 * * *", "0 25 * * *", "0 8 * nope *", "* * * *", "x"])
+def test_a_cron_the_scheduler_cannot_parse_is_rejected_before_anything_is_written(tmp_path, flow, cron):
+    """段数对但字段越界的 cron 要是存进去,调度登记不上、原来的定时会被摘掉,而开关还开着(检视 R1 第 3 条)。"""
+    sink = _sink(tmp_path)
+    with Session(sink.engine) as session:
+        flow.update(session, enabled=True, cron="0 10 * * *")
+        with pytest.raises(ValueError, match="cron"):
+            flow.update(session, enabled=False, cron=cron)
+        assert (flow.is_enabled(session), flow.cron(session)) == (True, "0 10 * * *")   # 连同一次请求里的开关也没写
+
+
+@pytest.mark.parametrize("field, value", [
+    ("top_n", float("inf")), ("top_n", float("nan")), ("min_score", float("inf")), ("min_score", -float("inf")),
+    ("min_score", 10 ** 400), ("top_n", 10 ** 400), ("min_items", True), ("paper_min_content_value", "7"),
+])
+def test_brief_numbers_that_are_not_finite_are_a_validation_error(tmp_path, field, value):
+    """JSON 里写得出 1e309(解析成无穷大)与大到转不成浮点的整数:按填错处理,不是 500(检视 R1 第 7 条)。"""
+    sink = _sink(tmp_path)
+    with Session(sink.engine) as session:
+        before = BRIEF.read_config(session)
+        with pytest.raises(ValueError):
+            BRIEF.update(session, config={field: value})
+        assert BRIEF.read_config(session) == before
+
+
+def test_number_guard_rejects_non_finite_values_on_its_own():
+    """不靠后面的范围检查兜:以后加一个没有上下限的旋钮,无穷大也进不去。"""
+    for value in (float("inf"), -float("inf"), float("nan"), 10 ** 400):
+        with pytest.raises(ValueError, match="必须是数字"):
+            gf._number(value, "某一项", integer=False)
+    for value in (float("inf"), float("nan"), 1.5, True, "3"):
+        with pytest.raises(ValueError, match="必须是整数"):
+            gf._number(value, "某一项", integer=True)
+    assert gf._number(3.0, "某一项", integer=True) == 3 and gf._number(2, "某一项", integer=False) == 2.0
+
+
 def test_a_failed_manual_brief_run_through_the_shell_is_recorded(tmp_path, monkeypatch):
     import asyncio
 
@@ -419,6 +456,81 @@ def test_config_endpoint_updates_validates_and_reschedules(monkeypatch, tmp_path
         assert client.post("/api/generation-flows/daily_brief/config", json={"config": {"top_n": 0}}).status_code == 400
     # 只有成功的更新才重排调度,带的是流程 id(开头那个 None 是应用启动时的全量登记)
     assert reloaded == [None, "trending_picks", "daily_brief"]
+
+
+def test_config_endpoint_rejects_an_unschedulable_cron_and_keeps_the_job(monkeypatch, tmp_path):
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    scheduler = app_module.scheduler
+    try:
+        with TestClient(app_module.app) as client:
+            _login(client)
+            ok = client.post("/api/generation-flows/trending_picks/config", json={"enabled": True, "cron": "0 10 * * *"})
+            assert ok.status_code == 200
+            assert "hour='10'" in str(scheduler.get_job("trending_picks").trigger)
+
+            bad = client.post("/api/generation-flows/trending_picks/config", json={"cron": "61 9 * * *"})
+            assert bad.status_code == 400 and "cron" in bad.json()["detail"]
+            # 原来的定时还在,存着的 cron 没有变,开关仍开
+            assert "hour='10'" in str(scheduler.get_job("trending_picks").trigger)
+            row = next(f for f in client.get("/api/generation-flows").json()["flows"] if f["id"] == "trending_picks")
+            assert (row["enabled"], row["cron"]) == (True, "0 10 * * *") and row["next_run_at"]
+    finally:
+        for job_id in ("trending_picks", "daily_brief"):
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
+
+
+@pytest.mark.parametrize("raw", [
+    '{"config": {"top_n": 1e309}}', '{"config": {"min_score": 1e309}}', '{"config": {"min_score": -1e309}}',
+    '{"config": {"min_score": 1' + "0" * 400 + '}}', '{"config": {"pick_count": 1e309}}',
+])
+def test_config_endpoint_answers_400_for_numbers_json_can_spell_but_floats_cannot_hold(monkeypatch, tmp_path, raw):
+    app_module, _sink_ = _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "reload_generation_flow_schedule", lambda flow_id=None: None)
+    flow_id = "trending_picks" if "pick_count" in raw else "daily_brief"
+    with TestClient(app_module.app) as client:
+        _login(client)
+        response = client.post(f"/api/generation-flows/{flow_id}/config", content=raw,
+                               headers={"content-type": "application/json"})
+        assert response.status_code == 400, response.text
+
+
+def test_writes_leave_an_audit_line_that_says_what_changed(monkeypatch, tmp_path):
+    """审计行要看得出动了哪个流程、改了什么(检视 R1 第 8 条);摘要只写键名,不写取值里的源名单。"""
+    from sqlmodel import select
+
+    from models.db import AdminAuditRecord
+
+    app_module, sink = _setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "reload_generation_flow_schedule", lambda flow_id=None: None)
+
+    async def fake_generate(*, storage, trigger, triggered_by):
+        return {"status": "skipped", "reason": "没有新榜单"}
+
+    real_get_flow = gf.get_flow
+    monkeypatch.setattr(gf, "get_flow", lambda flow_id: (
+        replace(PICKS, generate=fake_generate) if flow_id == PICKS.id else real_get_flow(flow_id)))
+    with TestClient(app_module.app) as client:
+        _login(client)
+        assert client.post("/api/generation-flows/daily_brief/config", json={
+            "enabled": True, "cron": "15 7 * * *", "config": {"top_n": 9, "source_ids": ["rss_secret_source"]},
+        }).status_code == 200
+        assert client.post("/api/generation-flows/trending_picks/config", json={"enabled": False}).status_code == 200
+        assert client.post("/api/generation-flows/trending_picks/config", json={"config": {"pick_count": 99}}).status_code == 400
+        started = client.post("/api/generation-flows/trending_picks/generate")
+        assert started.status_code == 200
+        _poll_job(client, started.json()["job_id"])
+    with Session(sink.engine) as session:
+        rows = session.exec(
+            select(AdminAuditRecord).where(AdminAuditRecord.path.like("/api/generation-flows/%")).order_by(AdminAuditRecord.id)
+        ).all()
+    assert [(row.summary, row.target, row.status_code) for row in rows] == [
+        ("更新生成流程 daily_brief:开启定时;cron 15 7 * * *;配置项 top_n、source_ids", "daily_brief", 200),
+        ("更新生成流程 trending_picks:关闭定时", "trending_picks", 200),
+        ("更新生成流程 trending_picks:配置项 pick_count", "trending_picks", 400),
+        ("手动生成 trending_picks", "trending_picks", 200),
+    ]
+    assert not any("rss_secret_source" in (row.summary or "") for row in rows)
 
 
 def test_generate_endpoint_submits_a_job_attributed_to_the_admin(monkeypatch, tmp_path):
@@ -575,6 +687,35 @@ def test_personal_digest_does_not_wait_for_a_system_source_other_than_the_brief(
         )
     # 带同步印记的普通公共源照旧要等;生成流程的产出没有源状态可等,哪怕带着印记、哪怕被点了名
     assert due == ["rss_synced"]
+
+
+def test_readiness_does_not_wait_for_a_flow_output_frozen_into_an_old_edition(tmp_path):
+    """升级前由旧代码冻结的那一版,到货名单里可能带着精读:名单冻结在版本上、不会重算,
+    消费它的就绪判定要自己剔掉(检视 R1 第 9 条)。日报照旧算——它有自己的就绪信号。"""
+    from api.routers import personal_briefs
+    from models.db import PersonalDigestEditionRecord
+
+    sink = _sink(tmp_path)
+    now = dt.datetime(2026, 11, 27, 8, 0, tzinfo=dt.timezone.utc)
+    with Session(sink.engine) as session:
+        for source_id in (PICKS.source_id, BRIEF.source_id, "rss_synced"):
+            session.add(SourceConfigRecord(
+                source_id=source_id, name=source_id, source_type="preset", origin="catalog", shape="article",
+                collection_authority_id="authority-1", is_active=True,
+                created_at=now.isoformat(), updated_at=now.isoformat(),
+            ))
+        session.commit()
+        edition = PersonalDigestEditionRecord(
+            owner_username="alice", report_date="2026-11-27", timezone="Asia/Shanghai", revision=1,
+            generation_reason="scheduled",
+            expected_source_ids_json=json.dumps([PICKS.source_id, BRIEF.source_id, "rss_synced"]),
+            due_source_ids_json=json.dumps([PICKS.source_id, BRIEF.source_id, "rss_synced"]),
+            interest_snapshot_json="[]", status="pending",
+            created_at=now.isoformat(), updated_at=now.isoformat(),
+        )
+        readiness = personal_briefs._source_readiness(session, edition, now)
+    assert readiness["total"] == 2
+    assert sorted(item["source_id"] for item in readiness["pending_sources"]) == [BRIEF.source_id, "rss_synced"]
 
 
 def test_articles_api_can_exclude_every_system_source(monkeypatch, tmp_path):

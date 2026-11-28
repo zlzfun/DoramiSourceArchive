@@ -40,7 +40,7 @@ from llm.client import (
 from models.content import TrendingPicksContent
 from models.db import ArticleRecord
 from services import daily_brief as kv   # KV 读写(get_setting / set_setting / *_json_setting)与模型配置解析在那个模块里
-from services.generated_content import persist_generated_article
+from services.generated_content import is_upstream_copy, persist_generated_article
 
 logger = logging.getLogger("dorami.trending_picks")
 
@@ -73,6 +73,7 @@ _USED_LOOKBACK = 60         # 查「这条日榜写没写过」时回看多少�
 SKIP_NO_TRENDING = "还没有采到 GitHub Trending 日榜"
 SKIP_NO_NEW_TRENDING = "没有新榜单"
 SKIP_NO_AI_REPOS = "榜单里没有 AI 相关的仓库"
+SKIP_UPSTREAM_PERIOD = "今天这一期由上游同步而来"
 
 
 # ── 进度(内存,只供前端轮询;单进程有效,不持久化)────────────────────────────────
@@ -205,18 +206,29 @@ def _clean_text(value: Any) -> str:
 def validate_picks(
     payload: Dict[str, Any], items: List[Dict[str, Any]], *, pick_count: int, ai_only: bool
 ) -> List[Dict[str, Any]]:
-    """把模型的回答对到榜单上:榜单里没有的仓库、缺说明的、重复的都丢掉;``ai_only`` 时只留 AI 一组。"""
+    """把模型的回答对到榜单上:榜单里没有的仓库、缺说明的、重复的都丢掉;``ai_only`` 时只留 AI 一组。
+
+    分清两种「空」:答得不成样子(不是对象、``picks`` 不是表、非空但没有一条对得上榜单且带说明)抛
+    ``LLMError``——那是模型出错,不能据此说榜单里没有合适的仓库;符合约定的空(``picks`` 是空表,
+    或对得上的都不是 AI 一组)才返回空表,由调用方决定算跳过还是失败。
+    """
     by_repo = {str(item["repo"]).strip().lower(): item for item in items}
     raw = payload.get("picks") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        raise LLMError("模型返回的格式不对:没有 picks 列表")
     picks: List[Dict[str, Any]] = []
     seen = set()
-    for entry in raw if isinstance(raw, list) else []:
+    usable = 0          # 对得上榜单、带说明的条目数(不论分组、不论是否超出个数)
+    for entry in raw:
         if not isinstance(entry, dict):
             continue
         key = str(entry.get("repo") or "").strip().lower()
         item = by_repo.get(key)
         summary = _clean_text(entry.get("summary"))
         if item is None or key in seen or not summary:
+            continue
+        usable += 1
+        if len(picks) >= pick_count:
             continue
         group = "ai" if str(entry.get("group") or "").strip().lower() == "ai" else "tool"
         if ai_only and group != "ai":
@@ -234,8 +246,8 @@ def validate_picks(
             "summary": summary,
             "why": _clean_text(entry.get("why")),
         })
-        if len(picks) >= pick_count:
-            break
+    if raw and not usable:
+        raise LLMError("模型挑的仓库都不在榜单里,或者没有写说明")
     return picks
 
 
@@ -376,6 +388,8 @@ async def _generate(
     with Session(engine) as session:
         cfg = llm_config or kv.resolve_llm_config(session)
         settings = read_config(session)
+        today_period = session.get(ArticleRecord, article_id)
+        from_upstream = today_period is not None and is_upstream_copy(today_period)
         ranking = latest_ranking(session)
         if ranking is None:
             ranking_id = ranking_title = ""
@@ -387,6 +401,10 @@ async def _generate(
             used = period_using(session, ranking.id)
             used_by = used.id if used is not None else None
 
+    # 接了上游的节点上,今天这一期可能是同步来的:本机不重写它(改了正文却还带着上游的版本印记,
+    # 下游收不到这次改动,上游重放又会盖回去)。定时、手动都一样。
+    if from_upstream:
+        return _skip(engine, started_at=started_at, report_date=report_date, trigger=trigger, reason=SKIP_UPSTREAM_PERIOD)
     if not ranking_id:
         return _skip(engine, started_at=started_at, report_date=report_date, trigger=trigger, reason=SKIP_NO_TRENDING)
     # 这条日榜写过了:定时一律跳过;手动只在「写的就是今天这一期」时重写(改了旋钮想重出一版),
